@@ -163,6 +163,63 @@ class MSE(BasePointLoss):
         weights = self._compute_weights(y=y, mask=mask)
         return _weighted_mean(losses=losses, weights=weights)
 
+#| export
+class SOFT_MSE(BasePointLoss):
+    """  Mean Squared Error
+
+    Calculates Mean Squared Error between
+    `y` and `y_hat`. MSE measures the relative prediction
+    accuracy of a forecasting method by calculating the 
+    squared deviation of the prediction and the true
+    value at a given time, and averages these devations
+    over the length of the series.
+    
+    $$ \mathrm{MSE}(\\mathbf{y}_{\\tau}, \\mathbf{\hat{y}}_{\\tau}) = \\frac{1}{H} \\sum^{t+H}_{\\tau=t+1} (y_{\\tau} - \hat{y}_{\\tau})^{2} $$
+
+    **Parameters:**<br>
+    `horizon_weight`: Tensor of size h, weight for each timestamp of the forecasting window. <br>
+    """
+    def __init__(self, horizon_weight=None, sigma=5):
+        super(SOFT_MSE, self).__init__(horizon_weight=horizon_weight,
+                                  outputsize_multiplier=1,
+                                  output_names=[''])
+        self.sigma = sigma
+
+    def compute_weights(self, y, mu, sigma):
+        b, l = y.shape
+
+        lt = torch.tensor(range(l))
+        ltr = lt.repeat((l, 1)) - lt.reshape(-1, 1)
+        ltr_batch = ltr.repeat((b, 1, 1))
+
+        conc = torch.exp((-(ltr_batch - mu)**2) / (2 * sigma**2)) / (sigma * torch.sqrt(torch.tensor(2 * torch.pi)))
+        conc = torch.tril(conc)/conc.max()
+        conc = conc.to(y.device)
+
+        weights = conc*(y.reshape(b, l, 1))
+        weights = weights.max(dim=1)[0] #[B, L]
+        return weights
+
+    def __call__(self,
+                 y: torch.Tensor,
+                 y_hat: torch.Tensor,
+                 mask: Union[torch.Tensor, None] = None):
+        """
+        **Parameters:**<br>
+        `y`: tensor, Actual values.<br>
+        `y_hat`: tensor, Predicted values.<br>
+        `mask`: tensor, Specifies datapoints to consider in loss.<br>
+
+        **Returns:**<br>
+        `mse`: tensor (single value).
+        """
+
+        y = self.compute_weights(y=y, mu=0, sigma=self.sigma)
+
+        losses = (y - y_hat)**2
+        weights = self._compute_weights(y=y, mask=mask)
+        return _weighted_mean(losses=losses, weights=weights)
+
 # %% ../../nbs/losses.pytorch.ipynb 20
 class RMSE(BasePointLoss):
     """Root Mean Squared Error

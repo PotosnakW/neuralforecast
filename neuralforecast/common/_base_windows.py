@@ -225,6 +225,12 @@ class BaseWindows(pl.LightningModule):
                 final_condition = (sample_condition > 0) & (available_condition > 0)
             windows = windows[final_condition]
 
+            # NEW: weighting windows
+            y_max, _ = torch.max(windows[:, :, np.where(temporal_cols=='y')[0]],
+                                 dim=1)
+            weights = torch.where(y_max==0, 1, 100).flatten().numpy()
+            weights = weights/np.sum(weights)
+
             # Parse Static data to match windows
             # [B, S_in] -> [B, Ws, S_in] -> [B*Ws, S_in]
             static = batch.get("static", None)
@@ -245,6 +251,7 @@ class BaseWindows(pl.LightningModule):
                 w_idxs = np.random.choice(
                     n_windows,
                     size=self.windows_batch_size,
+                    p=weights,
                     replace=(n_windows < self.windows_batch_size),
                 )
                 windows = windows[w_idxs]
