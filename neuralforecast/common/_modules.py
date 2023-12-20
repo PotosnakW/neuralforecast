@@ -3,7 +3,7 @@
 # %% auto 0
 __all__ = ['ACTIVATIONS', 'MLP', 'Chomp1d', 'CausalConv1d', 'TemporalConvolutionEncoder', 'TransEncoderLayer', 'TransEncoder',
            'TransDecoderLayer', 'TransDecoder', 'AttentionLayer', 'PositionalEmbedding', 'TokenEmbedding',
-           'TimeFeatureEmbedding', 'DataEmbedding']
+           'TimeFeatureEmbedding', 'DataEmbedding', 'SparseEncoder']
 
 # %% ../../nbs/common.modules.ipynb 3
 import math
@@ -433,3 +433,70 @@ class DataEmbedding(nn.Module):
             x = x + self.temporal_embedding(x_mark)
 
         return self.dropout(x)
+
+class SparseEncoder(nn.Module):
+    def __init__(
+        self,
+        hist_exog_list: list,
+        n_series: int,
+        type: str,
+        sparse_exog_list: list,
+        sigma: float,
+        input_size: int,
+        h: int,
+        freq: int,
+        mask_future: bool,
+    ):
+        super().__init__()
+
+        assert type in [
+            "soft",
+        ],  "encoder type not available."
+
+        self.hist_exog_list = hist_exog_list
+        self.n_series = n_series
+        self.type = type
+        self.sparse_exog_list = sparse_exog_list
+        self.freq = freq
+        self.mask_future = mask_future
+
+        # latent parameter
+        self.sigma = nn.Embedding(1, 1)
+        init_sigma = torch.ones((1, 1))
+        self.sigma.weight.data.copy_(init_sigma)
+
+        self.input_size = input_size
+        self.h = h
+
+    def soft_inputs(self, hist_exog, sparse_exog, sigma, mu=0):
+        b, l, c = sparse_exog.shape
+
+        lt = torch.tensor(range(l))
+        ltr = lt.repeat((l, 1)) - lt.reshape(-1, 1)
+        ltr_batch = ltr.repeat((b, 1, 1)).to(hist_exog.device)
+
+        conc = 1/(torch.sqrt(torch.tensor(2*torch.pi))*sigma) * \
+               torch.exp(torch.neg(torch.tensor(ltr_batch-mu)**2/(2*sigma**2)))
+
+        conc = torch.tril(conc)/conc.max()
+        conc = conc.to(hist_exog.device)
+
+        weights = conc.reshape(b, l, l, 1)*(sparse_exog.reshape(b, l, 1, c))
+        weights = weights.max(dim=1)[0] #[B, L, C]
+
+        return weights
+
+    def forward(self, hist_exog: torch.Tensor) -> torch.Tensor:
+        sparse_exog_idxs = [self.hist_exog_list.index(i) for i in self.sparse_exog_list]
+        other_exog_idxs = list(set(range(0, len(self.hist_exog_list)))^set(sparse_exog_idxs))
+        sparse_exog = hist_exog[:, :, sparse_exog_idxs]
+
+        if self.type == "soft":
+            weights = self.soft_inputs(hist_exog, sparse_exog, self.sigma.weight)
+
+        # Replace treatment variable with concentration
+        hist_exog_out = torch.zeros(hist_exog.shape).to(hist_exog.device)
+        hist_exog_out[:, :, other_exog_idxs] += hist_exog[:, :, other_exog_idxs]
+        hist_exog_out[:, :, sparse_exog_idxs] += weights
+
+        return hist_exog_out

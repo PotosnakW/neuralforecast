@@ -193,6 +193,7 @@ class BaseWindows(pl.LightningModule):
         window_size = self.input_size + self.h
         temporal_cols = batch["temporal_cols"]
         temporal = batch["temporal"]
+        #batch_idx = batch["idx"]
 
         if step == "train":
             if self.val_size + self.test_size > 0:
@@ -228,8 +229,8 @@ class BaseWindows(pl.LightningModule):
             # NEW: weighting windows
             y_max, _ = torch.max(windows[:, :, np.where(temporal_cols=='y')[0]],
                                  dim=1)
-            weights = torch.where(y_max==0, 1, 100).flatten().numpy()
-            weights = weights/np.sum(weights)
+            weights = torch.where(y_max==0, 1, 100).flatten()
+            weights = (weights/torch.sum(weights)).cpu().numpy()
 
             # Parse Static data to match windows
             # [B, S_in] -> [B, Ws, S_in] -> [B*Ws, S_in]
@@ -240,6 +241,12 @@ class BaseWindows(pl.LightningModule):
                     static, repeats=windows_per_serie, dim=0
                 )
                 static = static[final_condition]
+
+            # Series idx
+            # batch_idx = torch.repeat_interleave(
+            #     batch_idx, repeats=windows_per_serie, dim=0
+            # )
+            # batch_idx = batch_idx[final_condition]
 
             # Protection of empty windows
             if final_condition.sum() == 0:
@@ -255,6 +262,7 @@ class BaseWindows(pl.LightningModule):
                     replace=(n_windows < self.windows_batch_size),
                 )
                 windows = windows[w_idxs]
+                #batch_idx = batch_idx[w_idxs]
 
                 if static is not None:
                     static = static[w_idxs]
@@ -266,6 +274,7 @@ class BaseWindows(pl.LightningModule):
                 temporal_cols=temporal_cols,
                 static=static,
                 static_cols=static_cols,
+               # batch_idx=batch_idx,
             )
             return windows_batch
 
@@ -322,17 +331,24 @@ class BaseWindows(pl.LightningModule):
                     static, repeats=windows_per_serie, dim=0
                 )
 
+            # Series idx
+            # batch_idx = torch.repeat_interleave(
+            #     batch_idx, repeats=windows_per_serie, dim=0
+            # )
+
             # Sample windows for batched prediction
             if w_idxs is not None:
                 windows = windows[w_idxs]
                 if static is not None:
                     static = static[w_idxs]
+                #batch_idx = batch_idx[w_idxs]
 
             windows_batch = dict(
                 temporal=windows,
                 temporal_cols=temporal_cols,
                 static=static,
                 static_cols=static_cols,
+                #batch_idx=batch_idx,
             )
             return windows_batch
         else:
@@ -438,6 +454,8 @@ class BaseWindows(pl.LightningModule):
         if self.exclude_insample_y:
             insample_y = insample_y * 0
 
+        #batch_idx = windows["batch_idx"]
+
         return (
             insample_y,
             insample_mask,
@@ -446,6 +464,7 @@ class BaseWindows(pl.LightningModule):
             hist_exog,
             futr_exog,
             stat_exog,
+            #batch_idx,
         )
 
     def training_step(self, batch, batch_idx):
@@ -464,6 +483,7 @@ class BaseWindows(pl.LightningModule):
             hist_exog,
             futr_exog,
             stat_exog,
+           # batch_idx,
         ) = self._parse_windows(batch, windows)
 
         windows_batch = dict(
@@ -472,6 +492,7 @@ class BaseWindows(pl.LightningModule):
             futr_exog=futr_exog,  # [Ws, L+H]
             hist_exog=hist_exog,  # [Ws, L]
             stat_exog=stat_exog,
+           # batch_idx=batch_idx,
         )  # [Ws, 1]
 
         # Model Predictions
@@ -568,6 +589,7 @@ class BaseWindows(pl.LightningModule):
                 hist_exog,
                 futr_exog,
                 stat_exog,
+               # batch_idx,
             ) = self._parse_windows(batch, windows)
             windows_batch = dict(
                 insample_y=insample_y,  # [Ws, L]
@@ -575,6 +597,7 @@ class BaseWindows(pl.LightningModule):
                 futr_exog=futr_exog,  # [Ws, L+H]
                 hist_exog=hist_exog,  # [Ws, L]
                 stat_exog=stat_exog,
+               # batch_idx=batch_idx,
             )  # [Ws, 1]
 
             # Model Predictions
@@ -636,6 +659,7 @@ class BaseWindows(pl.LightningModule):
                 hist_exog,
                 futr_exog,
                 stat_exog,
+               # batch_idx,
             ) = self._parse_windows(batch, windows)
             windows_batch = dict(
                 insample_y=insample_y,  # [Ws, L]
@@ -643,6 +667,7 @@ class BaseWindows(pl.LightningModule):
                 futr_exog=futr_exog,  # [Ws, L+H]
                 hist_exog=hist_exog,  # [Ws, L]
                 stat_exog=stat_exog,
+               # batch_idx=batch_idx,
             )  # [Ws, 1]
 
             # Model Predictions

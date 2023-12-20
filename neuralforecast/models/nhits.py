@@ -13,6 +13,7 @@ import torch.nn.functional as F
 
 from ..losses.pytorch import MAE
 from ..common._base_windows import BaseWindows
+from ..common._modules import SparseEncoder
 
 # %% ../../nbs/models.nhits.ipynb 8
 class _IdentityBasis(nn.Module):
@@ -86,6 +87,7 @@ class NHITSBlock(nn.Module):
         n_theta: int,
         mlp_units: list,
         basis: nn.Module,
+        sparse_encoder: nn.Module,
         futr_input_size: int,
         hist_input_size: int,
         stat_input_size: int,
@@ -136,6 +138,7 @@ class NHITSBlock(nn.Module):
         layers = hidden_layers + output_layer
         self.layers = nn.Sequential(*layers)
         self.basis = basis
+        self.sparse_encoder = sparse_encoder
 
     def forward(
         self,
@@ -143,6 +146,7 @@ class NHITSBlock(nn.Module):
         futr_exog: torch.Tensor,
         hist_exog: torch.Tensor,
         stat_exog: torch.Tensor,
+        #batch_idx: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # Pooling
         # Pool1d needs 3D input, (B,C,L), adding C dimension
@@ -267,6 +271,12 @@ class NHITS(BaseWindows):
         random_seed: int = 1,
         num_workers_loader=0,
         drop_last_loader=False,
+        # New parameters
+        encoder_type: str = None,
+        n_series: int = 1,
+        sparse_exog_list: list = None,
+        sigma: float = 1,
+        freq: int = 1,
         **trainer_kwargs,
     ):
         # Inherit BaseWindows class
@@ -317,6 +327,12 @@ class NHITS(BaseWindows):
             interpolation_mode=interpolation_mode,
             dropout_prob_theta=dropout_prob_theta,
             activation=activation,
+            # New parameters
+            n_series=n_series,
+            encoder_type=encoder_type,
+            sparse_exog_list=sparse_exog_list,
+            sigma=sigma,
+            freq=freq,
         )
         self.blocks = torch.nn.ModuleList(blocks)
 
@@ -336,6 +352,11 @@ class NHITS(BaseWindows):
         futr_input_size,
         hist_input_size,
         stat_input_size,
+        n_series,
+        encoder_type,
+        sparse_exog_list,
+        sigma,
+        freq,
     ):
         block_list = []
         for i in range(len(stack_types)):
@@ -354,6 +375,21 @@ class NHITS(BaseWindows):
                     interpolation_mode=interpolation_mode,
                 )
 
+                if sparse_exog_list is not None:
+                    sparse_encoder = SparseEncoder(
+                            hist_exog_list=self.hist_exog_list,
+                            n_series=n_series,
+                            type=encoder_type,
+                            sparse_exog_list=sparse_exog_list,
+                            sigma=sigma,
+                            input_size=input_size,
+                            h=h,
+                            freq=freq,
+                            mask_future=False,
+                            )
+                else:
+                    sparse_encoder = None
+
                 nbeats_block = NHITSBlock(
                     h=h,
                     input_size=input_size,
@@ -365,6 +401,7 @@ class NHITS(BaseWindows):
                     n_pool_kernel_size=n_pool_kernel_size[i],
                     pooling_mode=pooling_mode,
                     basis=basis,
+                    sparse_encoder=sparse_encoder,
                     dropout_prob=dropout_prob_theta,
                     activation=activation,
                 )
@@ -381,6 +418,7 @@ class NHITS(BaseWindows):
         futr_exog = windows_batch["futr_exog"]
         hist_exog = windows_batch["hist_exog"]
         stat_exog = windows_batch["stat_exog"]
+        #batch_idx = windows_batch["batch_idx"]
 
         # insample
         residuals = insample_y.flip(dims=(-1,))  # backcast init
@@ -389,11 +427,20 @@ class NHITS(BaseWindows):
         forecast = insample_y[:, -1:, None]  # Level with Naive1
         block_forecasts = [forecast.repeat(1, self.h, 1)]
         for i, block in enumerate(self.blocks):
+            if block.sparse_encoder is not None:
+                hist_exog_treat = block.sparse_encoder(
+                    hist_exog=hist_exog,
+                    #idx=batch_idx
+                )
+            else:
+                hist_exog_treat = hist_exog
+                
             backcast, block_forecast = block(
                 insample_y=residuals,
                 futr_exog=futr_exog,
-                hist_exog=hist_exog,
+                hist_exog=hist_exog_treat,
                 stat_exog=stat_exog,
+                #batch_idx=batch_idx,
             )
             residuals = (residuals - backcast) * insample_mask
             forecast = forecast + block_forecast
