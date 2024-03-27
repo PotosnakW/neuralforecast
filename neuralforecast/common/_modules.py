@@ -569,17 +569,14 @@ class Concentrator(nn.Module):
     def forward(self, treatment_exog: torch.Tensor, idx: torch.Tensor) -> torch.Tensor:
         treatment_var1 = treatment_exog[:, :, -2]  # [B,L,C] -> [B,L]
         treatment_var2 = treatment_exog[:, :, -1]  # [B,L,C] -> [B,L]
-        # treatment_var3 = treatment_exog[:, :, -3]  # [B,L,C] -> [B,L]
 
         if self.type == "sum_total":
             treatment1 = self.sum_total(treatment_exog, treatment_var1, idx)
             treatment2 = self.sum_total(treatment_exog, treatment_var2, idx)
-            # treatment3 = self.sum_total(treatment_exog, treatment_var3, idx)
 
         elif self.type == "log_normal":
             treatment1 = self.log_normal(treatment_exog, treatment_var1, self.k_a1, idx)
             treatment2 = self.log_normal(treatment_exog, treatment_var2, self.k_a2, idx)
-            # treatment3 = self.log_normal(treatment_exog, treatment_var3, self.k_a3, idx)
 
         elif self.type == "exponential":
             treatment1 = self.exponential(
@@ -588,7 +585,6 @@ class Concentrator(nn.Module):
             treatment2 = self.exponential(
                 treatment_exog, treatment_var2, self.k_a2, idx
             )
-            # treatment3 = self.exponential(treatment_exog, treatment_var3, self.k_a3, idx)
 
         # Replace treatment variable with concentration
         treatment_exog_out = torch.zeros(treatment_exog.shape).to(treatment_exog.device)

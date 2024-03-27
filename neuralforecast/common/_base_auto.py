@@ -236,12 +236,6 @@ class BaseAuto(pl.LightningModule):
             config=self.config,
         )
         best_config = results.get_best_result().config
-        # self.model = self.cls_model(**best_config)
-        # self.model.fit(
-        #    dataset=dataset,
-        #    val_size=val_size * (1 - self.refit_with_val),
-        #    test_size=test_size,
-        # )
         self.model = self._fit_model(
             cls_model=self.cls_model,
             config=best_config,

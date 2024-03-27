@@ -12,6 +12,7 @@ import torch.nn as nn
 from ..losses.pytorch import MAE
 from ..common._base_recurrent import BaseRecurrent
 from ..common._modules import MLP
+from ..common._modules import Concentrator
 
 # %% ../../nbs/models.rnn.ipynb 7
 class RNN(BaseRecurrent):
@@ -25,7 +26,6 @@ class RNN(BaseRecurrent):
     **Parameters:**<br>
     `h`: int, forecast horizon.<br>
     `input_size`: int, maximum sequence length for truncated train backpropagation. Default -1 uses all history.<br>
-    `inference_input_size`: int, maximum sequence length for truncated inference. Default -1 uses all history.<br>
     `encoder_n_layers`: int=2, number of layers for the RNN.<br>
     `encoder_hidden_size`: int=200, units for the RNN's hidden state size.<br>
     `encoder_activation`: str=`tanh`, type of RNN activation from `tanh` or `relu`.<br>
@@ -50,10 +50,9 @@ class RNN(BaseRecurrent):
     `random_seed`: int=1, random_seed for pytorch initializer and numpy generators.<br>
     `num_workers_loader`: int=os.cpu_count(), workers to be used by `TimeSeriesDataLoader`.<br>
     `drop_last_loader`: bool=False, if True `TimeSeriesDataLoader` drops last non-full batch.<br>
-    `alias`: str, optional,  Custom name of the model.<br>
     `**trainer_kwargs`: int,  keyword trainer arguments inherited from [PyTorch Lighning's trainer](https://pytorch-lightning.readthedocs.io/en/stable/api/pytorch_lightning.trainer.trainer.Trainer.html?highlight=trainer).<br>
     """
-
+    
     # Class attributes
     SAMPLING_TYPE = "recurrent"
 
@@ -86,7 +85,15 @@ class RNN(BaseRecurrent):
         random_seed=1,
         num_workers_loader=0,
         drop_last_loader=False,
-        **trainer_kwargs
+        # New parameters
+        use_concentrator: bool = False,
+        concentrator_type: str = None,
+        n_series: int = 1,
+        treatment_var_name: str = "treatment",
+        init_ka1: float = 1.5,
+        init_ka2: float = 1.5,
+        freq: int = 1,
+        **trainer_kwargs,
     ):
         super(RNN, self).__init__(
             h=h,
@@ -108,8 +115,36 @@ class RNN(BaseRecurrent):
             num_workers_loader=num_workers_loader,
             drop_last_loader=drop_last_loader,
             random_seed=random_seed,
-            **trainer_kwargs
+            **trainer_kwargs,
         )
+
+        # ------------------ Concentrator ------------------
+        # Asserts
+        # if use_concentrator:
+        #     assert (
+        #         treatment_var_name in hist_exog_list
+        #     ), f"Variable {treatment_var_name} not found in hist_exog_list!"
+        #     assert (
+        #         hist_exog_list[-1] == treatment_var_name
+        #     ), f"Variable {treatment_var_name} must be the last element of hist_exog_list!"
+
+        self.use_concentrator = use_concentrator
+
+        if self.use_concentrator:
+            self.concentrator = Concentrator(
+                n_series=n_series,
+                type=concentrator_type,
+                treatment_var_name=treatment_var_name,
+                init_ka1 =init_ka1,
+                init_ka2= init_ka2,
+                input_size=input_size,
+                freq=freq,
+                h=h,
+                mask_future=False,
+            )
+        else:
+            self.concentrator = None
+        # --------------------------------------------------
 
         # RNN
         self.encoder_n_layers = encoder_n_layers
@@ -160,11 +195,13 @@ class RNN(BaseRecurrent):
         )
 
     def forward(self, windows_batch):
+
         # Parse windows_batch
         encoder_input = windows_batch["insample_y"]  # [B, seq_len, 1]
         futr_exog = windows_batch["futr_exog"]
         hist_exog = windows_batch["hist_exog"]
         stat_exog = windows_batch["stat_exog"]
+        batch_idx = windows_batch["batch_idx"]
 
         # Concatenate y, historic and static inputs
         # [B, C, seq_len, 1] -> [B, seq_len, C]
@@ -174,6 +211,10 @@ class RNN(BaseRecurrent):
             hist_exog = hist_exog.permute(0, 2, 1, 3).squeeze(
                 -1
             )  # [B, X, seq_len, 1] -> [B, seq_len, X]
+            if self.use_concentrator:
+                hist_exog = self.concentrator(
+                    treatment_exog=hist_exog, idx=batch_idx
+                )
             encoder_input = torch.cat((encoder_input, hist_exog), dim=2)
 
         if self.stat_exog_size > 0:
