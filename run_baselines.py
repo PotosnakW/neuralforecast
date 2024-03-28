@@ -42,7 +42,7 @@ def load_model(args):
 
 def main(args):
 
-    Y_df = pd.read_csv('data_glucose/ohiot1dm_exog_9_day_test.csv')
+    Y_df = pd.read_csv('/home/scratch/wpotosna/data/ohiot1dm_exog_9_day_test.csv')
     Y_df['ds'] = pd.to_datetime(Y_df['ds'])
 
     # days = 10
