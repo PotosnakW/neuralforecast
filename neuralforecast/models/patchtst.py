@@ -59,6 +59,24 @@ def PositionalEncoding(q_len, hidden_size, normalize=True):
 
 SinCosPosEncoding = PositionalEncoding
 
+def rotate_half(x):
+    x1, x2 = x.chunk(2, dim=-1)
+    return torch.cat((-x2, x1), dim=-1)
+
+def apply_rotary_pos_emb(q, k, cos, sin):
+    q_rot = (q * cos) + (rotate_half(q) * sin)
+    k_rot = (k * cos) + (rotate_half(k) * sin)
+    return q_rot, k_rot
+
+def RotaryPositionalEmbeddings(q_len, hidden_size, base=10000.0):
+    """Compute Rotary Position Embedding (RoPE)."""
+    inv_freq = 1.0 / (base ** (torch.arange(0, hidden_size, 2).float() / hidden_size))
+    pos = torch.arange(0, q_len, dtype=torch.float).unsqueeze(1)
+    sinusoid_inp = torch.einsum("i , j -> i j", pos, inv_freq)
+    cos_remb = sinusoid_inp.cos().unsqueeze(0).unsqueeze(0)
+    sin_remb = sinusoid_inp.sin().unsqueeze(0).unsqueeze(0)
+    
+    return cos_remb, sin_remb
 
 def Coord2dPosEncoding(q_len, hidden_size, exponential=False, normalize=True, eps=1e-3):
     x = 0.5 if exponential else 1
@@ -224,6 +242,7 @@ class PatchTST_backbone(nn.Module):
         pre_norm: bool = False,
         store_attn: bool = False,
         pe: str = "zeros",
+        rope: bool = False,
         learn_pe: bool = True,
         fc_dropout: float = 0.0,
         head_dropout=0,
@@ -274,6 +293,7 @@ class PatchTST_backbone(nn.Module):
             pre_norm=pre_norm,
             store_attn=store_attn,
             pe=pe,
+            rope=rope,
             learn_pe=learn_pe,
         )
 
@@ -391,6 +411,7 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
         res_attention=True,
         pre_norm=False,
         pe="zeros",
+        rope=False,
         learn_pe=True,
     ):
 
@@ -428,6 +449,7 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
             res_attention=res_attention,
             n_layers=n_layers,
             store_attn=store_attn,
+            rope=rope,
         )
 
     def forward(self, x) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
@@ -469,6 +491,7 @@ class TSTEncoder(nn.Module):
         n_layers=1,
         pre_norm=False,
         store_attn=False,
+        rope=False,
     ):
         super().__init__()
 
@@ -488,6 +511,7 @@ class TSTEncoder(nn.Module):
                     res_attention=res_attention,
                     pre_norm=pre_norm,
                     store_attn=store_attn,
+                    rope=rope,
                 )
                 for i in range(n_layers)
             ]
@@ -536,6 +560,7 @@ class TSTEncoderLayer(nn.Module):
         activation="gelu",
         res_attention=False,
         pre_norm=False,
+        rope=False,
     ):
         super().__init__()
         assert (
@@ -554,6 +579,7 @@ class TSTEncoderLayer(nn.Module):
             attn_dropout=attn_dropout,
             proj_dropout=dropout,
             res_attention=res_attention,
+            rope=rope,
         )
 
         # Add & Norm
@@ -649,6 +675,7 @@ class _MultiheadAttention(nn.Module):
         proj_dropout=0.0,
         qkv_bias=True,
         lsa=False,
+        rope=False, # Willa added
     ):
         """
         Multi Head Attention Layer
@@ -682,6 +709,8 @@ class _MultiheadAttention(nn.Module):
             nn.Linear(n_heads * d_v, hidden_size), nn.Dropout(proj_dropout)
         )
 
+        self.rope = rope
+
     def forward(
         self,
         Q: torch.Tensor,
@@ -708,6 +737,19 @@ class _MultiheadAttention(nn.Module):
         v_s = (
             self.W_V(V).view(bs, -1, self.n_heads, self.d_v).transpose(1, 2)
         )  # v_s    : [bs x n_heads x q_len x d_v]
+
+        # Apply Rotary Positional Embeddings (RoPE)  --> added by Willa
+        q_len = K.size(1)
+        hs = K.size(2)
+        if self.rope:
+            k_s = k_s.transpose(2, 3)
+            
+            cos_remb, sin_remb = rotary_positional_embeddings(q_len, hs)
+            cos_remb = cos_remb.to(q_s.device)
+            sin_remb = sin_remb.to(q_s.device)
+            q_s, k_s = apply_rotary_pos_emb(q_s, k_s, cos_remb, sin_remb)
+
+            k_s =k_s.transpose(2, 3)
 
         # Apply Scaled Dot-Product Attention (multiple heads)
         if self.res_attention:
@@ -933,6 +975,8 @@ class PatchTST(BaseWindows):
         optimizer_kwargs=None,
         lr_scheduler=None,
         lr_scheduler_kwargs=None,
+        pe="zeros", # Added - Willa
+        rope=False, # Added - Willa
         **trainer_kwargs
     ):
         super(PatchTST, self).__init__(
@@ -963,6 +1007,8 @@ class PatchTST(BaseWindows):
             optimizer_kwargs=optimizer_kwargs,
             lr_scheduler=lr_scheduler,
             lr_scheduler_kwargs=lr_scheduler_kwargs,
+            pe=pe, # Added - Willa
+            rope=rope,
             **trainer_kwargs
         )
 
@@ -976,7 +1022,7 @@ class PatchTST(BaseWindows):
         padding_patch = "end"  # Padding at the end
         pretrain_head = False  # No pretrained head
         norm = "BatchNorm"  # Use BatchNorm (if batch_normalization is True)
-        pe = "zeros"  # Initial zeros for positional encoding
+        #pe = "zeros"  # Initial zeros for positional encoding
         d_k = None  # Key dimension
         d_v = None  # Value dimension
         store_attn = False  # Store attention weights
@@ -986,6 +1032,9 @@ class PatchTST(BaseWindows):
         key_padding_mask = "auto"  # Not used
         padding_var = None  # Not used
         attn_mask = None  # Not used
+
+        if (rope==True) & (pe != 'zeros'):
+            raise Error("Both RoPE is enabled and positional encodings are not 'zeros'.")
 
         self.model = PatchTST_backbone(
             c_in=c_in,
@@ -1012,6 +1061,7 @@ class PatchTST(BaseWindows):
             pre_norm=batch_normalization,
             store_attn=store_attn,
             pe=pe,
+            rope=rope,
             learn_pe=learn_pos_embed,
             fc_dropout=fc_dropout,
             head_dropout=head_dropout,
