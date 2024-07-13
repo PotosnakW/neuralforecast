@@ -59,24 +59,29 @@ def PositionalEncoding(q_len, hidden_size, normalize=True):
 
 SinCosPosEncoding = PositionalEncoding
 
-def rotate_half(x):
-    x1, x2 = x.chunk(2, dim=-1)
-    return torch.cat((-x2, x1), dim=-1)
-
-def apply_rotary_pos_emb(q, k, cos, sin):
-    q_rot = (q * cos) + (rotate_half(q) * sin)
-    k_rot = (k * cos) + (rotate_half(k) * sin)
-    return q_rot, k_rot
-
-def RotaryPositionalEmbeddings(q_len, hidden_size, base=10000.0):
+def RotaryPositionalEmbedding(q, base=10000.0):
     """Compute Rotary Position Embedding (RoPE)."""
-    inv_freq = 1.0 / (base ** (torch.arange(0, hidden_size, 2).float() / hidden_size))
-    pos = torch.arange(0, q_len, dtype=torch.float).unsqueeze(1)
-    sinusoid_inp = torch.einsum("i , j -> i j", pos, inv_freq)
-    cos_remb = sinusoid_inp.cos().unsqueeze(0).unsqueeze(0)
-    sin_remb = sinusoid_inp.sin().unsqueeze(0).unsqueeze(0)
+
+    bs, n_heads, q_len, d_k = q.shape
+
+    theta = 1.0 / (base ** (torch.arange(0, d_k, 2).float() / d_k))
+    pos = torch.arange(0, q_len, dtype=torch.float) 
+    idx_theta = torch.einsum("i , j -> i j", pos, theta)
+    cos_remb = idx_theta.cos().unsqueeze(0).unsqueeze(0).to(q.device)
+    sin_remb = idx_theta.sin().unsqueeze(0).unsqueeze(0).to(q.device)
+
+    # Reshape tensor to apply rotation and apply rotation matrix
+    q_reshaped = q.view(bs, n_heads, q_len, d_k // 2, 2).clone()
+    rotated_q = torch.stack([q_reshaped[..., 0] * cos_remb - q_reshaped[..., 1] * sin_remb,
+                             q_reshaped[..., 0] * sin_remb + q_reshaped[..., 1] * cos_remb
+                            ], 
+                             dim=-1
+                            )
+
+    # Reshape back to original tensor shape
+    rpe = rotated_q.view(bs, n_heads, q_len, d_k)
     
-    return cos_remb, sin_remb
+    return rpe
 
 def Coord2dPosEncoding(q_len, hidden_size, exponential=False, normalize=True, eps=1e-3):
     x = 0.5 if exponential else 1
@@ -144,10 +149,13 @@ def positional_encoding(pe, learn_pe, q_len, hidden_size):
         W_pos = Coord2dPosEncoding(q_len, hidden_size, exponential=True, normalize=True)
     elif pe == "sincos":
         W_pos = PositionalEncoding(q_len, hidden_size, normalize=True)
+    elif pe == "rope":
+        W_pos = torch.empty((q_len, hidden_size))
+        nn.init.uniform_(W_pos, -0.02, 0.02)
     else:
         raise ValueError(
             f"{pe} is not a valid pe (positional encoder. Available types: 'gauss'=='normal', \
-        'zeros', 'zero', uniform', 'lin1d', 'exp1d', 'lin2d', 'exp2d', 'sincos', None.)"
+        'zeros', 'zero', uniform', 'lin1d', 'exp1d', 'lin2d', 'exp2d', 'sincos', 'rope', None.)"
         )
     return nn.Parameter(W_pos, requires_grad=learn_pe)
 
@@ -242,7 +250,6 @@ class PatchTST_backbone(nn.Module):
         pre_norm: bool = False,
         store_attn: bool = False,
         pe: str = "zeros",
-        rope: bool = False,
         learn_pe: bool = True,
         fc_dropout: float = 0.0,
         head_dropout=0,
@@ -293,7 +300,6 @@ class PatchTST_backbone(nn.Module):
             pre_norm=pre_norm,
             store_attn=store_attn,
             pe=pe,
-            rope=rope,
             learn_pe=learn_pe,
         )
 
@@ -411,7 +417,6 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
         res_attention=True,
         pre_norm=False,
         pe="zeros",
-        rope=False,
         learn_pe=True,
     ):
 
@@ -449,7 +454,7 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
             res_attention=res_attention,
             n_layers=n_layers,
             store_attn=store_attn,
-            rope=rope,
+            pe=pe,
         )
 
     def forward(self, x) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
@@ -462,6 +467,7 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
         u = torch.reshape(
             x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3])
         )  # u: [bs * nvars x patch_num x hidden_size]
+
         u = self.dropout(u + self.W_pos)  # u: [bs * nvars x patch_num x hidden_size]
 
         # Encoder
@@ -491,7 +497,7 @@ class TSTEncoder(nn.Module):
         n_layers=1,
         pre_norm=False,
         store_attn=False,
-        rope=False,
+        pe="zeros",
     ):
         super().__init__()
 
@@ -511,7 +517,7 @@ class TSTEncoder(nn.Module):
                     res_attention=res_attention,
                     pre_norm=pre_norm,
                     store_attn=store_attn,
-                    rope=rope,
+                    pe=pe,
                 )
                 for i in range(n_layers)
             ]
@@ -560,7 +566,7 @@ class TSTEncoderLayer(nn.Module):
         activation="gelu",
         res_attention=False,
         pre_norm=False,
-        rope=False,
+        pe="zeros",
     ):
         super().__init__()
         assert (
@@ -579,7 +585,7 @@ class TSTEncoderLayer(nn.Module):
             attn_dropout=attn_dropout,
             proj_dropout=dropout,
             res_attention=res_attention,
-            rope=rope,
+            pe=pe,
         )
 
         # Add & Norm
@@ -675,7 +681,7 @@ class _MultiheadAttention(nn.Module):
         proj_dropout=0.0,
         qkv_bias=True,
         lsa=False,
-        rope=False, # Willa added
+        pe="zeros", # Willa added
     ):
         """
         Multi Head Attention Layer
@@ -709,7 +715,7 @@ class _MultiheadAttention(nn.Module):
             nn.Linear(n_heads * d_v, hidden_size), nn.Dropout(proj_dropout)
         )
 
-        self.rope = rope
+        self.pe = pe
 
     def forward(
         self,
@@ -738,18 +744,13 @@ class _MultiheadAttention(nn.Module):
             self.W_V(V).view(bs, -1, self.n_heads, self.d_v).transpose(1, 2)
         )  # v_s    : [bs x n_heads x q_len x d_v]
 
-        # Apply Rotary Positional Embeddings (RoPE)  --> added by Willa
-        q_len = K.size(1)
-        hs = K.size(2)
-        if self.rope:
-            k_s = k_s.transpose(2, 3)
-            
-            cos_remb, sin_remb = rotary_positional_embeddings(q_len, hs)
-            cos_remb = cos_remb.to(q_s.device)
-            sin_remb = sin_remb.to(q_s.device)
-            q_s, k_s = apply_rotary_pos_emb(q_s, k_s, cos_remb, sin_remb)
-
-            k_s =k_s.transpose(2, 3)
+        # Apply Rotary Positional Embeddings (RoPE)
+        if self.pe == "rope":
+            print('yee')
+            k_s = k_s.transpose(2, 3) #[bs x n_heads x q_len x d_k]
+            q_s = RotaryPositionalEmbedding(q_s.clone()) #[bs x n_heads x q_len x d_k]
+            k_s = RotaryPositionalEmbedding(k_s.clone()) #[bs x n_heads x q_len x d_k]
+            k_s = k_s.transpose(2, 3) #[bs x n_heads x d_k x q_len]
 
         # Apply Scaled Dot-Product Attention (multiple heads)
         if self.res_attention:
@@ -975,8 +976,7 @@ class PatchTST(BaseWindows):
         optimizer_kwargs=None,
         lr_scheduler=None,
         lr_scheduler_kwargs=None,
-        pe="zeros", # Added - Willa
-        rope=False, # Added - Willa
+        pe="zeros", 
         **trainer_kwargs
     ):
         super(PatchTST, self).__init__(
@@ -1007,8 +1007,6 @@ class PatchTST(BaseWindows):
             optimizer_kwargs=optimizer_kwargs,
             lr_scheduler=lr_scheduler,
             lr_scheduler_kwargs=lr_scheduler_kwargs,
-            pe=pe, # Added - Willa
-            rope=rope,
             **trainer_kwargs
         )
 
@@ -1032,9 +1030,6 @@ class PatchTST(BaseWindows):
         key_padding_mask = "auto"  # Not used
         padding_var = None  # Not used
         attn_mask = None  # Not used
-
-        if (rope==True) & (pe != 'zeros'):
-            raise Error("Both RoPE is enabled and positional encodings are not 'zeros'.")
 
         self.model = PatchTST_backbone(
             c_in=c_in,
@@ -1061,7 +1056,6 @@ class PatchTST(BaseWindows):
             pre_norm=batch_normalization,
             store_attn=store_attn,
             pe=pe,
-            rope=rope,
             learn_pe=learn_pos_embed,
             fc_dropout=fc_dropout,
             head_dropout=head_dropout,
