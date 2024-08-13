@@ -434,7 +434,11 @@ class BaseModel(pl.LightningModule):
     def save(self, path):
         with fsspec.open(path, "wb") as f:
             torch.save(
-                {"hyper_parameters": self.hparams, "state_dict": self.state_dict()},
+                {"hyper_parameters": self.hparams, 
+                 "state_dict": self.state_dict(),
+                 "train_trajectories": self.train_trajectories, # Willa added this
+                 "valid_trajectories": self.valid_trajectories, # Willa added this
+                },
                 f,
             )
 
