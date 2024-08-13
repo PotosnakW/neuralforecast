@@ -354,6 +354,7 @@ class PatchTST_backbone(nn.Module):
 
         # model
         z = self.backbone(z)  # z: [bs x nvars x hidden_size x patch_num]
+       # embeddings = z.clone() # WILLA ADDED THIS
         z = self.head(z)  # z: [bs x nvars x h]
 
         # denorm
