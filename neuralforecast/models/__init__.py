@@ -24,6 +24,8 @@ from .informer import Informer
 from .autoformer import Autoformer
 from .fedformer import FEDformer
 from .patchtst import PatchTST
+from .patchdecoder import PatchDecoder
+from .patchencoderdecoder import PatchEncoderDecoder
 from .hint import HINT
 from .timesnet import TimesNet
 from .timellm import TimeLLM
