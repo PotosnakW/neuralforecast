@@ -495,7 +495,7 @@ class Transformeri(nn.Module):  # i means channel-independent
             n_layers=n_layers,
             store_attn=store_attn,
             pe=pe,
-        )
+            )
 
     def forward(self, x) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
 
@@ -514,7 +514,7 @@ class Transformeri(nn.Module):  # i means channel-independent
         z, z_k_s, z_v_s = self.encoder(u)  # z: [bs * nvars x patch_num x hidden_size]
 
         # Decoder
-        z = self.decoder(u, z, z_k_s, z_v_s)  # z: [bs * nvars x patch_num x hidden_size]
+        z = self.decoder(src=u, k_s=z_k_s, v_s=z_v_s)  # z: [bs * nvars x patch_num x hidden_size]
         
         z = torch.reshape(
             z, (-1, n_vars, z.shape[-2], z.shape[-1])
@@ -592,7 +592,9 @@ class TransformerEncoder(nn.Module):
         else:
             for mod in self.layers:
                 output, key, value = mod(
-                    output, key_padding_mask=key_padding_mask, attn_mask=attn_mask
+                    output, 
+                    key_padding_mask=key_padding_mask, 
+                    attn_mask=attn_mask,
                 )
             return output, key, value
 
@@ -682,16 +684,20 @@ class EncoderLayer(nn.Module):
         ## Multi-Head attention
         if self.res_attention:
             src2, attn, scores, k_s, v_s = self.self_attn(
-                src,
-                src,
-                src,
-                prev,
+                Q=src,
+                K=src,
+                V=src,
+                prev=prev,
                 key_padding_mask=key_padding_mask,
                 attn_mask=attn_mask,
             )
         else:
             src2, attn, k_s, v_s = self.self_attn(
-                src, src, src, key_padding_mask=key_padding_mask, attn_mask=attn_mask
+                Q=src,
+                K=src,
+                V=src,
+                key_padding_mask=key_padding_mask,
+                attn_mask=attn_mask,
             )
 
         if self.store_attn:
@@ -768,6 +774,7 @@ class TransformerDecoder(nn.Module):
             ]
         )
         self.res_attention = res_attention
+        self.q_len = q_len
 
     def forward(
         self,
@@ -775,29 +782,45 @@ class TransformerDecoder(nn.Module):
         k_s: torch.Tensor,
         v_s: torch.Tensor,
         key_padding_mask: Optional[torch.Tensor] = None,
-        attn_mask: Optional[torch.Tensor] = None,
     ):
+
+        self_attn_mask = torch.triu(torch.ones(self.q_len, self.q_len, 
+                                               dtype=torch.bool
+                                              ), 
+                                    diagonal=1
+                                   ).to(src.device)
+        self_attn_mask = self_attn_mask.unsqueeze(0) # [1 x seq_len x seq_len]
+
+        cross_attn_mask = torch.triu(torch.zeros(self.q_len, self.q_len, 
+                                                 dtype=torch.bool
+                                                ), 
+                                     diagonal=1
+                                    ).to(src.device)
+        cross_attn_mask = cross_attn_mask.unsqueeze(0) # [1 x seq_len x seq_len]
+
         output = src
         scores = None
         if self.res_attention:
             for mod in self.layers:
                 output, scores = mod(
-                    output,
-                    encoder_k=k_s,
-                    encoder_v=v_s,
+                    src=output,
+                    k_s=k_s,
+                    v_s=v_s,
                     prev=scores,
                     key_padding_mask=key_padding_mask,
-                    attn_mask=attn_mask,
+                    self_attn_mask=self_attn_mask,
+                    cross_attn_mask=cross_attn_mask,
                 )
             return output
         else:
             for mod in self.layers:
                 output = mod(
-                    output, 
-                    encoder_k=encoder_k,
-                    encoder_v=encoder_v,
+                    src=output, 
+                    k_s=k_s,
+                    v_s=v_s,
                     key_padding_mask=key_padding_mask, 
-                    attn_mask=attn_mask
+                    self_attn_mask=self_attn_mask,
+                    cross_attn_mask=cross_attn_mask,
                 )
             return output
 
@@ -887,20 +910,13 @@ class DecoderLayer(nn.Module):
     def forward(
         self,
         src: torch.Tensor,
-        encoder_k: torch.Tensor,  # Only used in decoder for cross-attention
-        encoder_v: torch.Tensor,  # Only used in decoder for cross-attention
+        k_s: torch.Tensor,  # Only used in decoder for cross-attention
+        v_s: torch.Tensor,  # Only used in decoder for cross-attention
+        self_attn_mask: torch.Tensor,
+        cross_attn_mask: torch.Tensor,
         prev: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
     ):
-
-        self_attn_mask = torch.triu(torch.ones(q_len, q_len, dtype=torch.bool), 
-                               diagonal=1).to(self.device)
-        self_attn_mask = self_attn_mask.unsqueeze(0) # [1 x seq_len x seq_len]
-
-        cross_attn_mask = torch.triu(torch.zeros(q_len, q_len, dtype=torch.bool), 
-                               diagonal=1).to(self.device)
-        cross_attn_mask = cross_attn_mask.unsqueeze(0) # [1 x seq_len x seq_len]
-
         
         # Multi-Head attention sublayer
         if self.pre_norm:
@@ -908,19 +924,21 @@ class DecoderLayer(nn.Module):
 
         ## Multi-Head attention
         if self.res_attention:
-            src2, attn, scores = self.self_attn(
-                src,
-                src,
-                src,
-                prev,
+            src2, attn, scores, _, _ = self.self_attn(
+                Q=src,
+                K=src,
+                V=src,
+                prev=prev,
                 key_padding_mask=key_padding_mask,
                 attn_mask=self_attn_mask,
             )
         else:
-            src2, attn = self.self_attn(
-                src, src, src, 
+            src2, attn, _, _ = self.self_attn(
+                Q=src,
+                K=src,
+                V=src,
                 key_padding_mask=key_padding_mask, 
-                attn_mask=self_attn_mask
+                attn_mask=self_attn_mask,
             )
 
         if self.store_attn:
@@ -933,13 +951,24 @@ class DecoderLayer(nn.Module):
         if not self.pre_norm:
             src = self.norm_attn(src)
         
-        src2, attn = self.cross_attn(
-                Q=src, 
-                K=encoder_k,
-                V=encoder_v, 
-                key_padding_mask=key_padding_mask, 
-                attn_mask=cross_attn_mask
-            )
+        if self.res_attention:
+            src2, attn, scores, _, _ = self.cross_attn(
+                            Q=src,
+                            K=src,
+                            V=src,
+                            prev=prev,
+                            key_padding_mask=key_padding_mask,
+                            attn_mask=cross_attn_mask,
+                        )
+        else:
+            src2, attn, _, _ = self.cross_attn(
+                    Q=src, 
+                    k_s=k_s,
+                    v_s=v_s, 
+                    key_padding_mask=key_padding_mask, 
+                    attn_mask=cross_attn_mask,
+                )
+    
         src = src + self.dropout_attn(src2)
         if not self.pre_norm:
             src = self.norm_attn(src)
@@ -1018,6 +1047,8 @@ class _MultiheadAttention(nn.Module):
         Q: torch.Tensor,
         K: Optional[torch.Tensor] = None,
         V: Optional[torch.Tensor] = None,
+        k_s: Optional[torch.Tensor] = None,
+        v_s: Optional[torch.Tensor] = None,
         prev: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
         attn_mask: Optional[torch.Tensor] = None,
@@ -1029,20 +1060,22 @@ class _MultiheadAttention(nn.Module):
         if V is None:
             V = Q
 
-        # Linear (+ split in multiple heads)
         q_s = (
             self.W_Q(Q).view(bs, -1, self.n_heads, self.d_k).transpose(1, 2)
         )  # q_s    : [bs x n_heads x max_q_len x d_k]
-        k_s = (
-            self.W_K(K).view(bs, -1, self.n_heads, self.d_k).permute(0, 2, 3, 1)
-        )  # k_s    : [bs x n_heads x d_k x q_len] - transpose(1,2) + transpose(2,3)
-        v_s = (
-            self.W_V(V).view(bs, -1, self.n_heads, self.d_v).transpose(1, 2)
-        )  # v_s    : [bs x n_heads x q_len x d_v]
+        
+        # Linear (+ split in multiple heads)
+        if k_s is None:
+            k_s = (
+                self.W_K(K).view(bs, -1, self.n_heads, self.d_k).permute(0, 2, 3, 1)
+            )  # k_s    : [bs x n_heads x d_k x q_len] - transpose(1,2) + transpose(2,3)
+        if v_s is None:
+            v_s = (
+                self.W_V(V).view(bs, -1, self.n_heads, self.d_v).transpose(1, 2)
+            )  # v_s    : [bs x n_heads x q_len x d_v]
 
         # Apply Rotary Positional Embeddings (RoPE)
         if self.pe == "rope":
-            print('yee')
             k_s = k_s.transpose(2, 3) #[bs x n_heads x q_len x d_k]
             q_s = RotaryPositionalEmbedding(q_s.clone()) #[bs x n_heads x q_len x d_k]
             k_s = RotaryPositionalEmbedding(k_s.clone()) #[bs x n_heads x q_len x d_k]
@@ -1060,7 +1093,11 @@ class _MultiheadAttention(nn.Module):
             )
         else:
             output, attn_weights = self.sdp_attn(
-                q_s, k_s, v_s, key_padding_mask=key_padding_mask, attn_mask=attn_mask
+                q_s, 
+                k_s, 
+                v_s, 
+                key_padding_mask=key_padding_mask, 
+                attn_mask=attn_mask
             )
         # output: [bs x n_heads x q_len x d_v], attn: [bs x n_heads x q_len x q_len], scores: [bs x n_heads x max_q_len x q_len]
 
@@ -1129,10 +1166,8 @@ class _ScaledDotProductAttention(nn.Module):
         if (
             attn_mask is not None
         ):  # attn_mask with shape [q_len x seq_len] - only used when q_len == seq_len
-            if attn_mask.dtype == torch.bool:
-                attn_scores.masked_fill_(attn_mask, -np.inf)
-            else:
-                attn_scores += attn_mask
+            attn_mask = attn_mask.bool()
+            attn_scores.masked_fill_(attn_mask, -np.inf)
 
         # Key padding mask (optional)
         if (
