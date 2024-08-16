@@ -511,10 +511,10 @@ class Transformeri(nn.Module):  # i means channel-independent
         u = self.dropout(u + self.W_pos)  # u: [bs * nvars x patch_num x hidden_size]
 
         # Encoder
-        z, z_k, z_v = self.encoder(u)  # z: [bs * nvars x patch_num x hidden_size]
+        z, z_k_s, z_v_s = self.encoder(u)  # z: [bs * nvars x patch_num x hidden_size]
 
         # Decoder
-        z = self.decoder(u, z, z_k, z_v)  # z: [bs * nvars x patch_num x hidden_size]
+        z = self.decoder(u, z, z_k_s, z_v_s)  # z: [bs * nvars x patch_num x hidden_size]
         
         z = torch.reshape(
             z, (-1, n_vars, z.shape[-2], z.shape[-1])
@@ -582,7 +582,7 @@ class TransformerEncoder(nn.Module):
         scores = None
         if self.res_attention:
             for mod in self.layers:
-                output, scores = mod(
+                output, scores, key, value = mod(
                     output,
                     prev=scores,
                     key_padding_mask=key_padding_mask,
@@ -594,7 +594,7 @@ class TransformerEncoder(nn.Module):
                 output, key, value = mod(
                     output, key_padding_mask=key_padding_mask, attn_mask=attn_mask
                 )
-            return output
+            return output, key, value
 
 class EncoderLayer(nn.Module):
     """Encoder Layer"""
@@ -681,7 +681,7 @@ class EncoderLayer(nn.Module):
 
         ## Multi-Head attention
         if self.res_attention:
-            src2, attn, scores = self.self_attn(
+            src2, attn, scores, k_s, v_s = self.self_attn(
                 src,
                 src,
                 src,
@@ -690,7 +690,7 @@ class EncoderLayer(nn.Module):
                 attn_mask=attn_mask,
             )
         else:
-            src2, attn = self.self_attn(
+            src2, attn, k_s, v_s = self.self_attn(
                 src, src, src, key_padding_mask=key_padding_mask, attn_mask=attn_mask
             )
 
@@ -717,9 +717,9 @@ class EncoderLayer(nn.Module):
             src = self.norm_ffn(src)
 
         if self.res_attention:
-            return src, scores
+            return src, scores, k_s, v_s
         else:
-            return src, self.self_attn.k_s, self.self_attn.v_s # Return key and value tensors
+            return src, k_s, v_s # Return key and value tensors
 
 class TransformerDecoder(nn.Module):
     """
@@ -772,18 +772,19 @@ class TransformerDecoder(nn.Module):
     def forward(
         self,
         src: torch.Tensor,
-        encoder_k: torch.Tensor,
-        encoder_v: torch.Tensor,
+        k_s: torch.Tensor,
+        v_s: torch.Tensor,
         key_padding_mask: Optional[torch.Tensor] = None,
         attn_mask: Optional[torch.Tensor] = None,
     ):
         output = src
-        encoder_output = src_encoder
         scores = None
         if self.res_attention:
             for mod in self.layers:
                 output, scores = mod(
                     output,
+                    encoder_k=k_s,
+                    encoder_v=v_s,
                     prev=scores,
                     key_padding_mask=key_padding_mask,
                     attn_mask=attn_mask,
@@ -792,7 +793,11 @@ class TransformerDecoder(nn.Module):
         else:
             for mod in self.layers:
                 output = mod(
-                    output, key_padding_mask=key_padding_mask, attn_mask=attn_mask
+                    output, 
+                    encoder_k=encoder_k,
+                    encoder_v=encoder_v,
+                    key_padding_mask=key_padding_mask, 
+                    attn_mask=attn_mask
                 )
             return output
 
@@ -1066,9 +1071,9 @@ class _MultiheadAttention(nn.Module):
         output = self.to_out(output)
 
         if self.res_attention:
-            return output, attn_weights, attn_scores
+            return output, attn_weights, attn_scores, k_s, v_s
         else:
-            return output, attn_weights
+            return output, attn_weights, k_s, v_s
 
 
 class _ScaledDotProductAttention(nn.Module):
