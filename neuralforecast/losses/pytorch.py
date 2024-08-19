@@ -84,11 +84,14 @@ class BasePointLoss(torch.nn.Module):
 
         if self.horizon_weight is None:
             self.horizon_weight = torch.ones(mask.shape[-1])
-        else:
-            assert mask.shape[-1] == len(
-                self.horizon_weight
-            ), "horizon_weight must have same length as Y"
-
+        elif (mask.shape[-1] != len(self.horizon_weight))&\
+              (torch.all(self.horizon_weight==1)==True):
+            self.horizon_weight = torch.ones(mask.shape[-1])
+        # else:
+        #     assert mask.shape[-1] == len(
+        #         self.horizon_weight
+        #     ), "horizon_weight must have same length as Y"
+        
         weights = self.horizon_weight.clone()
         weights = torch.ones_like(mask, device=mask.device) * weights.to(mask.device)
         return weights * mask
@@ -131,6 +134,7 @@ class MAE(BasePointLoss):
         `mae`: tensor (single value).
         """
         losses = torch.abs(y - y_hat)
+        print(y.size(), mask.size())
         weights = self._compute_weights(y=y, mask=mask)
         return _weighted_mean(losses=losses, weights=weights)
 
