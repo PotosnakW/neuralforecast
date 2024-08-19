@@ -332,6 +332,7 @@ class PatchTST_backbone(nn.Module):
                 self.individual,
                 self.n_vars,
                 self.head_nf,
+                h=h,
                 patch_len=patch_len,
                 c_out=c_out,
                 head_dropout=head_dropout,
@@ -374,12 +375,19 @@ class Flatten_Head(nn.Module):
     Flatten_Head
     """
 
-    def __init__(self, individual, n_vars, nf, patch_len, c_out, head_dropout=0):
+    def __init__(self, individual, n_vars, nf, h, patch_len, c_out, head_dropout=0):
         super().__init__()
 
         self.individual = individual
         self.n_vars = n_vars
         self.c_out = c_out
+
+        ## WILLA'S FIX SO H IS PREDICTED IF PATCH_LEN > HORIZON. 
+        ## MAKE OUTPUT_SHAPE==PATCH_LEN TO PREDICT PATCH_LEN ALWAYS
+        if h < patch_len:
+            output_shape = h
+        else:
+            output_shape = patch_len
 
         if self.individual:
             self.linears = nn.ModuleList()
@@ -387,11 +395,11 @@ class Flatten_Head(nn.Module):
             self.flattens = nn.ModuleList()
             for i in range(self.n_vars):
                 self.flattens.append(nn.Flatten(start_dim=-2))
-                self.linears.append(nn.Linear(nf, patch_len * c_out))
+                self.linears.append(nn.Linear(nf, output_shape * c_out))
                 self.dropouts.append(nn.Dropout(head_dropout))
         else:
             self.flatten = nn.Flatten(start_dim=-2)
-            self.linear = nn.Linear(nf, patch_len * c_out)
+            self.linear = nn.Linear(nf, output_shape * c_out)
             self.dropout = nn.Dropout(head_dropout)
 
     def forward(self, x):  # x: [bs x nvars x hidden_size x patch_num]

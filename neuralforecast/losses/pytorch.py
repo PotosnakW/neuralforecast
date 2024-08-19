@@ -134,7 +134,6 @@ class MAE(BasePointLoss):
         `mae`: tensor (single value).
         """
         losses = torch.abs(y - y_hat)
-        print(y.size(), mask.size())
         weights = self._compute_weights(y=y, mask=mask)
         return _weighted_mean(losses=losses, weights=weights)
 

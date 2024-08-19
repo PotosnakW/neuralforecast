@@ -80,9 +80,16 @@ class BasePatch(BaseModel):
         # Padder to complete train windows,
         # example y=[1,2,3,4,5] h=3 -> last y_output = [5,0,0]
         self.h = h
+
         self.patch_len = torch.minimum(torch.tensor(patch_len), 
                                        torch.tensor(input_size + stride)
                                       )
+        ## WILLA'S FIX SO H IS PREDICTED IF PATCH_LEN > HORIZON. 
+        ## REMOVE torch.tensor(h) TO PREDICT PATCH_LEN ALWAYS
+        self.patch_len = torch.minimum(self.patch_len, 
+                                       torch.tensor(h)
+                                      )
+        
         self.input_size = input_size
         self.windows_batch_size = windows_batch_size
         self.start_padding_enabled = start_padding_enabled
@@ -228,6 +235,12 @@ class BasePatch(BaseModel):
                 cutoff = -self.input_size - self.test_size
                 temporal = temporal[:, :, cutoff:]
 
+                #---added by willa!!!
+                if self.h < self.patch_len:
+                    diff = self.patch_len - self.h
+                    padder_right = nn.ConstantPad1d(padding=(0, diff), value=0)
+                    temporal = padder_right(temporal)
+
             elif step == "val":
                 predict_step_size = self.step_size
                 cutoff = -self.input_size - self.val_size - self.test_size
@@ -240,7 +253,13 @@ class BasePatch(BaseModel):
                     padder_left = nn.ConstantPad1d(
                         padding=(self.input_size - initial_input, 0), value=0
                     )
-                    temporal = padder_left(temporal)
+                    temporal = padder_left(temporal) 
+
+                #---added by willa!!!
+                if self.h < self.patch_len:
+                    diff = self.patch_len - self.h
+                    padder_right = nn.ConstantPad1d(padding=(0, diff), value=0)
+                    temporal = padder_right(temporal)
 
             if (
                 (step == "predict")
@@ -497,12 +516,16 @@ class BasePatch(BaseModel):
 
         # TODO: Hack to compute number of windows
         window_size = self.input_size + self.patch_len
-        windows = self._create_windows(batch, window_size=window_size, step="val")
-        n_windows = len(windows["temporal"])-self.patch_len # adjust so windows matches windows_h
+        windows_h = self._create_windows(batch, window_size=self.input_size + self.h, step="val")
+        # if self.h >= self.patch_len:
+        #     n_windows = len(windows["temporal"])-self.patch_len # adjust so windows matches windows_h
+        # else:
+        #     n_windows = len(windows["temporal"])
+        n_windows = len(windows_h["temporal"])
         y_idx = batch["y_idx"]
 
         # Calculate how many times each window should be repeated
-        n_repeats = self.h // self.patch_len
+        n_repeats = int(torch.ceil(torch.tensor([self.h/self.patch_len])))
         # Repeat each index in the range of n_windows, n_repeats times
         repeated_idxs = torch.arange(n_windows).repeat_interleave(n_repeats)
         
@@ -531,7 +554,7 @@ class BasePatch(BaseModel):
             # Concatenate along dimension 1
             if fi % n_repeats != 0:
                 insample_y = torch.cat((insample_y, *previous_preds), dim=1)
-                insample_y = insample_y[:, self.patch_len:]
+                insample_y = insample_y[:, self.patch_len*len(previous_preds) :]
             else:
                 previous_preds = []
 
@@ -549,6 +572,7 @@ class BasePatch(BaseModel):
 
             if (fi+1) % n_repeats == 0:
                 output_horizon = torch.cat(previous_preds, dim=1)
+                output_horizon = output_horizon[:, : self.h]
                 windows_h = self._create_windows(batch, window_size=self.input_size + self.h, 
                                                  step="val", w_idxs=i)
                 windows_h['temporal'] = windows_h['temporal'].unsqueeze(0)
@@ -596,12 +620,16 @@ class BasePatch(BaseModel):
 
         # TODO: Hack to compute number of windows
         window_size = self.input_size + self.patch_len
-        windows = self._create_windows(batch, window_size=window_size, step="predict")
-        n_windows = len(windows["temporal"])-self.patch_len # adjust so windows matches windows_h
+        windows_h = self._create_windows(batch, window_size=self.input_size + self.h, step="predict")
+        # if self.h >= self.patch_len:
+        #     n_windows = len(windows["temporal"])-self.patch_len # adjust so windows matches windows_h
+        # else:
+        #     n_windows = len(windows["temporal"])
+        n_windows = len(windows_h["temporal"])
         y_idx = batch["y_idx"]
 
         # Calculate how many times each window should be repeated
-        n_repeats = self.h // self.patch_len
+        n_repeats = int(torch.ceil(torch.tensor([self.h/self.patch_len])))
         # Repeat each index in the range of n_windows, n_repeats times
         repeated_idxs = torch.arange(n_windows).repeat_interleave(n_repeats)
 
@@ -629,7 +657,7 @@ class BasePatch(BaseModel):
             # Concatenate along dimension 1
             if fi % n_repeats != 0:
                 insample_y = torch.cat((insample_y, *previous_preds), dim=1)
-                insample_y = insample_y[:, self.patch_len:]
+                insample_y = insample_y[:, self.patch_len*len(previous_preds) :]
             else:
                 previous_preds = []
 
@@ -647,8 +675,9 @@ class BasePatch(BaseModel):
 
             if (fi+1) % n_repeats == 0:
                 output_horizon = torch.cat(previous_preds, dim=1)
+                output_horizon = output_horizon[:, : self.h]
                 windows_h = self._create_windows(batch, window_size=self.input_size + self.h, 
-                                                 step="val", w_idxs=i)
+                                                 step="predict", w_idxs=i)
                 windows_h['temporal'] = windows_h['temporal'].unsqueeze(0)
                 original_outsample_y = torch.clone(windows_h["temporal"][:, -self.h :, y_idx])
                 (
