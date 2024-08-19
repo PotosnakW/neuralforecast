@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..common._base_patch import BasePatch
+from ..common._base_windows import BaseWindows
 
 from ..losses.pytorch import MAE
 
@@ -332,8 +332,8 @@ class PatchTST_backbone(nn.Module):
                 self.individual,
                 self.n_vars,
                 self.head_nf,
-                patch_len=patch_len,
-                c_out=c_out,
+                h,
+                c_out,
                 head_dropout=head_dropout,
             )
 
@@ -374,7 +374,7 @@ class Flatten_Head(nn.Module):
     Flatten_Head
     """
 
-    def __init__(self, individual, n_vars, nf, patch_len, c_out, head_dropout=0):
+    def __init__(self, individual, n_vars, nf, h, c_out, head_dropout=0):
         super().__init__()
 
         self.individual = individual
@@ -387,11 +387,11 @@ class Flatten_Head(nn.Module):
             self.flattens = nn.ModuleList()
             for i in range(self.n_vars):
                 self.flattens.append(nn.Flatten(start_dim=-2))
-                self.linears.append(nn.Linear(nf, patch_len * c_out))
+                self.linears.append(nn.Linear(nf, h * c_out))
                 self.dropouts.append(nn.Dropout(head_dropout))
         else:
             self.flatten = nn.Flatten(start_dim=-2)
-            self.linear = nn.Linear(nf, patch_len * c_out)
+            self.linear = nn.Linear(nf, h * c_out)
             self.dropout = nn.Dropout(head_dropout)
 
     def forward(self, x):  # x: [bs x nvars x hidden_size x patch_num]
@@ -547,7 +547,6 @@ class TSTDecoder(nn.Module):
             ]
         )
         self.res_attention = res_attention
-        self.q_len = q_len
 
     def forward(
         self,
@@ -555,14 +554,6 @@ class TSTDecoder(nn.Module):
         key_padding_mask: Optional[torch.Tensor] = None,
         attn_mask: torch.Tensor = None,
     ):
-
-        self_attn_mask = torch.triu(torch.ones(self.q_len, self.q_len, 
-                                               dtype=torch.bool
-                                              ), 
-                                    diagonal=1
-                                   ).to(src.device)
-        self_attn_mask = self_attn_mask.unsqueeze(0) # [1 x seq_len x seq_len]
-
         output = src
         scores = None
         if self.res_attention:
@@ -571,15 +562,13 @@ class TSTDecoder(nn.Module):
                     output,
                     prev=scores,
                     key_padding_mask=key_padding_mask,
-                    attn_mask=self_attn_mask,
+                    attn_mask=attn_mask,
                 )
             return output
         else:
             for mod in self.layers:
                 output = mod(
-                    output, 
-                    key_padding_mask=key_padding_mask, 
-                    attn_mask=self_attn_mask
+                    output, key_padding_mask=key_padding_mask, attn_mask=attn_mask
                 )
             return output
 
@@ -789,10 +778,17 @@ class _MultiheadAttention(nn.Module):
 
         # Apply Rotary Positional Embeddings (RoPE)
         if self.pe == "rope":
+            print('yee')
             k_s = k_s.transpose(2, 3) #[bs x n_heads x q_len x d_k]
             q_s = RotaryPositionalEmbedding(q_s.clone()) #[bs x n_heads x q_len x d_k]
             k_s = RotaryPositionalEmbedding(k_s.clone()) #[bs x n_heads x q_len x d_k]
             k_s = k_s.transpose(2, 3) #[bs x n_heads x d_k x q_len]
+
+        # Create a causal mask if not provided. Upper triangular matrix of 1s.
+        if attn_mask is None:
+            attn_mask = torch.triu(torch.ones(seq_len, seq_len, dtype=torch.bool), 
+                                   diagonal=1).to(Q.device)
+            attn_mask = attn_mask.unsqueeze(0) # [1 x seq_len x seq_len]
 
         # Apply Scaled Dot-Product Attention (multiple heads)
         if self.res_attention:
@@ -806,11 +802,7 @@ class _MultiheadAttention(nn.Module):
             )
         else:
             output, attn_weights = self.sdp_attn(
-                q_s, 
-                k_s, 
-                v_s, 
-                key_padding_mask=key_padding_mask, 
-                attn_mask=attn_mask
+                q_s, k_s, v_s, key_padding_mask=key_padding_mask, attn_mask=attn_mask
             )
         # output: [bs x n_heads x q_len x d_v], attn: [bs x n_heads x q_len x q_len], scores: [bs x n_heads x max_q_len x q_len]
 
@@ -906,7 +898,7 @@ class _ScaledDotProductAttention(nn.Module):
             return output, attn_weights
 
 # %% ../../nbs/models.patchtst.ipynb 17
-class PatchDecoder(BasePatch):
+class PatchDecoder(BaseWindows):
     """PatchTST
 
     The PatchTST model is an efficient Transformer-based model for multivariate time series forecasting.
@@ -968,7 +960,7 @@ class PatchDecoder(BasePatch):
     """
 
     # Class attributes
-    SAMPLING_TYPE = "patch"
+    SAMPLING_TYPE = "windows"
     EXOGENOUS_FUTR = False
     EXOGENOUS_HIST = False
     EXOGENOUS_STAT = False
@@ -1024,8 +1016,6 @@ class PatchDecoder(BasePatch):
     ):
         super(PatchDecoder, self).__init__(
             h=h,
-            patch_len=patch_len, 
-            stride=stride,
             input_size=input_size,
             hist_exog_list=hist_exog_list,
             stat_exog_list=stat_exog_list,
@@ -1127,9 +1117,11 @@ class PatchDecoder(BasePatch):
 
         x = x.permute(0, 2, 1)  # x: [Batch, 1, input_size]
         x = self.model(x)
-        x = x.reshape(x.shape[0], self.patch_len, -1)  # x: [Batch, patch_len, c_out]
+        #x, embeddings = self.model(x) #Willa added this
+        x = x.reshape(x.shape[0], self.h, -1)  # x: [Batch, h, c_out]
 
         # Domain map
         forecast = self.loss.domain_map(x)
 
+        #return forecast, embeddings # Willa added this
         return forecast
