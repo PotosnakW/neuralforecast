@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..common._base_windows import BaseWindows
+from ..common._base_patched import BasePatchED
 
 from ..losses.pytorch import MAE
 
@@ -290,11 +290,21 @@ class PatchTST_backbone(nn.Module):
             self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
             patch_num += 1
 
+
+        patch_h_repeats = int(torch.ceil(torch.tensor([h/patch_len]))) # Willa added
+        print(patch_h_repeats)
+        print(patch_num)
+        print(input_size)
+        print(patch_len)
+        self.patch_h_repeats=patch_h_repeats
+        self.input_size=input_size
+
         # Backbone
         self.backbone = Transformeri(
             c_in,
             patch_num=patch_num,
             patch_len=patch_len,
+            patch_h_repeats=patch_h_repeats, # Willa
             max_seq_len=max_seq_len,
             n_layers=n_layers,
             hidden_size=hidden_size,
@@ -316,7 +326,8 @@ class PatchTST_backbone(nn.Module):
         )
 
         # Head
-        self.head_nf = hidden_size * patch_num
+        #self.head_nf = hidden_size * patch_num
+        self.head_nf = hidden_size * (patch_h_repeats+1)
         self.n_vars = c_in
         self.c_out = c_out
         self.pretrain_head = pretrain_head
@@ -333,6 +344,7 @@ class PatchTST_backbone(nn.Module):
                 self.n_vars,
                 self.head_nf,
                 h,
+                patch_len,
                 c_out,
                 head_dropout=head_dropout,
             )
@@ -344,6 +356,13 @@ class PatchTST_backbone(nn.Module):
             z = self.revin_layer(z, "norm")
             z = z.permute(0, 2, 1)
 
+        # separate encoder and decoder inputs
+        z = z[:, :, : self.input_size-self.patch_len]
+        zd = z[:, :, self.input_size-self.patch_len :]
+        if zd.size(2) != self.patch_len * (self.patch_h_repeats+1): # account for last patch of z in +1
+            right_pad = self.patch_len * self.patch_h_repeats
+            zd = F.pad(zd, (0, right_pad), mode='constant', value=0)
+        
         # do patching
         if self.padding_patch == "end":
             z = self.padding_patch_layer(z)
@@ -352,9 +371,16 @@ class PatchTST_backbone(nn.Module):
         )  # z: [bs x nvars x patch_num x patch_len]
         z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x patch_len x patch_num]
 
+        if self.padding_patch == "end":
+            zd = self.padding_patch_layer(zd)
+        zd = zd.unfold(
+            dimension=-1, size=self.patch_len, step=self.stride
+        )  # z: [bs x nvars x patch_num x patch_len]
+        zd = zd.permute(0, 1, 3, 2)  # z: [bs x nvars x patch_len x patch_num]
+
         # model
-        z = self.backbone(z)  # z: [bs x nvars x hidden_size x patch_num]
-       # embeddings = z.clone() # WILLA ADDED THIS
+        z = self.backbone(z, zd)  # z: [bs x nvars x hidden_size x patch_num]
+        # embeddings = z.clone() # WILLA ADDED THIS
         z = self.head(z)  # z: [bs x nvars x h]
 
         # denorm
@@ -374,12 +400,19 @@ class Flatten_Head(nn.Module):
     Flatten_Head
     """
 
-    def __init__(self, individual, n_vars, nf, h, c_out, head_dropout=0):
+    def __init__(self, individual, n_vars, nf, h, patch_len, c_out, head_dropout=0):
         super().__init__()
 
         self.individual = individual
         self.n_vars = n_vars
         self.c_out = c_out
+
+        ## WILLA'S FIX SO H IS PREDICTED IF PATCH_LEN > HORIZON. 
+        ## MAKE OUTPUT_SHAPE==PATCH_LEN TO PREDICT PATCH_LEN ALWAYS
+        if h < patch_len:
+            output_shape = h
+        else:
+            output_shape = patch_len
 
         if self.individual:
             self.linears = nn.ModuleList()
@@ -387,11 +420,11 @@ class Flatten_Head(nn.Module):
             self.flattens = nn.ModuleList()
             for i in range(self.n_vars):
                 self.flattens.append(nn.Flatten(start_dim=-2))
-                self.linears.append(nn.Linear(nf, h * c_out))
+                self.linears.append(nn.Linear(nf, output_shape * c_out))
                 self.dropouts.append(nn.Dropout(head_dropout))
         else:
             self.flatten = nn.Flatten(start_dim=-2)
-            self.linear = nn.Linear(nf, h * c_out)
+            self.linear = nn.Linear(nf, output_shape * c_out)
             self.dropout = nn.Dropout(head_dropout)
 
     def forward(self, x):  # x: [bs x nvars x hidden_size x patch_num]
@@ -409,7 +442,6 @@ class Flatten_Head(nn.Module):
             x = self.dropout(x)
         return x
 
-
 class Transformeri(nn.Module):  # i means channel-independent
     """
     Transformeri
@@ -420,6 +452,7 @@ class Transformeri(nn.Module):  # i means channel-independent
         c_in,
         patch_num,
         patch_len,
+        patch_h_repeats,
         max_seq_len=1024,
         n_layers=3,
         hidden_size=128,
@@ -448,13 +481,29 @@ class Transformeri(nn.Module):  # i means channel-independent
 
         # Input encoding
         q_len = patch_num
-        self.W_P = nn.Linear(
+        self.seq_len = q_len
+        
+        self.W_P_encoder = nn.Linear(
             patch_len, hidden_size
         )  # Eq 1: projection of feature vectors onto a d-dim vector space
-        self.seq_len = q_len
+        
+        self.W_P_decoder = nn.Linear(
+            patch_h_repeats+1, hidden_size
+        )  # Eq 1: projection of feature vectors onto a d-dim vector space
 
-        # Positional encoding
-        self.W_pos = positional_encoding(pe, learn_pe, q_len, hidden_size)
+        # Positional encoding - Encoder
+        self.W_pos_encoder = positional_encoding(pe, 
+                                                 learn_pe=learn_pe, 
+                                                 q_len=q_len-patch_len, 
+                                                 hidden_size=hidden_size
+                                                )
+
+        # Positional encoding - Decoder
+        self.W_pos_decoder = positional_encoding(pe, 
+                                         learn_pe=False,
+                                         q_len=patch_h_repeats+1, # Willa - account for patch_len from input_size
+                                         hidden_size=hidden_size
+                                        )
 
         # Residual dropout
         self.dropout = nn.Dropout(dropout)
@@ -497,24 +546,36 @@ class Transformeri(nn.Module):  # i means channel-independent
             pe=pe,
             )
 
-    def forward(self, x) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
+    def forward(self, x, xd) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
 
         n_vars = x.shape[1]
-        # Input encoding
+        # Input encoding - Encoder
         x = x.permute(0, 1, 3, 2)  # x: [bs x nvars x patch_num x patch_len]
-        x = self.W_P(x)  # x: [bs x nvars x patch_num x hidden_size]
+        x = self.W_P_encoder(x)  # x: [bs x nvars x patch_num x hidden_size]
 
         u = torch.reshape(
             x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3])
         )  # u: [bs * nvars x patch_num x hidden_size]
 
-        u = self.dropout(u + self.W_pos)  # u: [bs * nvars x patch_num x hidden_size]
+        u = self.dropout(u + self.W_pos_encoder)  # u: [bs * nvars x patch_num x hidden_size]
 
         # Encoder
         z, z_k_s, z_v_s = self.encoder(u)  # z: [bs * nvars x patch_num x hidden_size]
 
+
+        # Input encoding - Decoder
+        xd = xd.permute(0, 1, 3, 2)  # x: [bs x nvars x patch_num x patch_len]
+        xd = self.W_P_decoder(xd)  # x: [bs x nvars x patch_num x hidden_size]
+
+        ud = torch.reshape(
+            xd, (xd.shape[0] * xd.shape[1], xd.shape[2], xd.shape[3])
+        )  # u: [bs * nvars x patch_num x hidden_size]
+
+        ud = self.dropout(ud + self.W_pos_decoder)  # u: [bs * nvars x patch_num x hidden_size]
+        
+
         # Decoder
-        z = self.decoder(src=u, k_s=z_k_s, v_s=z_v_s)  # z: [bs * nvars x patch_num x hidden_size]
+        z = self.decoder(src=ud, k_s=z_k_s, v_s=z_v_s)  # z: [bs * nvars x patch_num x hidden_size]
         
         z = torch.reshape(
             z, (-1, n_vars, z.shape[-2], z.shape[-1])
@@ -1194,7 +1255,7 @@ class _ScaledDotProductAttention(nn.Module):
             return output, attn_weights
 
 # %% ../../nbs/models.patchtst.ipynb 17
-class PatchEncoderDecoder(BaseWindows):
+class PatchEncoderDecoder(BasePatchED):
     """PatchTST
 
     The PatchTST model is an efficient Transformer-based model for multivariate time series forecasting.
@@ -1312,6 +1373,8 @@ class PatchEncoderDecoder(BaseWindows):
     ):
         super(PatchEncoderDecoder, self).__init__(
             h=h,
+            patch_len=patch_len, 
+            stride=stride,
             input_size=input_size,
             hist_exog_list=hist_exog_list,
             stat_exog_list=stat_exog_list,

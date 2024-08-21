@@ -15,7 +15,7 @@ from ..tsdataset import TimeSeriesDataModule
 from ..utils import get_indexer_raise_missing
 
 # %% ../../nbs/common.base_windows.ipynb 6
-class BasePatch(BaseModel):
+class BasePatchED(BaseModel):
     """Base Windows
 
     Base class for all windows-based models. The forecasts are produced separately

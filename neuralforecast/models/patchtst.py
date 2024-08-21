@@ -63,29 +63,6 @@ def PositionalEncoding(q_len, hidden_size, normalize=True):
 
 SinCosPosEncoding = PositionalEncoding
 
-def RotaryPositionalEmbedding(q, base=10000.0):
-    """Compute Rotary Position Embedding (RoPE)."""
-
-    bs, n_heads, q_len, d_k = q.shape
-
-    theta = 1.0 / (base ** (torch.arange(0, d_k, 2).float() / d_k))
-    pos = torch.arange(0, q_len, dtype=torch.float) 
-    idx_theta = torch.einsum("i , j -> i j", pos, theta)
-    cos_remb = idx_theta.cos().unsqueeze(0).unsqueeze(0).to(q.device)
-    sin_remb = idx_theta.sin().unsqueeze(0).unsqueeze(0).to(q.device)
-
-    # Reshape tensor to apply rotation and apply rotation matrix
-    q_reshaped = q.view(bs, n_heads, q_len, d_k // 2, 2).clone()
-    rotated_q = torch.stack([q_reshaped[..., 0] * cos_remb - q_reshaped[..., 1] * sin_remb,
-                             q_reshaped[..., 0] * sin_remb + q_reshaped[..., 1] * cos_remb
-                            ], 
-                             dim=-1
-                            )
-
-    # Reshape back to original tensor shape
-    rpe = rotated_q.view(bs, n_heads, q_len, d_k)
-    
-    return rpe
 
 def Coord2dPosEncoding(q_len, hidden_size, exponential=False, normalize=True, eps=1e-3):
     x = 0.5 if exponential else 1
@@ -153,13 +130,10 @@ def positional_encoding(pe, learn_pe, q_len, hidden_size):
         W_pos = Coord2dPosEncoding(q_len, hidden_size, exponential=True, normalize=True)
     elif pe == "sincos":
         W_pos = PositionalEncoding(q_len, hidden_size, normalize=True)
-    elif pe == "rope":
-        W_pos = torch.empty((q_len, hidden_size))
-        nn.init.uniform_(W_pos, -0.02, 0.02)
     else:
         raise ValueError(
             f"{pe} is not a valid pe (positional encoder. Available types: 'gauss'=='normal', \
-        'zeros', 'zero', uniform', 'lin1d', 'exp1d', 'lin2d', 'exp2d', 'sincos', 'rope', None.)"
+        'zeros', 'zero', uniform', 'lin1d', 'exp1d', 'lin2d', 'exp2d', 'sincos', None.)"
         )
     return nn.Parameter(W_pos, requires_grad=learn_pe)
 
@@ -354,7 +328,6 @@ class PatchTST_backbone(nn.Module):
 
         # model
         z = self.backbone(z)  # z: [bs x nvars x hidden_size x patch_num]
-       # embeddings = z.clone() # WILLA ADDED THIS
         z = self.head(z)  # z: [bs x nvars x h]
 
         # denorm
@@ -363,7 +336,6 @@ class PatchTST_backbone(nn.Module):
             z = self.revin_layer(z, "denorm")
             z = z.permute(0, 2, 1)
         return z
-    # return z, embeddings # WILLA ADDED THIS
 
     def create_pretrain_head(self, head_nf, vars, dropout):
         return nn.Sequential(nn.Dropout(dropout), nn.Conv1d(head_nf, vars, 1))
@@ -475,7 +447,6 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
             res_attention=res_attention,
             n_layers=n_layers,
             store_attn=store_attn,
-            pe=pe,
         )
 
     def forward(self, x) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
@@ -488,7 +459,6 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
         u = torch.reshape(
             x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3])
         )  # u: [bs * nvars x patch_num x hidden_size]
-
         u = self.dropout(u + self.W_pos)  # u: [bs * nvars x patch_num x hidden_size]
 
         # Encoder
@@ -522,7 +492,6 @@ class TSTEncoder(nn.Module):
         n_layers=1,
         pre_norm=False,
         store_attn=False,
-        pe="zeros",
     ):
         super().__init__()
 
@@ -542,7 +511,6 @@ class TSTEncoder(nn.Module):
                     res_attention=res_attention,
                     pre_norm=pre_norm,
                     store_attn=store_attn,
-                    pe=pe,
                 )
                 for i in range(n_layers)
             ]
@@ -595,7 +563,6 @@ class TSTEncoderLayer(nn.Module):
         activation="gelu",
         res_attention=False,
         pre_norm=False,
-        pe="zeros",
     ):
         super().__init__()
         assert (
@@ -614,7 +581,6 @@ class TSTEncoderLayer(nn.Module):
             attn_dropout=attn_dropout,
             proj_dropout=dropout,
             res_attention=res_attention,
-            pe=pe,
         )
 
         # Add & Norm
@@ -714,7 +680,6 @@ class _MultiheadAttention(nn.Module):
         proj_dropout=0.0,
         qkv_bias=True,
         lsa=False,
-        pe="zeros", # Willa added
     ):
         """
         Multi Head Attention Layer
@@ -748,8 +713,6 @@ class _MultiheadAttention(nn.Module):
             nn.Linear(n_heads * d_v, hidden_size), nn.Dropout(proj_dropout)
         )
 
-        self.pe = pe
-
     def forward(
         self,
         Q: torch.Tensor,
@@ -776,14 +739,6 @@ class _MultiheadAttention(nn.Module):
         v_s = (
             self.W_V(V).view(bs, -1, self.n_heads, self.d_v).transpose(1, 2)
         )  # v_s    : [bs x n_heads x q_len x d_v]
-
-        # Apply Rotary Positional Embeddings (RoPE)
-        if self.pe == "rope":
-            print('yee')
-            k_s = k_s.transpose(2, 3) #[bs x n_heads x q_len x d_k]
-            q_s = RotaryPositionalEmbedding(q_s.clone()) #[bs x n_heads x q_len x d_k]
-            k_s = RotaryPositionalEmbedding(k_s.clone()) #[bs x n_heads x q_len x d_k]
-            k_s = k_s.transpose(2, 3) #[bs x n_heads x d_k x q_len]
 
         # Apply Scaled Dot-Product Attention (multiple heads)
         if self.res_attention:
@@ -1009,7 +964,6 @@ class PatchTST(BaseWindows):
         optimizer_kwargs=None,
         lr_scheduler=None,
         lr_scheduler_kwargs=None,
-        pe="zeros", 
         **trainer_kwargs
     ):
         super(PatchTST, self).__init__(
@@ -1053,7 +1007,7 @@ class PatchTST(BaseWindows):
         padding_patch = "end"  # Padding at the end
         pretrain_head = False  # No pretrained head
         norm = "BatchNorm"  # Use BatchNorm (if batch_normalization is True)
-        #pe = "zeros"  # Initial zeros for positional encoding
+        pe = "zeros"  # Initial zeros for positional encoding
         d_k = None  # Key dimension
         d_v = None  # Value dimension
         store_attn = False  # Store attention weights
@@ -1115,11 +1069,9 @@ class PatchTST(BaseWindows):
 
         x = x.permute(0, 2, 1)  # x: [Batch, 1, input_size]
         x = self.model(x)
-        #x, embeddings = self.model(x) #Willa added this
         x = x.reshape(x.shape[0], self.h, -1)  # x: [Batch, h, c_out]
 
         # Domain map
         forecast = self.loss.domain_map(x)
 
-        #return forecast, embeddings # Willa added this
         return forecast
