@@ -285,18 +285,23 @@ class PatchTST_backbone(nn.Module):
         self.patch_len = patch_len
         self.stride = stride
         self.padding_patch = padding_patch
-        patch_num = int((input_size - patch_len) / stride + 1)
+        
+        #patch_num = int((input_size - patch_len) / stride + 1)
+        patch_num = int((input_size - patch_len*2) / stride + 1) # Willa
         if padding_patch == "end":  # can be modified to general case
             self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
             patch_num += 1
 
-
+        # Willa added
         patch_h_repeats = int(torch.ceil(torch.tensor([h/patch_len]))) # Willa added
-        print(patch_h_repeats)
-        print(patch_num)
-        print(input_size)
-        print(patch_len)
-        self.patch_h_repeats=patch_h_repeats
+        input_size_decoder = patch_len * patch_h_repeats 
+        patch_num_decoder = int((input_size_decoder - patch_len) / stride + 1)
+        if padding_patch == "end":  # can be modified to general case
+            self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
+            patch_num_decoder += 1
+        
+        self.patch_num_decoder=patch_num_decoder
+        self.input_size_decoder=input_size_decoder
         self.input_size=input_size
 
         # Backbone
@@ -304,7 +309,7 @@ class PatchTST_backbone(nn.Module):
             c_in,
             patch_num=patch_num,
             patch_len=patch_len,
-            patch_h_repeats=patch_h_repeats, # Willa
+            patch_num_decoder=patch_num_decoder, # Willa
             max_seq_len=max_seq_len,
             n_layers=n_layers,
             hidden_size=hidden_size,
@@ -327,7 +332,7 @@ class PatchTST_backbone(nn.Module):
 
         # Head
         #self.head_nf = hidden_size * patch_num
-        self.head_nf = hidden_size * (patch_h_repeats+1)
+        self.head_nf = hidden_size * patch_num_decoder
         self.n_vars = c_in
         self.c_out = c_out
         self.pretrain_head = pretrain_head
@@ -359,8 +364,9 @@ class PatchTST_backbone(nn.Module):
         # separate encoder and decoder inputs
         z = z[:, :, : self.input_size-self.patch_len]
         zd = z[:, :, self.input_size-self.patch_len :]
-        if zd.size(2) != self.patch_len * (self.patch_h_repeats+1): # account for last patch of z in +1
-            right_pad = self.patch_len * self.patch_h_repeats
+        
+        if zd.size(2) != self.input_size_decoder: 
+            right_pad = self.input_size_decoder - zd.size(2)
             zd = F.pad(zd, (0, right_pad), mode='constant', value=0)
         
         # do patching
@@ -452,7 +458,7 @@ class Transformeri(nn.Module):  # i means channel-independent
         c_in,
         patch_num,
         patch_len,
-        patch_h_repeats,
+        patch_num_decoder,
         max_seq_len=1024,
         n_layers=3,
         hidden_size=128,
@@ -482,26 +488,28 @@ class Transformeri(nn.Module):  # i means channel-independent
         # Input encoding
         q_len = patch_num
         self.seq_len = q_len
+
+        q_len_decoder = patch_num_decoder # Willa
         
         self.W_P_encoder = nn.Linear(
             patch_len, hidden_size
         )  # Eq 1: projection of feature vectors onto a d-dim vector space
         
         self.W_P_decoder = nn.Linear(
-            patch_h_repeats+1, hidden_size
+            patch_len, hidden_size
         )  # Eq 1: projection of feature vectors onto a d-dim vector space
 
         # Positional encoding - Encoder
         self.W_pos_encoder = positional_encoding(pe, 
                                                  learn_pe=learn_pe, 
-                                                 q_len=q_len-patch_len, 
+                                                 q_len=q_len, 
                                                  hidden_size=hidden_size
                                                 )
 
         # Positional encoding - Decoder
         self.W_pos_decoder = positional_encoding(pe, 
                                          learn_pe=False,
-                                         q_len=patch_h_repeats+1, # Willa - account for patch_len from input_size
+                                         q_len=q_len_decoder, # Willa - account for patch_len from input_size
                                          hidden_size=hidden_size
                                         )
 
@@ -529,7 +537,7 @@ class Transformeri(nn.Module):  # i means channel-independent
 
         # Decoder
         self.decoder = TransformerDecoder(
-            q_len,
+            q_len_decoder,
             hidden_size,
             n_heads,
             d_k=d_k,
@@ -547,7 +555,7 @@ class Transformeri(nn.Module):  # i means channel-independent
             )
 
     def forward(self, x, xd) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
-
+        
         n_vars = x.shape[1]
         # Input encoding - Encoder
         x = x.permute(0, 1, 3, 2)  # x: [bs x nvars x patch_num x patch_len]
@@ -562,7 +570,6 @@ class Transformeri(nn.Module):  # i means channel-independent
         # Encoder
         z, z_k_s, z_v_s = self.encoder(u)  # z: [bs * nvars x patch_num x hidden_size]
 
-
         # Input encoding - Decoder
         xd = xd.permute(0, 1, 3, 2)  # x: [bs x nvars x patch_num x patch_len]
         xd = self.W_P_decoder(xd)  # x: [bs x nvars x patch_num x hidden_size]
@@ -572,7 +579,6 @@ class Transformeri(nn.Module):  # i means channel-independent
         )  # u: [bs * nvars x patch_num x hidden_size]
 
         ud = self.dropout(ud + self.W_pos_decoder)  # u: [bs * nvars x patch_num x hidden_size]
-        
 
         # Decoder
         z = self.decoder(src=ud, k_s=z_k_s, v_s=z_v_s)  # z: [bs * nvars x patch_num x hidden_size]
@@ -1405,7 +1411,12 @@ class PatchEncoderDecoder(BasePatchED):
         )
 
         # Enforce correct patch_len, regardless of user input
+
         patch_len = min(input_size + stride, patch_len)
+        
+        if input_size < patch_len * 2:
+            raise ValueError(f"input_size ({input_size}) must be less than or equal to 2x patch_len ({patch_len})")
+
 
         c_out = self.loss.outputsize_multiplier
 
@@ -1476,9 +1487,9 @@ class PatchEncoderDecoder(BasePatchED):
 
         x = x.permute(0, 2, 1)  # x: [Batch, 1, input_size]
         x = self.model(x)
-        #x, embeddings = self.model(x) #Willa added this
-        x = x.reshape(x.shape[0], self.h, -1)  # x: [Batch, h, c_out]
-
+        #x, embeddings = self.model(x) #Willa added this 
+        x = x.reshape(x.shape[0], self.patch_len, -1)  # x: [Batch, h, c_out]
+        
         # Domain map
         forecast = self.loss.domain_map(x)
 

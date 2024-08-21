@@ -445,6 +445,7 @@ class BasePatchED(BaseModel):
 
         # Model Predictions
         output = self(windows_batch)
+        
         if self.loss.is_distribution_output:
             _, y_loc, y_scale = self._inv_normalization(
                 y_hat=outsample_y, temporal_cols=batch["temporal_cols"], y_idx=y_idx
