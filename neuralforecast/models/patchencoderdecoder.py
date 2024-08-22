@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..common._base_patched import BasePatchED
+from ..common._base_patch import BasePatch
 
 from ..losses.pytorch import MAE
 
@@ -1261,7 +1261,7 @@ class _ScaledDotProductAttention(nn.Module):
             return output, attn_weights
 
 # %% ../../nbs/models.patchtst.ipynb 17
-class PatchEncoderDecoder(BasePatchED):
+class PatchEncoderDecoder(BasePatch):
     """PatchTST
 
     The PatchTST model is an efficient Transformer-based model for multivariate time series forecasting.
