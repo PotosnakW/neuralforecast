@@ -296,9 +296,9 @@ class PatchTST_backbone(nn.Module):
         patch_h_repeats = int(torch.ceil(torch.tensor([h/patch_len]))) # Willa added
         input_size_decoder = patch_len * patch_h_repeats 
         patch_num_decoder = int((input_size_decoder - patch_len) / stride + 1)
-        if padding_patch == "end":  # can be modified to general case
-            self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
-            patch_num_decoder += 1
+        # if padding_patch == "end":  # # shouldn't need to pad input to decoder since its patch_len
+        #     self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
+        #     patch_num_decoder += 1
         
         self.patch_num_decoder=patch_num_decoder
         self.input_size_decoder=input_size_decoder
@@ -362,30 +362,26 @@ class PatchTST_backbone(nn.Module):
             z = z.permute(0, 2, 1)
 
         # separate encoder and decoder inputs
-        z = z[:, :, : self.input_size-self.patch_len]
+        ze = z[:, :, : self.input_size-self.patch_len]
         zd = z[:, :, self.input_size-self.patch_len :]
-        
-        if zd.size(2) != self.input_size_decoder: 
-            right_pad = self.input_size_decoder - zd.size(2)
-            zd = F.pad(zd, (0, right_pad), mode='constant', value=0)
         
         # do patching
         if self.padding_patch == "end":
-            z = self.padding_patch_layer(z)
-        z = z.unfold(
+            ze = self.padding_patch_layer(ze)
+        ze = ze.unfold(
             dimension=-1, size=self.patch_len, step=self.stride
         )  # z: [bs x nvars x patch_num x patch_len]
-        z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x patch_len x patch_num]
+        ze = ze.permute(0, 1, 3, 2)  # z: [bs x nvars x patch_len x patch_num]
 
-        if self.padding_patch == "end":
-            zd = self.padding_patch_layer(zd)
+        # if self.padding_patch == "end":  # shouldn't need to pad input to decoder since its patch_len
+        #     zd = self.padding_patch_layer(zd)
         zd = zd.unfold(
             dimension=-1, size=self.patch_len, step=self.stride
         )  # z: [bs x nvars x patch_num x patch_len]
         zd = zd.permute(0, 1, 3, 2)  # z: [bs x nvars x patch_len x patch_num]
 
         # model
-        z = self.backbone(z, zd)  # z: [bs x nvars x hidden_size x patch_num]
+        z = self.backbone(ze, zd)  # z: [bs x nvars x hidden_size x patch_num]
         # embeddings = z.clone() # WILLA ADDED THIS
         z = self.head(z)  # z: [bs x nvars x h]
 
@@ -490,6 +486,7 @@ class Transformeri(nn.Module):  # i means channel-independent
         self.seq_len = q_len
 
         q_len_decoder = patch_num_decoder # Willa
+        self.q_len_decoder = q_len_decoder
         
         self.W_P_encoder = nn.Linear(
             patch_len, hidden_size
@@ -570,6 +567,16 @@ class Transformeri(nn.Module):  # i means channel-independent
         # Encoder
         z, z_k_s, z_v_s = self.encoder(u)  # z: [bs * nvars x patch_num x hidden_size]
 
+        # pad patches if necessary - Decoder
+        key_padding_mask = torch.zeros((xd.size(0), self.q_len_decoder), 
+                                        dtype=torch.bool
+                                       ).to(x.device)
+
+        if xd.size(3) != self.q_len_decoder: 
+            patch_num_pad = self.q_len_decoder - xd.size(3)
+            xd = F.pad(xd, (0, patch_num_pad), mode='constant', value=0)
+            key_padding_mask[:, -patch_num_pad :] = True
+            
         # Input encoding - Decoder
         xd = xd.permute(0, 1, 3, 2)  # x: [bs x nvars x patch_num x patch_len]
         xd = self.W_P_decoder(xd)  # x: [bs x nvars x patch_num x hidden_size]
@@ -581,7 +588,9 @@ class Transformeri(nn.Module):  # i means channel-independent
         ud = self.dropout(ud + self.W_pos_decoder)  # u: [bs * nvars x patch_num x hidden_size]
 
         # Decoder
-        z = self.decoder(src=ud, k_s=z_k_s, v_s=z_v_s)  # z: [bs * nvars x patch_num x hidden_size]
+        z = self.decoder(src=ud, k_s=z_k_s, v_s=z_v_s, 
+                         key_padding_mask=key_padding_mask
+                        )  # z: [bs * nvars x patch_num x hidden_size]
         
         z = torch.reshape(
             z, (-1, n_vars, z.shape[-2], z.shape[-1])
@@ -848,7 +857,7 @@ class TransformerDecoder(nn.Module):
         src: torch.Tensor,
         k_s: torch.Tensor,
         v_s: torch.Tensor,
-        key_padding_mask: Optional[torch.Tensor] = None,
+        key_padding_mask: torch.Tensor,
     ):
 
         self_attn_mask = torch.triu(torch.ones(self.q_len, self.q_len, 

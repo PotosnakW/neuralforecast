@@ -887,10 +887,11 @@ class _ScaledDotProductAttention(nn.Module):
             attn_scores = attn_scores + prev
 
         # Attention mask 
-        if attn_mask.dtype == torch.bool:
-            attn_scores.masked_fill_(attn_mask, -np.inf)
-        else:
-            attn_scores += attn_mask
+        if attn_mask is not None:
+            if attn_mask.dtype == torch.bool:
+                attn_scores.masked_fill_(attn_mask, -np.inf)
+            else:
+                attn_scores += attn_mask
 
         # Key padding mask (optional)
         if (

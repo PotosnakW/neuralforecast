@@ -520,8 +520,6 @@ class BasePatch(BaseModel):
         n_windows = len(windows_h["temporal"])
         y_idx = batch["y_idx"]
 
-        print(windows_h['temporal'].size())
-
         # Calculate how many times each window should be repeated
         n_repeats = int(torch.ceil(torch.tensor([self.h/self.patch_len])))
         # Repeat each index in the range of n_windows, n_repeats times
@@ -537,7 +535,6 @@ class BasePatch(BaseModel):
             windows['temporal'] = windows['temporal'].unsqueeze(0)
             windows = self._normalization(windows=windows, y_idx=y_idx)
 
-            #print(windows['temporal'].size())
             # Parse windows
             (
                 insample_y,
