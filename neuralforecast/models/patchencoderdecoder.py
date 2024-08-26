@@ -286,8 +286,7 @@ class PatchTST_backbone(nn.Module):
         self.stride = stride
         self.padding_patch = padding_patch
         
-        #patch_num = int((input_size - patch_len) / stride + 1)
-        patch_num = int((input_size - patch_len*2) / stride + 1) # Willa
+        patch_num = int((input_size - patch_len*2) / stride + 1) 
         if padding_patch == "end":  # can be modified to general case
             self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
             patch_num += 1
@@ -309,7 +308,7 @@ class PatchTST_backbone(nn.Module):
             c_in,
             patch_num=patch_num,
             patch_len=patch_len,
-            patch_num_decoder=patch_num_decoder, # Willa
+            patch_num_decoder=patch_num_decoder, 
             max_seq_len=max_seq_len,
             n_layers=n_layers,
             hidden_size=hidden_size,
@@ -331,7 +330,6 @@ class PatchTST_backbone(nn.Module):
         )
 
         # Head
-        #self.head_nf = hidden_size * patch_num
         self.head_nf = hidden_size * patch_num_decoder
         self.n_vars = c_in
         self.c_out = c_out
@@ -860,19 +858,15 @@ class TransformerDecoder(nn.Module):
         key_padding_mask: torch.Tensor,
     ):
 
-        self_attn_mask = torch.triu(torch.ones(self.q_len, self.q_len, 
+        self_attn_mask = torch.triu(torch.ones((1, self.q_len, self.q_len), 
                                                dtype=torch.bool
                                               ), 
                                     diagonal=1
                                    ).to(src.device)
-        self_attn_mask = self_attn_mask.unsqueeze(0) # [1 x seq_len x seq_len]
 
-        cross_attn_mask = torch.triu(torch.zeros(self.q_len, self.q_len, 
-                                                 dtype=torch.bool
-                                                ), 
-                                     diagonal=1
-                                    ).to(src.device)
-        cross_attn_mask = cross_attn_mask.unsqueeze(0) # [1 x seq_len x seq_len]
+        cross_attn_mask = torch.zeros((1, self.q_len, self.q_len), 
+                                      dtype=torch.bool
+                                     ).to(src.device)
 
         output = src
         scores = None

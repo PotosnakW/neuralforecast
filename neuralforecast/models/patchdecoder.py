@@ -496,7 +496,6 @@ class TSTiDecoder(nn.Module):  # i means channel-independent
         u = torch.reshape(
             x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3])
         )  # u: [bs * nvars x patch_num x hidden_size]
-
         u = self.dropout(u + self.W_pos)  # u: [bs * nvars x patch_num x hidden_size]
 
         # Decoder
@@ -564,15 +563,11 @@ class TSTDecoder(nn.Module):
         attn_mask: torch.Tensor = None,
     ):
 
-        self_attn_mask = torch.triu(torch.ones(self.q_len, self.q_len, 
+        self_attn_mask = torch.triu(torch.ones((1, self.q_len, self.q_len), 
                                                dtype=torch.bool
                                               ), 
                                     diagonal=1
                                    ).to(src.device)
-        # self_attn_mask = torch.zeros(self.q_len, self.q_len, 
-        #                                        dtype=torch.bool
-        #                                       ).to(src.device)
-        self_attn_mask = self_attn_mask.unsqueeze(0) # [1 x seq_len x seq_len]
 
         output = src
         scores = None
