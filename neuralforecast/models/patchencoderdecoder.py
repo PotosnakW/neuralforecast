@@ -245,7 +245,8 @@ class PatchTST_backbone(nn.Module):
         patch_len: int,
         stride: int,
         max_seq_len: Optional[int] = 1024,
-        n_layers: int = 3,
+        n_encoder_layers: int = 3,
+        n_decoder_layers: int = 3,
         hidden_size=128,
         n_heads=16,
         d_k: Optional[int] = None,
@@ -310,7 +311,8 @@ class PatchTST_backbone(nn.Module):
             patch_len=patch_len,
             patch_num_decoder=patch_num_decoder, 
             max_seq_len=max_seq_len,
-            n_layers=n_layers,
+            n_encoder_layers=n_encoder_layers,
+            n_decoder_layers=n_decoder_layers,
             hidden_size=hidden_size,
             n_heads=n_heads,
             d_k=d_k,
@@ -454,7 +456,8 @@ class Transformeri(nn.Module):  # i means channel-independent
         patch_len,
         patch_num_decoder,
         max_seq_len=1024,
-        n_layers=3,
+        n_encoder_layers=3,
+        n_decoder_layers=3,
         hidden_size=128,
         n_heads=16,
         d_k=None,
@@ -525,7 +528,7 @@ class Transformeri(nn.Module):  # i means channel-independent
             pre_norm=pre_norm,
             activation=act,
             res_attention=res_attention,
-            n_layers=n_layers,
+            n_layers=n_encoder_layers,
             store_attn=store_attn,
             pe=pe,
         )
@@ -544,7 +547,7 @@ class Transformeri(nn.Module):  # i means channel-independent
             pre_norm=pre_norm,
             activation=act,
             res_attention=res_attention,
-            n_layers=n_layers,
+            n_layers=n_decoder_layers,
             store_attn=store_attn,
             pe=pe,
             )
@@ -596,7 +599,6 @@ class Transformeri(nn.Module):  # i means channel-independent
         z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x hidden_size x patch_num]
 
         return z
-
 
 class TransformerEncoder(nn.Module):
     """
@@ -858,13 +860,15 @@ class TransformerDecoder(nn.Module):
         key_padding_mask: torch.Tensor,
     ):
 
-        self_attn_mask = torch.triu(torch.ones((1, self.q_len, self.q_len), 
+        with torch.no_grad():
+            self_attn_mask = torch.triu(torch.ones((1, self.q_len, self.q_len), 
                                                dtype=torch.bool
                                               ), 
                                     diagonal=1
                                    ).to(src.device)
 
-        cross_attn_mask = torch.zeros((1, self.q_len, self.q_len), 
+        with torch.no_grad():
+            cross_attn_mask = torch.zeros((1, self.q_len, self.q_len), 
                                       dtype=torch.bool
                                      ).to(src.device)
 
@@ -1340,6 +1344,7 @@ class PatchEncoderDecoder(BasePatch):
         futr_exog_list=None,
         exclude_insample_y=False,
         encoder_layers: int = 3,
+        decoder_layers: int = 3,
         n_heads: int = 16,
         hidden_size: int = 128,
         linear_hidden_size: int = 256,
@@ -1447,7 +1452,8 @@ class PatchEncoderDecoder(BasePatch):
             patch_len=patch_len,
             stride=stride,
             max_seq_len=max_seq_len,
-            n_layers=encoder_layers,
+            n_encoder_layers=encoder_layers,
+            n_decoder_layers=decoder_layers,
             hidden_size=hidden_size,
             n_heads=n_heads,
             d_k=d_k,
