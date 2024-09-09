@@ -9,7 +9,6 @@ dist
 .vscode
 *.gif
 *.csv
-*/data/*
 *.parquet
 tmp
 _docs/
