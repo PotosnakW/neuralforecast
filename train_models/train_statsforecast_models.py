@@ -82,8 +82,8 @@ def main(args):
 
         fcst_df = fcst.cross_validation(h = args.horizon,
                                         df=Y_df, 
-                                        step_size=1, #args.horizon, #change to 1!!!! for final
-                                        n_windows=2685, #,int((test_size - args.horizon) / args.horizon) + 1,
+                                        step_size=1, 
+                                        n_windows=2685,
                                         refit=False
                                        )
 
@@ -106,10 +106,10 @@ if __name__ == '__main__':
     if args is None:
         exit()
 
-    datasets = ['ohiot1dm', 
+    datasets = [#'ohiot1dm', 
                 'simglucose'] 
 
-    args.results_dir = './results/ETS/'
+    args.results_dir = '../results/ETS/'
     
     for dataset in datasets:
         args.dataset = dataset

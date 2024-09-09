@@ -45,8 +45,8 @@ def preprocess_ts_df(df):
     return df
 
 
-data_dir = './OhioT1DM'
-os.makedirs('./data', exist_ok=True)
+data_dir = '../OhioT1DM'
+os.makedirs('../data', exist_ok=True)
 
 pat_ids = ['559', '563', '570', '575', '588', '591', '540', '544', '552', '567', '584', '596']
 years = ['2018']*6+['2020']*6
@@ -183,7 +183,7 @@ for pat_id, year in zip(pat_ids, years):
         pat_dataset = pd.concat([pat_dataset, pat_data], axis=0)
 
 pat_dataset = pat_dataset[['unique_id', 'ds', 'y', 'available_mask', 'CHO', 'basal_insulin', 'bolus_insulin']]
-pat_dataset.to_csv('./data/ohiot1dm_exog_9_day_test.csv', index=False)
+pat_dataset.to_csv('../data/ohiot1dm_exog_9_day_test.csv', index=False)
 
 
 ## Evaluation: Mark cutoff times with no new info
@@ -197,7 +197,7 @@ for unique_id in unique_ids:
 av_mask = pd.concat(df).reset_index(drop=True)
 av_mask = av_mask.rename(columns={'ds': 'cutoff'})
 av_mask.head()
-av_mask.to_csv('./data/ohiot1dm_exog_9_day_test_avmask.csv', index=False)
+av_mask.to_csv('../data/ohiot1dm_exog_9_day_test_avmask.csv', index=False)
 
 
 ## Static dataset
@@ -235,4 +235,4 @@ static['pump_model_630G'] = np.zeros(static.shape[0])
 static.loc[['#540', '#552', '#567'], 'pump_model_630G'] = 1
 
 static.reset_index(inplace=True, drop=False)
-static.to_csv('./data/ohiot1dm_static.csv', index=False)
+static.to_csv('../data/ohiot1dm_static.csv', index=False)

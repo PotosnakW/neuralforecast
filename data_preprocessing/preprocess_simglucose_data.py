@@ -12,8 +12,8 @@ from simglucose.simulation.sim_engine import SimObj, sim, batch_sim
 from datetime import timedelta
 from datetime import datetime
 
-base_dir = './data'
-os.makedirs(base_dir, exist_ok=True)
+
+os.makedirs('../data', exist_ok=True)
 
 ids = ['adult#001']
 adolescent_ids = [f'adolescent#00{i}' for i in range(1, 10)]+['adolescent#010']
@@ -76,11 +76,11 @@ for id_, seed in zip(ids, random_seeds):
     datasets.append(df)
 
 final_df = pd.concat(datasets).reset_index(drop=True)
-final_df.to_csv(base_dir+f'/simglucose_exog_9_day_test.csv', index=False)
+final_df.to_csv(f'../data/simglucose_exog_9_day_test.csv', index=False)
 
 
 Static Dataset
-patient_params = pd.read_csv(base_dir+'/simglucose_data/simglucose/params/vpatient_params.csv')
+patient_params = pd.read_csv('../simglucose_data/simglucose/params/vpatient_params.csv')
 patient_params.set_index('Name', inplace=True)
 patient_features = patient_params[['Age', 'BW']]
 patient_features.reset_index(drop=True, inplace=True)
@@ -104,4 +104,4 @@ pat_type_df = pd.DataFrame(pat_type, columns=['adolescent', 'adult'])
 
 df = pd.concat([df, pat_type_df], axis=1)
 
-df.to_csv(base_dir+'/simglucose_static.csv', index=False)
+df.to_csv('../data/simglucose_static.csv', index=False)
