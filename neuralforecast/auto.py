@@ -146,6 +146,8 @@ class AutoLSTM(BaseAuto):
                 config["inference_input_size_multiplier"],
             )
 
+       # config["n_series"] = n_series
+
         super(AutoLSTM, self).__init__(
             cls_model=LSTM,
             h=h,
@@ -263,6 +265,8 @@ class AutoTCN(BaseAuto):
                 config["input_size_multiplier"],
                 config["inference_input_size_multiplier"],
             )
+
+       # config["n_series"] = n_series
 
         super(AutoTCN, self).__init__(
             cls_model=TCN,

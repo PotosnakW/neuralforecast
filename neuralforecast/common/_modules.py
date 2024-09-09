@@ -443,6 +443,7 @@ class Concentrator(nn.Module):
         treatment_var_name: str,
         init_ka1: float,
         init_ka2: float,
+        init_ka3: float,
         input_size: int,
         h: int,
         freq: int,
@@ -465,12 +466,16 @@ class Concentrator(nn.Module):
         # K parameter for each time-series
         self.k_a1 = nn.Embedding(self.n_series, 1)
         self.k_a2 = nn.Embedding(self.n_series, 1)
+        self.k_a3 = nn.Embedding(self.n_series, 1)
 
         # Initialize k_a
         init_k1 = torch.ones((self.n_series, 1)) * init_ka1
         init_k2 = torch.ones((self.n_series, 1)) * init_ka2
+        init_k3 = torch.ones((self.n_series, 1)) * init_ka3
+
         self.k_a1.weight.data.copy_(init_k1)
         self.k_a2.weight.data.copy_(init_k2)
+        self.k_a3.weight.data.copy_(init_k3)
 
         self.input_size = input_size
         self.h = h
@@ -480,21 +485,9 @@ class Concentrator(nn.Module):
             t, 60
         )  # 60 minutes --> hours # TODO: make more adaptable to different data freq
 
-        # conc = torch.exp(
-        #     torch.negative(torch.pow((torch.log(t + 1e-5) - k_a), 2)) / (2 * sigma**2)
-        # ) / (t * sigma * torch.sqrt(torch.tensor(2) * torch.pi) + 1e-5)
-        # #Add small increment (1e-5) or else k_a --> [nan]
-
         conc = torch.exp(
             torch.negative(torch.pow((torch.log(t + 1e-5) - 1), 2)) / (2 * k_a**2)
         ) / (t * k_a * torch.sqrt(torch.tensor(2) * torch.pi) + 1e-5)
-
-        return conc
-
-    def exponential_treatment_concentration(self, t, k_a):
-        t = torch.div(t, 60)
-
-        conc = k_a * torch.exp(torch.negative(k_a) * t)
 
         return conc
 
@@ -518,8 +511,6 @@ class Concentrator(nn.Module):
         l = treatment_var.shape[1]
 
         idx = idx.long()
-        # Constrain k_a with sigmoid
-        # k_a = torch.sigmoid(k_a_h(idx))  # [B, 1, 1] for static k_a
         k_a = k_a_h(idx)  # [B, 1, 1] for static k_a
 
         # Create [B,L,L] matrix
@@ -540,46 +531,20 @@ class Concentrator(nn.Module):
 
         return treatment
 
-    def exponential(self, treatment_exog, treatment_var, k_a_h, idx):
-        b = treatment_var.shape[0]
-        l = treatment_var.shape[1]
-
-        idx = idx.long()
-        # Constrain k_a with sigmoid
-        k_a = torch.sigmoid(k_a_h(idx))  # [B, 1, 1] for static k_a
-
-        # Create [B,L,L] matrix
-        lt = torch.tensor(range(l))
-        ltr = lt.repeat((l, 1)) - lt.reshape(-1, 1)
-        ltr[ltr < 0] = 0
-
-        ltr_batch = torch.zeros((b, l, l)).to(treatment_exog.device)
-        ltr_batch[:] = ltr
-
-        # Apply frequency
-        ltrf_batch = ltr_batch * self.freq
-
-        # Multiple concentration by treatement_var (dose)
-        conc = self.exponential_treatment_concentration(ltrf_batch, k_a)
-        scaled_conc = conc * (treatment_var.reshape(b, l, 1))
-        treatment = scaled_conc.nansum(dim=1)  # [B, L]
-
-        return treatment
-
     def forward(self, treatment_exog: torch.Tensor, idx: torch.Tensor) -> torch.Tensor:
-        treatment_var1 = treatment_exog[:, :, -2]  # [B,L,C] -> [B,L]
-        treatment_var2 = treatment_exog[:, :, -1]  # [B,L,C] -> [B,L]
-        # treatment_var3 = treatment_exog[:, :, -3]  # [B,L,C] -> [B,L]
+        treatment_var1 = treatment_exog[:, :, -1]  # [B,L,C] -> [B,L]
+        treatment_var2 = treatment_exog[:, :, -2]  # [B,L,C] -> [B,L]
+        treatment_var3 = treatment_exog[:, :, -3]  # [B,L,C] -> [B,L]
 
         if self.type == "sum_total":
             treatment1 = self.sum_total(treatment_exog, treatment_var1, idx)
             treatment2 = self.sum_total(treatment_exog, treatment_var2, idx)
-            # treatment3 = self.sum_total(treatment_exog, treatment_var3, idx)
+            treatment3 = self.sum_total(treatment_exog, treatment_var3, idx)
 
         elif self.type == "log_normal":
             treatment1 = self.log_normal(treatment_exog, treatment_var1, self.k_a1, idx)
             treatment2 = self.log_normal(treatment_exog, treatment_var2, self.k_a2, idx)
-            # treatment3 = self.log_normal(treatment_exog, treatment_var3, self.k_a3, idx)
+            treatment3 = self.log_normal(treatment_exog, treatment_var3, self.k_a3, idx)
 
         elif self.type == "exponential":
             treatment1 = self.exponential(
@@ -588,12 +553,11 @@ class Concentrator(nn.Module):
             treatment2 = self.exponential(
                 treatment_exog, treatment_var2, self.k_a2, idx
             )
-            # treatment3 = self.exponential(treatment_exog, treatment_var3, self.k_a3, idx)
 
         # Replace treatment variable with concentration
         treatment_exog_out = torch.zeros(treatment_exog.shape).to(treatment_exog.device)
-        treatment_exog_out[:, :, :-2] += treatment_exog[:, :, :-2]
-        treatment_exog_out[:, :, -2] += treatment1
-        treatment_exog_out[:, :, -1] += treatment2
+        treatment_exog_out[:, :, -3] += treatment3
+        treatment_exog_out[:, :, -2] += treatment2
+        treatment_exog_out[:, :, -1] += treatment1
 
         return treatment_exog_out

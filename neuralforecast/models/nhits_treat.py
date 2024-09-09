@@ -277,6 +277,7 @@ class NHITS_TREAT(BaseWindows):
         treatment_var_name: str = "treatment",
         init_ka1: float = 1.5,
         init_ka2: float = 1.5,
+        init_ka3: float = 1.5,
         freq: int = 1,
         **trainer_kwargs,
     ):
@@ -333,6 +334,7 @@ class NHITS_TREAT(BaseWindows):
             treatment_var_name=treatment_var_name,
             init_ka1=init_ka1,
             init_ka2=init_ka2,
+            init_ka3=init_ka3,
             freq=freq,
         )
         self.blocks = torch.nn.ModuleList(blocks)
@@ -358,6 +360,7 @@ class NHITS_TREAT(BaseWindows):
         treatment_var_name,
         init_ka1,
         init_ka2,
+        init_ka3,
         freq,
     ):
         block_list = []
@@ -390,6 +393,7 @@ class NHITS_TREAT(BaseWindows):
                         treatment_var_name=treatment_var_name,
                         init_ka1=init_ka1,
                         init_ka2=init_ka2,
+                        init_ka3=init_ka3,
                         input_size=input_size,
                         h=h,
                         freq=freq,

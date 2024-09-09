@@ -11,6 +11,7 @@ import torch.nn as nn
 
 from ..losses.pytorch import MAE
 from ..common._base_windows import BaseWindows
+from ..common._modules import Concentrator
 
 # %% ../../nbs/models.mlp.ipynb 6
 class MLP(BaseWindows):
@@ -28,7 +29,6 @@ class MLP(BaseWindows):
     `stat_exog_list`: str list, static exogenous columns.<br>
     `hist_exog_list`: str list, historic exogenous columns.<br>
     `futr_exog_list`: str list, future exogenous columns.<br>
-    `exclude_insample_y`: bool=False, the model skips the autoregressive features y[t-input_size:t] if True.<br>
     `n_layers`: int, number of layers for the MLP.<br>
     `hidden_size`: int, number of units for each layer of the MLP.<br>
     `loss`: PyTorch module, instantiated train loss class from [losses collection](https://nixtla.github.io/neuralforecast/losses.pytorch.html).<br>
@@ -38,21 +38,17 @@ class MLP(BaseWindows):
     `num_lr_decays`: int=-1, Number of learning rate decays, evenly distributed across max_steps.<br>
     `early_stop_patience_steps`: int=-1, Number of validation iterations before early stopping.<br>
     `val_check_steps`: int=100, Number of training steps between every validation loss check.<br>
-    `batch_size`: int=32, number of different series in each batch.<br>
-    `valid_batch_size`: int=None, number of different series in each validation and test batch, if None uses batch_size.<br>
-    `windows_batch_size`: int=1024, number of windows to sample in each training batch, default uses all.<br>
-    `inference_windows_batch_size`: int=-1, number of windows to sample in each inference batch, -1 uses all.<br>
-    `start_padding_enabled`: bool=False, if True, the model will pad the time series with zeros at the beginning, by input size.<br>
+    `batch_size`: int=32, number of differentseries in each batch.<br>
+    `valid_batch_size`: int=None, number of different series in each validation and test batch.<br>
+    `windows_batch_size`: int=None, windows sampled from rolled data, if None uses all.<br>
     `step_size`: int=1, step size between each window of temporal data.<br>
     `scaler_type`: str='identity', type of scaler for temporal inputs normalization see [temporal scalers](https://nixtla.github.io/neuralforecast/common.scalers.html).<br>
     `random_seed`: int=1, random_seed for pytorch initializer and numpy generators.<br>
     `num_workers_loader`: int=os.cpu_count(), workers to be used by `TimeSeriesDataLoader`.<br>
     `drop_last_loader`: bool=False, if True `TimeSeriesDataLoader` drops last non-full batch.<br>
-    `alias`: str, optional,  Custom name of the model.<br>
     `**trainer_kwargs`: int,  keyword trainer arguments inherited from [PyTorch Lighning's trainer](https://pytorch-lightning.readthedocs.io/en/stable/api/pytorch_lightning.trainer.trainer.Trainer.html?highlight=trainer).<br>
     """
 
-    # Class attributes
     SAMPLING_TYPE = "windows"
 
     def __init__(
@@ -62,7 +58,6 @@ class MLP(BaseWindows):
         futr_exog_list=None,
         hist_exog_list=None,
         stat_exog_list=None,
-        exclude_insample_y=False,
         num_layers=2,
         hidden_size=1024,
         loss=MAE(),
@@ -82,8 +77,17 @@ class MLP(BaseWindows):
         random_seed: int = 1,
         num_workers_loader: int = 0,
         drop_last_loader: bool = False,
-        **trainer_kwargs
+        # New parameters
+        use_concentrator: bool = False,
+        concentrator_type: str = None,
+        n_series: int = 1,
+        treatment_var_name: str = "treatment",
+        init_ka1: float = 1.5,
+        init_ka2: float = 1.5,
+        freq: int = 1,
+        **trainer_kwargs,
     ):
+
         # Inherit BaseWindows class
         super(MLP, self).__init__(
             h=h,
@@ -91,7 +95,6 @@ class MLP(BaseWindows):
             futr_exog_list=futr_exog_list,
             hist_exog_list=hist_exog_list,
             stat_exog_list=stat_exog_list,
-            exclude_insample_y=exclude_insample_y,
             loss=loss,
             valid_loss=valid_loss,
             max_steps=max_steps,
@@ -109,8 +112,36 @@ class MLP(BaseWindows):
             num_workers_loader=num_workers_loader,
             drop_last_loader=drop_last_loader,
             random_seed=random_seed,
-            **trainer_kwargs
+            **trainer_kwargs,
         )
+
+        # ------------------ Concentrator ------------------
+        # Asserts
+        # if use_concentrator:
+        #     assert (
+        #         treatment_var_name in hist_exog_list
+        #     ), f"Variable {treatment_var_name} not found in hist_exog_list!"
+        #     assert (
+        #         hist_exog_list[-1] == treatment_var_name
+        #     ), f"Variable {treatment_var_name} must be the last element of hist_exog_list!"
+
+        self.use_concentrator = use_concentrator
+
+        if self.use_concentrator:
+            self.concentrator = Concentrator(
+                n_series=n_series,
+                type=concentrator_type,
+                treatment_var_name=treatment_var_name,
+                init_ka1=init_ka1,
+                init_ka2=init_ka2,
+                input_size=input_size,
+                freq=freq,
+                h=h,
+                mask_future=False,
+            )
+        else:
+            self.concentrator = None
+        # --------------------------------------------------
 
         # Architecture
         self.num_layers = num_layers
@@ -141,11 +172,18 @@ class MLP(BaseWindows):
         )
 
     def forward(self, windows_batch):
+
         # Parse windows_batch
         insample_y = windows_batch["insample_y"]
         futr_exog = windows_batch["futr_exog"]
         hist_exog = windows_batch["hist_exog"]
         stat_exog = windows_batch["stat_exog"]
+        batch_idx = windows_batch["batch_idx"]
+
+        if self.use_concentrator:
+            hist_exog = self.concentrator(
+                treatment_exog=hist_exog, idx=batch_idx
+            )
 
         # Flatten MLP inputs [B, L+H, C] -> [B, (L+H)*C]
         # Contatenate [ Y_t, | X_{t-L},..., X_{t} | F_{t-L},..., F_{t+H} | S ]
@@ -169,7 +207,5 @@ class MLP(BaseWindows):
         for layer in self.mlp:
             y_pred = torch.relu(layer(y_pred))
         y_pred = self.out(y_pred)
-
-        y_pred = y_pred.reshape(batch_size, self.h, self.loss.outputsize_multiplier)
         y_pred = self.loss.domain_map(y_pred)
         return y_pred
