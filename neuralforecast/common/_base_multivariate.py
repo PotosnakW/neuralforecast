@@ -54,6 +54,7 @@ class BaseMultivariate(BaseModel):
         optimizer_kwargs=None,
         lr_scheduler=None,
         lr_scheduler_kwargs=None,
+        ckpt_path=None,
         **trainer_kwargs,
     ):
         super().__init__(
@@ -69,6 +70,8 @@ class BaseMultivariate(BaseModel):
             stat_exog_list=stat_exog_list,
             max_steps=max_steps,
             early_stop_patience_steps=early_stop_patience_steps,
+            ckpt_path=ckpt_path,
+            alias=alias,
             **trainer_kwargs,
         )
 

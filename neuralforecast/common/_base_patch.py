@@ -59,6 +59,7 @@ class BasePatch(BaseModel):
         optimizer_kwargs=None,
         lr_scheduler=None,
         lr_scheduler_kwargs=None,
+        ckpt_path=None,
         **trainer_kwargs,
     ):
         super().__init__(
@@ -74,6 +75,8 @@ class BasePatch(BaseModel):
             stat_exog_list=stat_exog_list,
             max_steps=max_steps,
             early_stop_patience_steps=early_stop_patience_steps,
+            ckpt_path=ckpt_path,
+            alias=alias,
             **trainer_kwargs,
         )
 
@@ -536,6 +539,9 @@ class BasePatch(BaseModel):
 
         # Number of windows in batch
         windows_batch_size = self.inference_windows_batch_size
+        
+        y_idx = batch["y_idx"]
+        mask_idx = batch["temporal_cols"].get_loc("available_mask")
 
         valid_losses = []
         batch_sizes = []
@@ -547,9 +553,7 @@ class BasePatch(BaseModel):
                 i * windows_batch_size, min((i + 1) * windows_batch_size, n_windows)
             )
             windows = self._create_windows(batch, window_size=window_size, step="val", w_idxs=w_idxs)
-            windows = self._normalization(windows=windows, y_idx=y_idx)
-
-            # Parse windows
+            
             (
                 insample_y,
                 insample_mask,
@@ -563,9 +567,25 @@ class BasePatch(BaseModel):
             # Concatenate along dimension 1
             if fi % n_repeats != 0:
                 insample_y = torch.cat((insample_y, *previous_preds), dim=1)
+                # Shift insample_y by patches to include new appended predictions
                 insample_y = insample_y[:, self.patch_len*len(previous_preds) :]
+                insample_mask[:, -(self.patch_len*len(previous_preds))  :] = 1
             else:
                 previous_preds = []
+
+            windows["temporal"][:, : self.input_size, y_idx] = insample_y
+            windows["temporal"][:,  : self.input_size, mask_idx] = insample_mask
+            windows = self._normalization(windows=windows, y_idx=y_idx)
+            
+            (
+                insample_y,
+                insample_mask,
+                _,
+                _,
+                hist_exog,
+                futr_exog,
+                stat_exog,
+            ) = self._parse_windows(batch, windows)
 
             windows_batch = dict(
                 insample_y=insample_y,  # [Ws, L]
@@ -642,6 +662,9 @@ class BasePatch(BaseModel):
         # Number of windows in batch
         windows_batch_size = self.inference_windows_batch_size
 
+        y_idx = batch["y_idx"]
+        mask_idx = batch["temporal_cols"].get_loc("available_mask")
+        
         previous_preds = []
         y_hats = []
         for fi, i in enumerate(repeated_idxs):
@@ -650,12 +673,40 @@ class BasePatch(BaseModel):
                 i * windows_batch_size, min((i + 1) * windows_batch_size, n_windows)
             )
             windows = self._create_windows(batch, window_size=window_size, step="predict", w_idxs=w_idxs)
-            windows = self._normalization(windows=windows, y_idx=y_idx)
 
-            # Parse windows
-            insample_y, insample_mask, _, _, hist_exog, futr_exog, stat_exog = (
-                self._parse_windows(batch, windows)
-            )
+            (
+                insample_y,
+                insample_mask,
+                _,
+                _,
+                hist_exog,
+                futr_exog,
+                stat_exog,
+            ) = self._parse_windows(batch, windows)
+
+            # Concatenate along dimension 1
+            if fi % n_repeats != 0:
+                insample_y = torch.cat((insample_y, *previous_preds), dim=1)
+                # Shift insample_y by patches to include new appended predictions
+                insample_y = insample_y[:, self.patch_len*len(previous_preds) :]
+                insample_mask[:, -(self.patch_len*len(previous_preds)) :] = 1
+                
+            else:
+                previous_preds = []
+                
+            windows["temporal"][:, : self.input_size, y_idx] = insample_y
+            windows["temporal"][:, : self.input_size, mask_idx] = insample_mask
+            windows = self._normalization(windows=windows, y_idx=y_idx)
+            
+            (
+                insample_y,
+                insample_mask,
+                _,
+                _,
+                hist_exog,
+                futr_exog,
+                stat_exog,
+            ) = self._parse_windows(batch, windows)
 
             windows_batch = dict(
                 insample_y=insample_y,  # [Ws, L]

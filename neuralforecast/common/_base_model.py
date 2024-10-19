@@ -81,6 +81,8 @@ class BaseModel(pl.LightningModule):
         stat_exog_list,
         max_steps,
         early_stop_patience_steps,
+        ckpt_path, # Willa added
+        alias, # Willa added
         **trainer_kwargs,
     ):
         super().__init__()
@@ -184,6 +186,15 @@ class BaseModel(pl.LightningModule):
             trainer_kwargs["enable_checkpointing"] = False
 
         self.trainer_kwargs = trainer_kwargs
+        
+        # Willa added   
+        if ckpt_path is None:
+            self.ckpt_path = None
+        else:
+            self.ckpt_path = ckpt_path       
+            fs, _, _ = fsspec.get_fs_token_paths(self.ckpt_path)
+            if not fs.exists(self.ckpt_path):
+                fs.makedirs(self.ckpt_path)
 
     def __repr__(self):
         return type(self).__name__ if self.alias is None else self.alias
@@ -430,6 +441,10 @@ class BaseModel(pl.LightningModule):
         )
         self.valid_trajectories.append((self.global_step, avg_loss))
         self.validation_step_outputs.clear()  # free memory (compute `avg_loss` per epoch)
+        
+        # Willa added for grokking experiments
+        if (self.ckpt_path is not None) & (self.global_step % 300 == 0):
+            self.save(self.ckpt_path+f'/{self.alias}_step:{self.global_step}.ckpt')
 
     def save(self, path):
         with fsspec.open(path, "wb") as f:

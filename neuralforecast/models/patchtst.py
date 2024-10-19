@@ -328,6 +328,7 @@ class PatchTST_backbone(nn.Module):
 
         # model
         z = self.backbone(z)  # z: [bs x nvars x hidden_size x patch_num]
+        #embeddings = z.clone() # WILLA ADDED THIS
         z = self.head(z)  # z: [bs x nvars x h]
 
         # denorm
@@ -336,6 +337,7 @@ class PatchTST_backbone(nn.Module):
             z = self.revin_layer(z, "denorm")
             z = z.permute(0, 2, 1)
         return z
+        #return z, embeddings # WILLA ADDED THIS
 
     def create_pretrain_head(self, head_nf, vars, dropout):
         return nn.Sequential(nn.Dropout(dropout), nn.Conv1d(head_nf, vars, 1))
@@ -1069,9 +1071,11 @@ class PatchTST(BaseWindows):
 
         x = x.permute(0, 2, 1)  # x: [Batch, 1, input_size]
         x = self.model(x)
+        #x, embeddings = self.model(x) # Willa added 
         x = x.reshape(x.shape[0], self.h, -1)  # x: [Batch, h, c_out]
 
         # Domain map
         forecast = self.loss.domain_map(x)
-
+        
         return forecast
+        #return forecast, embeddings # Willa added
