@@ -341,7 +341,7 @@ class BasePatch(BaseModel):
 
         return windows
 
-    def _inv_normalization(self, y_hat, temporal_cols, y_idx):
+    def _inv_normalization(self, y_hat, y_idx):
         # Receives window predictions [B, H, output]
         # Broadcasts outputs and inverts normalization
 
@@ -456,7 +456,9 @@ class BasePatch(BaseModel):
         output = self(windows_batch)
         if self.loss.is_distribution_output:
             _, y_loc, y_scale = self._inv_normalization(
-                y_hat=outsample_y, temporal_cols=batch["temporal_cols"], y_idx=y_idx
+                y_hat=outsample_y, 
+                #temporal_cols=batch["temporal_cols"], 
+                y_idx=y_idx
             )
             outsample_y = original_outsample_y
             distr_args = self.loss.scale_decouple(
@@ -488,7 +490,9 @@ class BasePatch(BaseModel):
     ):
         if self.loss.is_distribution_output:
             _, y_loc, y_scale = self._inv_normalization(
-                y_hat=outsample_y, temporal_cols=temporal_cols, y_idx=y_idx
+                y_hat=outsample_y, 
+                #temporal_cols=temporal_cols,
+                y_idx=y_idx
             )
             distr_args = self.loss.scale_decouple(
                 output=output, loc=y_loc, scale=y_scale
@@ -512,7 +516,9 @@ class BasePatch(BaseModel):
             )
         else:
             output, _, _ = self._inv_normalization(
-                y_hat=output, temporal_cols=temporal_cols, y_idx=y_idx
+                y_hat=output, 
+                #temporal_cols=temporal_cols,
+                y_idx=y_idx
             )
             valid_loss = self.valid_loss(
                 y=outsample_y, y_hat=output, mask=outsample_mask
@@ -524,12 +530,15 @@ class BasePatch(BaseModel):
         if self.val_size == 0:
             return np.nan
 
-        window_size = self.input_size + self.patch_len
+        # using this is given error when identifhing windows with w_idxs
+        #window_size = self.input_size + self.patch_len
+        window_size = self.input_size + self.h
 
         # TODO: Hack to compute number of windows
-        windows = self._create_windows(batch, window_size=self.input_size + self.h, step="val")
+        windows = self._create_windows(batch, window_size=window_size, step="val")
         n_windows = len(windows["temporal"])
         y_idx = batch["y_idx"]
+        mask_idx = batch["temporal_cols"].get_loc("available_mask")
         
         # Number of windows in batch
         windows_batch_size = self.inference_windows_batch_size
@@ -537,12 +546,11 @@ class BasePatch(BaseModel):
         #Calculate how many times each window should be repeated
         n_repeats = int(torch.ceil(torch.tensor([self.h/self.patch_len])))
         # Repeat each index in the range of n_windows, n_repeats times
-        repeated_idxs = torch.arange(np.ceil(n_windows/windows_batch_size)).repeat_interleave(n_repeats)
+        n_batches = int(np.ceil(n_windows / windows_batch_size))
+        repeated_idxs = torch.arange(n_batches).repeat_interleave(n_repeats)
         
+        # if n_windows < windows_batch_size results will equal n_windows
         remainder_windows_count = n_windows%windows_batch_size
-        
-        y_idx = batch["y_idx"]
-        mask_idx = batch["temporal_cols"].get_loc("available_mask")
 
         valid_losses = []
         batch_sizes = []
@@ -568,8 +576,12 @@ class BasePatch(BaseModel):
             # Concatenate along dimension 1
             pos = fi % n_repeats
             if pos != 0:
-                seq_preds = previous_preds[:, : self.patch_len*pos]
-                insample_y = torch.cat((insample_y, seq_preds), dim=1)
+                seq_preds = previous_preds[:, : self.patch_len*pos].clone()
+                y_hat, _, _ = self._inv_normalization(
+                    y_hat=seq_preds,
+                    y_idx=y_idx,
+                    )
+                insample_y = torch.cat((insample_y, y_hat), dim=1)
                 # Shift insample_y by patches to include new appended predictions
                 insample_y = insample_y[:, self.patch_len*pos :]
                 insample_mask[:, -(self.patch_len*pos) :] = 1
@@ -610,7 +622,7 @@ class BasePatch(BaseModel):
 
             if (fi+1) % n_repeats == 0:
                 output_horizon = previous_preds[:, : self.h]
-                windows_h = self._create_windows(batch, window_size=self.input_size + self.h, 
+                windows_h = self._create_windows(batch, window_size=window_size, 
                                                  step="val", w_idxs=w_idxs)
                 original_outsample_y = torch.clone(windows_h["temporal"][:, -self.h :, y_idx])
     
@@ -636,9 +648,10 @@ class BasePatch(BaseModel):
             else:
                 continue
 
-        valid_loss = torch.mean(torch.stack(valid_losses))
+        valid_loss = torch.stack(valid_losses)
         batch_sizes = torch.tensor(batch_sizes, device=valid_loss.device)
         batch_size = torch.sum(batch_sizes)
+        valid_loss = torch.sum(valid_loss * batch_sizes) / batch_size
 
         if torch.isnan(valid_loss):
             raise Exception("Loss is NaN, training stopped.")
@@ -655,13 +668,17 @@ class BasePatch(BaseModel):
 
 
     def predict_step(self, batch, batch_idx):
-
-        window_size = self.input_size + self.patch_len
+        
+        # using this is given error when identifhing windows with w_idxs
+        #window_size = self.input_size + self.patch_len
+        window_size = self.input_size + self.h
 
        # TODO: Hack to compute number of windows
-        windows = self._create_windows(batch, window_size=self.input_size + self.h, step="predict")
+        windows = self._create_windows(batch, window_size=window_size, step="predict")
         n_windows = len(windows["temporal"])
         y_idx = batch["y_idx"]
+        mask_idx = batch["temporal_cols"].get_loc("available_mask")
+        #print(windows['temporal'][:, :, 0])
 
         # Number of windows in batch
         windows_batch_size = self.inference_windows_batch_size
@@ -669,12 +686,11 @@ class BasePatch(BaseModel):
         #Calculate how many times each window should be repeated
         n_repeats = int(torch.ceil(torch.tensor([self.h/self.patch_len])))
         # Repeat each index in the range of n_windows, n_repeats times
-        repeated_idxs = torch.arange(np.ceil(n_windows/windows_batch_size)).repeat_interleave(n_repeats)
+        n_batches = int(np.ceil(n_windows / windows_batch_size))
+        repeated_idxs = torch.arange(n_batches).repeat_interleave(n_repeats)
         
+        # if n_windows < windows_batch_size results will equal n_windows
         remainder_windows_count = n_windows%windows_batch_size
-        
-        y_idx = batch["y_idx"]
-        mask_idx = batch["temporal_cols"].get_loc("available_mask")
         
         previous_preds = torch.zeros(windows_batch_size, 
                                      self.patch_len*n_repeats, 
@@ -689,6 +705,7 @@ class BasePatch(BaseModel):
             )
             windows = self._create_windows(batch, window_size=window_size, step="predict", w_idxs=w_idxs)
 
+            # parse_windows removes horizon from insample_y
             (
                 insample_y,
                 insample_mask,
@@ -697,13 +714,17 @@ class BasePatch(BaseModel):
                 hist_exog,
                 futr_exog,
                 stat_exog,
-            ) = self._parse_windows(batch, windows)
+            ) = self._parse_windows(batch, windows) 
 
-#             # Concatenate along dimension 1
+            # Concatenate along dimension 1
             pos = fi % n_repeats
             if pos != 0:
-                seq_preds = previous_preds[:, : self.patch_len*pos]
-                insample_y = torch.cat((insample_y, seq_preds), dim=1)
+                seq_preds = previous_preds[:, : self.patch_len*pos].clone()
+                y_hat, _, _ = self._inv_normalization(
+                    y_hat=seq_preds,
+                    y_idx=y_idx,
+                    )
+                insample_y = torch.cat((insample_y, y_hat), dim=1)
                 # Shift insample_y by patches to include new appended predictions
                 insample_y = insample_y[:, self.patch_len*pos :]
                 insample_mask[:, -(self.patch_len*pos) :] = 1
@@ -719,7 +740,7 @@ class BasePatch(BaseModel):
                     previous_preds = torch.zeros(windows_batch_size, self.patch_len*n_repeats, 
                                                  device=windows["temporal"].device
                                                 )
-            
+
             windows = self._normalization(windows=windows, y_idx=y_idx)
 
             (
@@ -770,7 +791,7 @@ class BasePatch(BaseModel):
                     dtype=output_batch[0].dtype,
                     device=output_batch[0].device,
                 ),
-                temporal_cols=batch["temporal_cols"],
+               # temporal_cols=batch["temporal_cols"],
                 y_idx=y_idx,
             )
             distr_args = self.loss.scale_decouple(
@@ -788,7 +809,7 @@ class BasePatch(BaseModel):
         else:
             y_hat, _, _ = self._inv_normalization(
                 y_hat=output_batch,
-                temporal_cols=batch["temporal_cols"],
+               # temporal_cols=batch["temporal_cols"],
                 y_idx=y_idx,
             )
         return y_hat
