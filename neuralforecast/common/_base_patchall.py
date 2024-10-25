@@ -15,7 +15,7 @@ from ..tsdataset import TimeSeriesDataModule
 from ..utils import get_indexer_raise_missing
 
 # %% ../../nbs/common.base_windows.ipynb 6
-class BasePatch(BaseModel):
+class BasePatchall(BaseModel):
     """Base Windows
 
     Base class for all windows-based models. The forecasts are produced separately
@@ -364,13 +364,17 @@ class BasePatch(BaseModel):
 
         return y_hat, y_loc, y_scale
 
-    def _parse_windows(self, batch, windows):
+    def _parse_windows(self, batch, windows, keep_length=None):
+        
+        if keep_length == None:
+            keep_length = self.input_size
+
         # Filter insample lags from outsample horizon
         y_idx = batch["y_idx"]
         mask_idx = batch["temporal_cols"].get_loc("available_mask")
 
-        insample_y = windows["temporal"][:, : self.input_size, y_idx]
-        insample_mask = windows["temporal"][:, : self.input_size, mask_idx]
+        insample_y = windows["temporal"][:, : keep_length, y_idx]
+        insample_mask = windows["temporal"][:, : keep_length, mask_idx]
 
         # Declare additional information
         outsample_y = None
@@ -380,14 +384,14 @@ class BasePatch(BaseModel):
         stat_exog = None
 
         if self.h > 0:
-            outsample_y = windows["temporal"][:, self.input_size :, y_idx]
-            outsample_mask = windows["temporal"][:, self.input_size :, mask_idx]
+            outsample_y = windows["temporal"][:, keep_length :, y_idx]
+            outsample_mask = windows["temporal"][:, keep_length :, mask_idx]
 
         if len(self.hist_exog_list):
             hist_exog_idx = get_indexer_raise_missing(
                 windows["temporal_cols"], self.hist_exog_list
             )
-            hist_exog = windows["temporal"][:, : self.input_size, hist_exog_idx]
+            hist_exog = windows["temporal"][:, : keep_length, hist_exog_idx]
 
         if len(self.futr_exog_list):
             futr_exog_idx = get_indexer_raise_missing(
@@ -579,7 +583,7 @@ class BasePatch(BaseModel):
                                         y_hat, 
                                         horizon_filler), 
                                        dim=1)
-                
+    
                 extend_mask = torch.ones(insample_y.shape[0],
                                     self.output_patch_len*pos
                                     ).to(windows['temporal'].device)
@@ -587,18 +591,14 @@ class BasePatch(BaseModel):
                                            extend_mask,
                                            horizon_filler),
                                           dim=1)
-                
-                 # Shift insample_y by patches to include new appended predictions
-                insample_y = insample_y[:, self.output_patch_len*pos :]
-                insample_mask = insample_mask[:, self.output_patch_len*pos :]
-                
+
                 wcat = torch.zeros(insample_y.shape[0],
                                    insample_y.shape[1], 
                                    2).to(windows['temporal'].device)
                 wcat[:, :, y_idx] = insample_y
                 wcat[:, :, mask_idx] = insample_mask
                 windows["temporal"] = wcat
-
+                
             else:
                 if (i == torch.max(repeated_idxs)) & (remainder_windows_count!=0):
                     previous_preds = torch.zeros(remainder_windows_count, self.output_patch_len*n_repeats, 
@@ -609,6 +609,7 @@ class BasePatch(BaseModel):
             
             windows = self._normalization(windows=windows, y_idx=y_idx)
 
+            keep_length = self.input_size+self.output_patch_len*pos
             (
                 insample_y,
                 insample_mask,
@@ -617,7 +618,7 @@ class BasePatch(BaseModel):
                 hist_exog,
                 futr_exog,
                 stat_exog,
-            ) = self._parse_windows(batch, windows)
+            ) = self._parse_windows(batch, windows, keep_length=keep_length)
 
             windows_batch = dict(
                 insample_y=insample_y,  # [Ws, L]
@@ -687,6 +688,7 @@ class BasePatch(BaseModel):
         n_windows = len(windows["temporal"])
         y_idx = batch["y_idx"]
         mask_idx = batch["temporal_cols"].get_loc("available_mask")
+        #print(windows['temporal'][:, :, 0])
 
         # Number of windows in batch
         windows_batch_size = self.inference_windows_batch_size
@@ -732,13 +734,12 @@ class BasePatch(BaseModel):
                     y_hat=seq_preds,
                     y_idx=y_idx,
                     )
-
                 horizon_filler = torch.zeros(insample_y.shape[0], self.h).to(windows['temporal'].device)
                 insample_y = torch.cat((insample_y, 
                                         y_hat, 
                                         horizon_filler), 
                                        dim=1)
-                
+    
                 extend_mask = torch.ones(insample_y.shape[0],
                                     self.output_patch_len*pos
                                     ).to(windows['temporal'].device)
@@ -746,18 +747,14 @@ class BasePatch(BaseModel):
                                            extend_mask,
                                            horizon_filler),
                                           dim=1)
-                
-                 # Shift insample_y by patches to include new appended predictions
-                insample_y = insample_y[:, self.output_patch_len*pos :]
-                insample_mask = insample_mask[:, self.output_patch_len*pos :]
-                
+
                 wcat = torch.zeros(insample_y.shape[0],
                                    insample_y.shape[1], 
                                    2).to(windows['temporal'].device)
                 wcat[:, :, y_idx] = insample_y
                 wcat[:, :, mask_idx] = insample_mask
                 windows["temporal"] = wcat
-                
+
             else:
                 if (i == torch.max(repeated_idxs)) & (remainder_windows_count!=0):
                     previous_preds = torch.zeros(remainder_windows_count, self.output_patch_len*n_repeats, 
@@ -770,6 +767,7 @@ class BasePatch(BaseModel):
 
             windows = self._normalization(windows=windows, y_idx=y_idx)
 
+            keep_length = self.input_size+self.output_patch_len*pos
             (
                 insample_y,
                 insample_mask,
@@ -778,7 +776,7 @@ class BasePatch(BaseModel):
                 hist_exog,
                 futr_exog,
                 stat_exog,
-            ) = self._parse_windows(batch, windows)
+            ) = self._parse_windows(batch, windows, keep_length=keep_length)
 
             windows_batch = dict(
                 insample_y=insample_y,  # [Ws, L]

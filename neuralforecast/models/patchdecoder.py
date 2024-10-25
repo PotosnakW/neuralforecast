@@ -242,7 +242,8 @@ class PatchTST_backbone(nn.Module):
         c_out: int,
         input_size: int,
         h: int,
-        patch_len: int,
+        input_patch_len: int,
+        output_patch_len: int,
         stride: int,
         max_seq_len: Optional[int] = 1024,
         n_layers: int = 3,
@@ -257,7 +258,7 @@ class PatchTST_backbone(nn.Module):
         act: str = "gelu",
         key_padding_mask: str = "auto",
         padding_var: Optional[int] = None,
-        attn_mask: torch.Tensor = None,
+        attn_mask: str = "casual",
         res_attention: bool = True,
         pre_norm: bool = False,
         store_attn: bool = False,
@@ -282,10 +283,10 @@ class PatchTST_backbone(nn.Module):
             self.revin_layer = RevIN(c_in, affine=affine, subtract_last=subtract_last)
 
         # Patching
-        self.patch_len = patch_len
+        self.input_patch_len = input_patch_len
         self.stride = stride
         self.padding_patch = padding_patch
-        patch_num = int((input_size - patch_len) / stride + 1)
+        patch_num = int((input_size - input_patch_len) / stride + 1)
         if padding_patch == "end":  # can be modified to general case
             self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
             patch_num += 1
@@ -294,7 +295,7 @@ class PatchTST_backbone(nn.Module):
         self.backbone = TSTiDecoder(
             c_in,
             patch_num=patch_num,
-            patch_len=patch_len,
+            input_patch_len=input_patch_len,
             max_seq_len=max_seq_len,
             n_layers=n_layers,
             hidden_size=hidden_size,
@@ -332,8 +333,7 @@ class PatchTST_backbone(nn.Module):
                 self.individual,
                 self.n_vars,
                 self.head_nf,
-                h=h,
-                patch_len=patch_len,
+                output_patch_len=output_patch_len,
                 c_out=c_out,
                 head_dropout=head_dropout,
             )
@@ -349,13 +349,13 @@ class PatchTST_backbone(nn.Module):
         if self.padding_patch == "end":
             z = self.padding_patch_layer(z)
         z = z.unfold(
-            dimension=-1, size=self.patch_len, step=self.stride
-        )  # z: [bs x nvars x patch_num x patch_len]
-        z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x patch_len x patch_num]
+            dimension=-1, size=self.input_patch_len, step=self.stride
+        )  # z: [bs x nvars x patch_num x input_patch_len
+        z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x input_patch_len x patch_num]
 
         # model
         z = self.backbone(z)  # z: [bs x nvars x hidden_size x patch_num]
-       # embeddings = z.clone() # WILLA ADDED THIS
+       # embeddings = z.clone() # Willa: uncomment to get embeddings
         z = self.head(z)  # z: [bs x nvars x h]
 
         # denorm
@@ -364,7 +364,7 @@ class PatchTST_backbone(nn.Module):
             z = self.revin_layer(z, "denorm")
             z = z.permute(0, 2, 1)
         return z
-    # return z, embeddings # WILLA ADDED THIS
+    # return z # Willa: uncomment to get embeddings
 
     def create_pretrain_head(self, head_nf, vars, dropout):
         return nn.Sequential(nn.Dropout(dropout), nn.Conv1d(head_nf, vars, 1))
@@ -375,19 +375,12 @@ class Flatten_Head(nn.Module):
     Flatten_Head
     """
 
-    def __init__(self, individual, n_vars, nf, h, patch_len, c_out, head_dropout=0):
+    def __init__(self, individual, n_vars, nf, output_patch_len, c_out, head_dropout=0):
         super().__init__()
 
         self.individual = individual
         self.n_vars = n_vars
         self.c_out = c_out
-
-        ## WILLA'S FIX SO H IS PREDICTED IF PATCH_LEN > HORIZON. 
-        ## MAKE OUTPUT_SHAPE==PATCH_LEN TO PREDICT PATCH_LEN ALWAYS
-        if h < patch_len:
-            output_shape = h
-        else:
-            output_shape = patch_len
 
         if self.individual:
             self.linears = nn.ModuleList()
@@ -395,11 +388,11 @@ class Flatten_Head(nn.Module):
             self.flattens = nn.ModuleList()
             for i in range(self.n_vars):
                 self.flattens.append(nn.Flatten(start_dim=-2))
-                self.linears.append(nn.Linear(nf, output_shape * c_out))
+                self.linears.append(nn.Linear(nf, output_patch_len * c_out))
                 self.dropouts.append(nn.Dropout(head_dropout))
         else:
             self.flatten = nn.Flatten(start_dim=-2)
-            self.linear = nn.Linear(nf, output_shape * c_out)
+            self.linear = nn.Linear(nf, output_patch_len * c_out)
             self.dropout = nn.Dropout(head_dropout)
 
     def forward(self, x):  # x: [bs x nvars x hidden_size x patch_num]
@@ -427,7 +420,7 @@ class TSTiDecoder(nn.Module):  # i means channel-independent
         self,
         c_in,
         patch_num,
-        patch_len,
+        input_patch_len,
         max_seq_len=1024,
         n_layers=3,
         hidden_size=128,
@@ -442,7 +435,7 @@ class TSTiDecoder(nn.Module):  # i means channel-independent
         store_attn=False,
         key_padding_mask="auto",
         padding_var=None,
-        attn_mask=None,
+        attn_mask="casual",
         res_attention=True,
         pre_norm=False,
         pe="zeros",
@@ -452,12 +445,12 @@ class TSTiDecoder(nn.Module):  # i means channel-independent
         super().__init__()
 
         self.patch_num = patch_num
-        self.patch_len = patch_len
+        self.input_patch_len = input_patch_len
 
         # Input encoding
         q_len = patch_num
         self.W_P = nn.Linear(
-            patch_len, hidden_size
+            input_patch_len, hidden_size
         )  # Eq 1: projection of feature vectors onto a d-dim vector space
         self.seq_len = q_len
         
@@ -484,13 +477,14 @@ class TSTiDecoder(nn.Module):  # i means channel-independent
             n_layers=n_layers,
             store_attn=store_attn,
             pe=pe,
+            attn_mask=attn_mask,
         )
 
-    def forward(self, x) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
+    def forward(self, x) -> torch.Tensor:  # x: [bs x nvars x input_patch_len x patch_num]
 
         n_vars = x.shape[1]
         # Input encoding
-        x = x.permute(0, 1, 3, 2)  # x: [bs x nvars x patch_num x patch_len]
+        x = x.permute(0, 1, 3, 2)  # x: [bs x nvars x patch_num x input_patch_len]
         x = self.W_P(x)  # x: [bs x nvars x patch_num x hidden_size]
 
         u = torch.reshape(
@@ -529,6 +523,7 @@ class TSTDecoder(nn.Module):
         pre_norm=False,
         store_attn=False,
         pe="zeros",
+        attn_mask="causal",
     ):
         super().__init__()
 
@@ -555,19 +550,22 @@ class TSTDecoder(nn.Module):
         )
         self.res_attention = res_attention
         self.q_len = q_len
+        self.attn_mask = attn_mask
 
     def forward(
         self,
         src: torch.Tensor,
         key_padding_mask: Optional[torch.Tensor] = None,
-        attn_mask: torch.Tensor = None,
     ):
 
-        self_attn_mask = torch.triu(torch.ones((1, self.q_len, self.q_len), 
-                                               dtype=torch.bool
-                                              ), 
-                                    diagonal=1
-                                   ).to(src.device)
+        if self.attn_mask == "causal":
+            self_attn_mask = torch.triu(torch.ones((1, self.q_len, self.q_len), 
+                                                   dtype=torch.bool
+                                                  ), 
+                                        diagonal=1
+                                       ).to(src.device)
+        elif self.attn_mask == "bidirectional":
+            self_attn_mask = None
 
         output = src
         scores = None
@@ -937,7 +935,8 @@ class PatchDecoder(BasePatch):
     `fc_dropout`: float=0.1, dropout rate for linear layer.<br>
     `head_dropout`: float=0.1, dropout rate for Flatten head layer.<br>
     `attn_dropout`: float=0.1, dropout rate for attention layer.<br>
-    `patch_len`: int=32, length of patch. Note: patch_len = min(patch_len, input_size + stride).<br>
+    `input_patch_len`: int=32, length of patch. Note: intput_patch_len = min(input_patch_len, input_size + stride).<br>
+    `output_patch_len`: int=32, length of patch. Note: output_patch_len = min(output_patch_len, h).<br>
     `stride`: int=16, stride of patch.<br>
     `revin`: bool=True, bool to use RevIn.<br>
     `revin_affine`: bool=False, bool to use affine in RevIn.<br>
@@ -996,7 +995,8 @@ class PatchDecoder(BasePatch):
         fc_dropout: float = 0.2,
         head_dropout: float = 0.0,
         attn_dropout: float = 0.0,
-        patch_len: int = 16,
+        input_patch_len: int = 16,
+        output_patch_len: int = 16,
         stride: int = 8,
         revin: bool = True,
         revin_affine: bool = False,
@@ -1026,12 +1026,14 @@ class PatchDecoder(BasePatch):
         optimizer_kwargs=None,
         lr_scheduler=None,
         lr_scheduler_kwargs=None,
-        pe="zeros", 
+        pe="zeros",    # Initial zeros for positional encoding
+        attn_mask = "causal",
         **trainer_kwargs
     ):
         super(PatchDecoder, self).__init__(
             h=h,
-            patch_len=patch_len, 
+            input_patch_len=input_patch_len, 
+            output_patch_len=output_patch_len, 
             stride=stride,
             input_size=input_size,
             hist_exog_list=hist_exog_list,
@@ -1063,7 +1065,8 @@ class PatchDecoder(BasePatch):
         )
 
         # Enforce correct patch_len, regardless of user input
-        patch_len = min(input_size + stride, patch_len)
+        input_patch_len = min(input_size + stride, input_patch_len)
+        output_patch_len = min(h, output_patch_len)
 
         c_out = self.loss.outputsize_multiplier
 
@@ -1072,7 +1075,6 @@ class PatchDecoder(BasePatch):
         padding_patch = "end"  # Padding at the end
         pretrain_head = False  # No pretrained head
         norm = "BatchNorm"  # Use BatchNorm (if batch_normalization is True)
-        #pe = "zeros"  # Initial zeros for positional encoding
         d_k = None  # Key dimension
         d_v = None  # Value dimension
         store_attn = False  # Store attention weights
@@ -1081,14 +1083,14 @@ class PatchDecoder(BasePatch):
         max_seq_len = 1024  # Not used
         key_padding_mask = "auto"  # Not used
         padding_var = None  # Not used
-        attn_mask = None  # Not used
 
         self.model = PatchTST_backbone(
             c_in=c_in,
             c_out=c_out,
             input_size=input_size,
             h=h,
-            patch_len=patch_len,
+            input_patch_len=input_patch_len,
+            output_patch_len=output_patch_len,
             stride=stride,
             max_seq_len=max_seq_len,
             n_layers=decoder_layers,
@@ -1134,7 +1136,7 @@ class PatchDecoder(BasePatch):
 
         x = x.permute(0, 2, 1)  # x: [Batch, 1, input_size]
         x = self.model(x)
-        x = x.reshape(x.shape[0], self.patch_len, -1)  # x: [Batch, patch_len, c_out]
+        x = x.reshape(x.shape[0], self.output_patch_len, -1)  # x: [Batch, output_patch_len, c_out]
 
         # Domain map
         forecast = self.loss.domain_map(x)

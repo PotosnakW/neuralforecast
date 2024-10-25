@@ -231,7 +231,7 @@ class PatchTST_backbone(nn.Module):
         act: str = "gelu",
         key_padding_mask: str = "auto",
         padding_var: Optional[int] = None,
-        attn_mask: Optional[torch.Tensor] = None,
+        attn_mask: str = "bidirectional",
         res_attention: bool = True,
         pre_norm: bool = False,
         store_attn: bool = False,
@@ -408,7 +408,7 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
         store_attn=False,
         key_padding_mask="auto",
         padding_var=None,
-        attn_mask=None,
+        attn_mask="bidirectional",
         res_attention=True,
         pre_norm=False,
         pe="zeros",
@@ -449,6 +449,8 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
             res_attention=res_attention,
             n_layers=n_layers,
             store_attn=store_attn,
+            pe=pe,
+            attn_mask=attn_mask,
         )
 
     def forward(self, x) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
@@ -494,6 +496,8 @@ class TSTEncoder(nn.Module):
         n_layers=1,
         pre_norm=False,
         store_attn=False,
+        pe="zeros",
+        attn_mask="bidirectional",
     ):
         super().__init__()
 
@@ -513,18 +517,30 @@ class TSTEncoder(nn.Module):
                     res_attention=res_attention,
                     pre_norm=pre_norm,
                     store_attn=store_attn,
+                    pe=pe,
                 )
                 for i in range(n_layers)
             ]
         )
         self.res_attention = res_attention
+        self.q_len = q_len
+        self.attn_mask = attn_mask
 
     def forward(
         self,
         src: torch.Tensor,
         key_padding_mask: Optional[torch.Tensor] = None,
-        attn_mask: Optional[torch.Tensor] = None,
     ):
+
+        if self.attn_mask == "causal":
+            self_attn_mask = torch.triu(torch.ones((1, self.q_len, self.q_len), 
+                                                   dtype=torch.bool
+                                                  ), 
+                                        diagonal=1
+                                       ).to(src.device)
+        elif self.attn_mask == "bidirectional":
+            self_attn_mask = None
+
         output = src
         scores = None
         if self.res_attention:
@@ -533,13 +549,15 @@ class TSTEncoder(nn.Module):
                     output,
                     prev=scores,
                     key_padding_mask=key_padding_mask,
-                    attn_mask=attn_mask,
+                    attn_mask=self_attn_mask,
                 )
             return output
         else:
             for mod in self.layers:
                 output = mod(
-                    output, key_padding_mask=key_padding_mask, attn_mask=attn_mask
+                    output, 
+                    key_padding_mask=key_padding_mask,
+                    attn_mask=self_attn_mask,
                 )
             return output
 
@@ -565,6 +583,7 @@ class TSTEncoderLayer(nn.Module):
         activation="gelu",
         res_attention=False,
         pre_norm=False,
+        pe="zeros",
     ):
         super().__init__()
         assert (
@@ -583,6 +602,7 @@ class TSTEncoderLayer(nn.Module):
             attn_dropout=attn_dropout,
             proj_dropout=dropout,
             res_attention=res_attention,
+            pe=pe,
         )
 
         # Add & Norm
@@ -682,6 +702,7 @@ class _MultiheadAttention(nn.Module):
         proj_dropout=0.0,
         qkv_bias=True,
         lsa=False,
+        pe="zeros", # Willa added
     ):
         """
         Multi Head Attention Layer
@@ -714,6 +735,8 @@ class _MultiheadAttention(nn.Module):
         self.to_out = nn.Sequential(
             nn.Linear(n_heads * d_v, hidden_size), nn.Dropout(proj_dropout)
         )
+        
+        self.pe = pe
 
     def forward(
         self,
@@ -741,6 +764,13 @@ class _MultiheadAttention(nn.Module):
         v_s = (
             self.W_V(V).view(bs, -1, self.n_heads, self.d_v).transpose(1, 2)
         )  # v_s    : [bs x n_heads x q_len x d_v]
+        
+        # Apply Rotary Positional Embeddings (RoPE)
+        if self.pe == "rope":
+            k_s = k_s.transpose(2, 3) #[bs x n_heads x q_len x d_k]
+            q_s = RotaryPositionalEmbedding(q_s.clone()) #[bs x n_heads x q_len x d_k]
+            k_s = RotaryPositionalEmbedding(k_s.clone()) #[bs x n_heads x q_len x d_k]
+            k_s = k_s.transpose(2, 3) #[bs x n_heads x d_k x q_len]
 
         # Apply Scaled Dot-Product Attention (multiple heads)
         if self.res_attention:
@@ -966,6 +996,8 @@ class PatchTST(BaseWindows):
         optimizer_kwargs=None,
         lr_scheduler=None,
         lr_scheduler_kwargs=None,
+        pe: str = "zeros", 
+        attn_mask: str = "bidirectional",
         **trainer_kwargs
     ):
         super(PatchTST, self).__init__(
@@ -1009,7 +1041,6 @@ class PatchTST(BaseWindows):
         padding_patch = "end"  # Padding at the end
         pretrain_head = False  # No pretrained head
         norm = "BatchNorm"  # Use BatchNorm (if batch_normalization is True)
-        pe = "zeros"  # Initial zeros for positional encoding
         d_k = None  # Key dimension
         d_v = None  # Value dimension
         store_attn = False  # Store attention weights
@@ -1018,7 +1049,6 @@ class PatchTST(BaseWindows):
         max_seq_len = 1024  # Not used
         key_padding_mask = "auto"  # Not used
         padding_var = None  # Not used
-        attn_mask = None  # Not used
 
         self.model = PatchTST_backbone(
             c_in=c_in,
