@@ -15,6 +15,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..common._base_patch import BasePatch
+from ..common._instance_norm import RevIN
+from ..common._positional_encodings import PositionalEncoding
 
 from ..losses.pytorch import MAE
 
@@ -45,190 +47,6 @@ def get_activation_fn(activation):
     raise ValueError(
         f'{activation} is not available. You can use "relu", "gelu", or a callable'
     )
-
-# %% ../../nbs/models.patchtst.ipynb 11
-def PositionalEncoding(q_len, hidden_size, normalize=True):
-    pe = torch.zeros(q_len, hidden_size)
-    position = torch.arange(0, q_len).unsqueeze(1)
-    div_term = torch.exp(
-        torch.arange(0, hidden_size, 2) * -(math.log(10000.0) / hidden_size)
-    )
-    pe[:, 0::2] = torch.sin(position * div_term)
-    pe[:, 1::2] = torch.cos(position * div_term)
-    if normalize:
-        pe = pe - pe.mean()
-        pe = pe / (pe.std() * 10)
-    return pe
-
-
-SinCosPosEncoding = PositionalEncoding
-
-def RotaryPositionalEmbedding(q, base=10000.0):
-    """Compute Rotary Position Embedding (RoPE)."""
-
-    bs, n_heads, q_len, d_k = q.shape
-
-    theta = 1.0 / (base ** (torch.arange(0, d_k, 2).float() / d_k))
-    pos = torch.arange(0, q_len, dtype=torch.float) 
-    idx_theta = torch.einsum("i , j -> i j", pos, theta)
-    cos_remb = idx_theta.cos().unsqueeze(0).unsqueeze(0).to(q.device)
-    sin_remb = idx_theta.sin().unsqueeze(0).unsqueeze(0).to(q.device)
-
-    # Reshape tensor to apply rotation and apply rotation matrix
-    q_reshaped = q.view(bs, n_heads, q_len, d_k // 2, 2).clone()
-    rotated_q = torch.stack([q_reshaped[..., 0] * cos_remb - q_reshaped[..., 1] * sin_remb,
-                             q_reshaped[..., 0] * sin_remb + q_reshaped[..., 1] * cos_remb
-                            ], 
-                             dim=-1
-                            )
-
-    # Reshape back to original tensor shape
-    rpe = rotated_q.view(bs, n_heads, q_len, d_k)
-    
-    return rpe
-
-def Coord2dPosEncoding(q_len, hidden_size, exponential=False, normalize=True, eps=1e-3):
-    x = 0.5 if exponential else 1
-    i = 0
-    for i in range(100):
-        cpe = (
-            2
-            * (torch.linspace(0, 1, q_len).reshape(-1, 1) ** x)
-            * (torch.linspace(0, 1, hidden_size).reshape(1, -1) ** x)
-            - 1
-        )
-        if abs(cpe.mean()) <= eps:
-            break
-        elif cpe.mean() > eps:
-            x += 0.001
-        else:
-            x -= 0.001
-        i += 1
-    if normalize:
-        cpe = cpe - cpe.mean()
-        cpe = cpe / (cpe.std() * 10)
-    return cpe
-
-
-def Coord1dPosEncoding(q_len, exponential=False, normalize=True):
-    cpe = (
-        2 * (torch.linspace(0, 1, q_len).reshape(-1, 1) ** (0.5 if exponential else 1))
-        - 1
-    )
-    if normalize:
-        cpe = cpe - cpe.mean()
-        cpe = cpe / (cpe.std() * 10)
-    return cpe
-
-
-def positional_encoding(pe, learn_pe, q_len, hidden_size):
-    # Positional encoding
-    if pe == None:
-        W_pos = torch.empty(
-            (q_len, hidden_size)
-        )  # pe = None and learn_pe = False can be used to measure impact of pe
-        nn.init.uniform_(W_pos, -0.02, 0.02)
-        learn_pe = False
-    elif pe == "zero":
-        W_pos = torch.empty((q_len, 1))
-        nn.init.uniform_(W_pos, -0.02, 0.02)
-    elif pe == "zeros":
-        W_pos = torch.empty((q_len, hidden_size))
-        nn.init.uniform_(W_pos, -0.02, 0.02)
-    elif pe == "normal" or pe == "gauss":
-        W_pos = torch.zeros((q_len, 1))
-        torch.nn.init.normal_(W_pos, mean=0.0, std=0.1)
-    elif pe == "uniform":
-        W_pos = torch.zeros((q_len, 1))
-        nn.init.uniform_(W_pos, a=0.0, b=0.1)
-    elif pe == "lin1d":
-        W_pos = Coord1dPosEncoding(q_len, exponential=False, normalize=True)
-    elif pe == "exp1d":
-        W_pos = Coord1dPosEncoding(q_len, exponential=True, normalize=True)
-    elif pe == "lin2d":
-        W_pos = Coord2dPosEncoding(
-            q_len, hidden_size, exponential=False, normalize=True
-        )
-    elif pe == "exp2d":
-        W_pos = Coord2dPosEncoding(q_len, hidden_size, exponential=True, normalize=True)
-    elif pe == "sincos":
-        W_pos = PositionalEncoding(q_len, hidden_size, normalize=True)
-    elif pe == "rope":
-        W_pos = torch.empty((q_len, hidden_size))
-        nn.init.uniform_(W_pos, -0.02, 0.02)
-    else:
-        raise ValueError(
-            f"{pe} is not a valid pe (positional encoder. Available types: 'gauss'=='normal', \
-        'zeros', 'zero', uniform', 'lin1d', 'exp1d', 'lin2d', 'exp2d', 'sincos', 'rope', None.)"
-        )
-    return nn.Parameter(W_pos, requires_grad=learn_pe)
-
-# %% ../../nbs/models.patchtst.ipynb 13
-class RevIN(nn.Module):
-    """
-    RevIN
-    """
-
-    def __init__(self, num_features: int, eps=1e-5, affine=True, subtract_last=False):
-        """
-        :param num_features: the number of features or channels
-        :param eps: a value added for numerical stability
-        :param affine: if True, RevIN has learnable affine parameters
-        """
-        super(RevIN, self).__init__()
-        self.num_features = num_features
-        self.eps = eps
-        self.affine = affine
-        self.subtract_last = subtract_last
-        if self.affine:
-            self._init_params()
-
-    def forward(self, x, mode: str):
-        if mode == "norm":
-            self._get_statistics(x)
-            x = self._normalize(x)
-        elif mode == "denorm":
-            x = self._denormalize(x)
-        else:
-            raise NotImplementedError
-        return x
-
-    def _init_params(self):
-        # initialize RevIN params: (C,)
-        self.affine_weight = nn.Parameter(torch.ones(self.num_features))
-        self.affine_bias = nn.Parameter(torch.zeros(self.num_features))
-
-    def _get_statistics(self, x):
-        dim2reduce = tuple(range(1, x.ndim - 1))
-        if self.subtract_last:
-            self.last = x[:, -1, :].unsqueeze(1)
-        else:
-            self.mean = torch.mean(x, dim=dim2reduce, keepdim=True).detach()
-        self.stdev = torch.sqrt(
-            torch.var(x, dim=dim2reduce, keepdim=True, unbiased=False) + self.eps
-        ).detach()
-
-    def _normalize(self, x):
-        if self.subtract_last:
-            x = x - self.last
-        else:
-            x = x - self.mean
-        x = x / self.stdev
-        if self.affine:
-            x = x * self.affine_weight
-            x = x + self.affine_bias
-        return x
-
-    def _denormalize(self, x):
-        if self.affine:
-            x = x - self.affine_bias
-            x = x / (self.affine_weight + self.eps * self.eps)
-        x = x * self.stdev
-        if self.subtract_last:
-            x = x + self.last
-        else:
-            x = x + self.mean
-        return x
 
 # %% ../../nbs/models.patchtst.ipynb 15
 class PatchTST_backbone(nn.Module):
@@ -794,8 +612,8 @@ class _MultiheadAttention(nn.Module):
         # Apply Rotary Positional Embeddings (RoPE)
         if self.pe == "rope":
             k_s = k_s.transpose(2, 3) #[bs x n_heads x q_len x d_k]
-            q_s = RotaryPositionalEmbedding(q_s.clone()) #[bs x n_heads x q_len x d_k]
-            k_s = RotaryPositionalEmbedding(k_s.clone()) #[bs x n_heads x q_len x d_k]
+            q_s = PositionalEncoding().RotaryPositionalEmbedding(q_s.clone()) #[bs x n_heads x q_len x d_k]
+            k_s = PositionalEncoding().RotaryPositionalEmbedding(k_s.clone()) #[bs x n_heads x q_len x d_k]
             k_s = k_s.transpose(2, 3) #[bs x n_heads x d_k x q_len]
 
         # Apply Scaled Dot-Product Attention (multiple heads)
