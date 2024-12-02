@@ -14,39 +14,42 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from transformers import T5Config, T5EncoderModel, T5Model
+from transformers.models.t5.modeling_t5 import T5Attention, T5Stack, T5Block, T5LayerNorm
+
 from ..common._base_patch import BasePatch
 from ..common._instance_norm import RevIN
 from ..common._positional_encodings import PositionalEncoding
+from ..common._projections import ProjectionHead 
 
 from ..losses.pytorch import MAE
 
-# %% ../../nbs/models.patchdecoder.ipynb 9
-class Transpose(nn.Module):
-    """
-    Transpose
-    """
+class T5AttentionWithoutRelativePosition(T5Attention):
+    def __init__(self, config, has_relative_attention_bias=False):
+        super().__init__(config)
+        self.has_relative_attention_bias = has_relative_attention_bias  # Disable bias
+        
+        
+class CustomT5Stack(T5Stack):
+    def __init__(self, config, embed_tokens=None):
+        super().__init__(config, embed_tokens)
+        
+        self.embed_tokens = embed_tokens
+        self.is_decoder = config.is_decoder
 
-    def __init__(self, *dims, contiguous=False):
-        super().__init__()
-        self.dims, self.contiguous = dims, contiguous
+        # Override the block to ensure has_relative_attention_bias=False
+        self.block = nn.ModuleList(
+            [T5Block(config, has_relative_attention_bias=False, layer_idx=i) for i in range(config.num_layers)]
+        )
+        self.final_layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
+        self.dropout = nn.Dropout(config.dropout_rate)
 
-    def forward(self, x):
-        if self.contiguous:
-            return x.transpose(*self.dims).contiguous()
-        else:
-            return x.transpose(*self.dims)
-
-
-def get_activation_fn(activation):
-    if callable(activation):
-        return activation()
-    elif activation.lower() == "relu":
-        return nn.ReLU()
-    elif activation.lower() == "gelu":
-        return nn.GELU()
-    raise ValueError(
-        f'{activation} is not available. You can use "relu", "gelu", or a callable'
-    )
+        # Initialize weights and apply final processing
+        self.post_init()
+        # Model parallel
+        self.model_parallel = False
+        self.device_map = None
+        self.gradient_checkpointing = False
 
 # %% ../../nbs/models.patchtst.ipynb 15
 class PatchTST_backbone(nn.Module):
@@ -56,6 +59,7 @@ class PatchTST_backbone(nn.Module):
 
     def __init__(
         self,
+        config: dict,
         c_in: int,
         c_out: int,
         input_size: int,
@@ -63,29 +67,14 @@ class PatchTST_backbone(nn.Module):
         input_patch_len: int,
         output_patch_len: int,
         stride: int,
-        max_seq_len: Optional[int] = 1024,
-        n_layers: int = 3,
-        hidden_size=128,
-        n_heads=16,
-        d_k: Optional[int] = None,
-        d_v: Optional[int] = None,
-        linear_hidden_size: int = 256,
-        norm: str = "BatchNorm",
-        attn_dropout: float = 0.0,
-        dropout: float = 0.0,
-        act: str = "gelu",
+        hidden_size: int,
         key_padding_mask: str = "auto",
-        padding_var: Optional[int] = None,
-        attn_mask: str = "casual",
-        res_attention: bool = True,
-        pre_norm: bool = False,
-        store_attn: bool = False,
+        attn_mask: str = "bidirectional",
         pe: str = "zeros",
         learn_pe: bool = True,
         fc_dropout: float = 0.0,
         head_dropout=0,
         padding_patch=None,
-        pretrain_head: bool = False,
         head_type="flatten",
         individual=False,
         revin=True,
@@ -110,26 +99,14 @@ class PatchTST_backbone(nn.Module):
             patch_num += 1
 
         # Backbone
-        self.backbone = TSTiDecoder(
+        self.backbone = TSTDecoder(
+            config,
             c_in,
+            hidden_size,
             patch_num=patch_num,
             input_patch_len=input_patch_len,
-            max_seq_len=max_seq_len,
-            n_layers=n_layers,
-            hidden_size=hidden_size,
-            n_heads=n_heads,
-            d_k=d_k,
-            d_v=d_v,
-            linear_hidden_size=linear_hidden_size,
-            attn_dropout=attn_dropout,
-            dropout=dropout,
-            act=act,
             key_padding_mask=key_padding_mask,
-            padding_var=padding_var,
             attn_mask=attn_mask,
-            res_attention=res_attention,
-            pre_norm=pre_norm,
-            store_attn=store_attn,
             pe=pe,
             learn_pe=learn_pe,
         )
@@ -138,23 +115,24 @@ class PatchTST_backbone(nn.Module):
         self.head_nf = hidden_size * patch_num
         self.n_vars = c_in
         self.c_out = c_out
-        self.pretrain_head = pretrain_head
         self.head_type = head_type
         self.individual = individual
 
-        if self.pretrain_head:
-            self.head = self.create_pretrain_head(
-                self.head_nf, c_in, fc_dropout
-            )  # custom head passed as a partial func with all its kwargs
-        elif head_type == "flatten":
-            self.head = Flatten_Head(
-                self.individual,
-                self.n_vars,
-                self.head_nf,
-                output_patch_len=output_patch_len,
-                c_out=c_out,
-                head_dropout=head_dropout,
-            )
+        proj_hd = ProjectionHead(
+            self.individual,
+            self.n_vars,
+            self.head_nf,
+            output_patch_len, #h
+            c_out,
+            head_dropout,
+        )
+
+        if head_type == "flatten":
+            proj_hd.flatten_head()  # Initialize layers in ProjectionHead
+            self.head = proj_hd
+        elif head_type == "residual_network":
+            proj_hd.residual_network()  # Initialize layers in ProjectionHead
+            self.head = proj_hd
 
     def forward(self, z):  # z: [bs x nvars x seq_len]
         # norm
@@ -184,78 +162,23 @@ class PatchTST_backbone(nn.Module):
         return z
     # return z # Willa: uncomment to get embeddings
 
-    def create_pretrain_head(self, head_nf, vars, dropout):
-        return nn.Sequential(nn.Dropout(dropout), nn.Conv1d(head_nf, vars, 1))
-
-
-class Flatten_Head(nn.Module):
+class TSTDecoder(nn.Module):  # i means channel-independent
     """
-    Flatten_Head
-    """
-
-    def __init__(self, individual, n_vars, nf, output_patch_len, c_out, head_dropout=0):
-        super().__init__()
-
-        self.individual = individual
-        self.n_vars = n_vars
-        self.c_out = c_out
-
-        if self.individual:
-            self.linears = nn.ModuleList()
-            self.dropouts = nn.ModuleList()
-            self.flattens = nn.ModuleList()
-            for i in range(self.n_vars):
-                self.flattens.append(nn.Flatten(start_dim=-2))
-                self.linears.append(nn.Linear(nf, output_patch_len * c_out))
-                self.dropouts.append(nn.Dropout(head_dropout))
-        else:
-            self.flatten = nn.Flatten(start_dim=-2)
-            self.linear = nn.Linear(nf, output_patch_len * c_out)
-            self.dropout = nn.Dropout(head_dropout)
-
-    def forward(self, x):  # x: [bs x nvars x hidden_size x patch_num]
-        if self.individual:
-            x_out = []
-            for i in range(self.n_vars):
-                z = self.flattens[i](x[:, i, :, :])  # z: [bs x hidden_size * patch_num]
-                z = self.linears[i](z)  # z: [bs x h]
-                z = self.dropouts[i](z)
-                x_out.append(z)
-            x = torch.stack(x_out, dim=1)  # x: [bs x nvars x h]
-        else:
-            x = self.flatten(x)
-            x = self.linear(x)
-            x = self.dropout(x)
-        return x
-
-
-class TSTiDecoder(nn.Module):  # i means channel-independent
-    """
-    TSTiDecoder
+    TSTDecoder
     """
 
     def __init__(
         self,
+        config,
         c_in,
+        hidden_size,
         patch_num,
         input_patch_len,
-        max_seq_len=1024,
-        n_layers=3,
-        hidden_size=128,
-        n_heads=16,
-        d_k=None,
-        d_v=None,
-        linear_hidden_size=256,
-        norm="BatchNorm",
         attn_dropout=0.0,
         dropout=0.0,
         act="gelu",
-        store_attn=False,
         key_padding_mask="auto",
-        padding_var=None,
-        attn_mask="casual",
-        res_attention=True,
-        pre_norm=False,
+        attn_mask="bidirectional",
         pe="zeros",
         learn_pe=True,
     ):
@@ -264,6 +187,7 @@ class TSTiDecoder(nn.Module):  # i means channel-independent
 
         self.patch_num = patch_num
         self.input_patch_len = input_patch_len
+        self.attn_mask = attn_mask
 
         # Input encoding
         q_len = patch_num
@@ -273,30 +197,24 @@ class TSTiDecoder(nn.Module):  # i means channel-independent
         self.seq_len = q_len
         
         # Positional encoding
-        self.W_pos = positional_encoding(pe, learn_pe, q_len, hidden_size)
+        self.W_pos = PositionalEncoding(pe=pe).forward(learn_pe, q_len, hidden_size)
 
         # Residual dropout
         self.dropout = nn.Dropout(dropout)
 
-        # Decoder
-        self.decoder = TSTDecoder(
-            q_len,
-            hidden_size,
-            n_heads,
-            d_k=d_k,
-            d_v=d_v,
-            linear_hidden_size=linear_hidden_size,
-            norm=norm,
-            attn_dropout=attn_dropout,
-            dropout=dropout,
-            pre_norm=pre_norm,
-            activation=act,
-            res_attention=res_attention,
-            n_layers=n_layers,
-            store_attn=store_attn,
-            pe=pe,
-            attn_mask=attn_mask,
-        )
+        # Encoder
+        model_config = T5Config.from_dict(config)
+        transformer_backbone = T5Model(model_config)
+        #transformer_backbone.decoder = CustomT5Stack(model_config)
+        #self.decoder = transformer_backbone.get_decoder()#transformer_backbone.get_decoder()
+        transformer_backbone.encoder = CustomT5Stack(model_config)
+        self.decoder = transformer_backbone.get_encoder()#transformer_backbone.get_decoder()
+
+        # for layer in self.encoder.block:
+        #     layer.layer[0].SelfAttention = T5AttentionWithoutRelativePosition(model_config)
+        
+        if config["enable_gradient_checkpointing"]==True:
+            transformer_backbone.gradient_checkpointing_enable()
 
     def forward(self, x) -> torch.Tensor:  # x: [bs x nvars x input_patch_len x patch_num]
 
@@ -311,422 +229,19 @@ class TSTiDecoder(nn.Module):  # i means channel-independent
         u = self.dropout(u + self.W_pos)  # u: [bs * nvars x patch_num x hidden_size]
 
         # Decoder
-        z = self.decoder(u)  # z: [bs * nvars x patch_num x hidden_size]
+        if self.attn_mask=='bidirectional':
+            attn_mask = torch.ones(x.shape[0], u.shape[2], dtype=torch.long).to(x.device)
+        elif self.attn_mask=='causal':
+            attn_mask = torch.tril(torch.ones(x.shape[0], u.shape[2], dtype=torch.long, device=x.device))
+
+        z = self.decoder(inputs_embeds=u, attention_mask=attn_mask)
+        z = z.last_hidden_state
         z = torch.reshape(
             z, (-1, n_vars, z.shape[-2], z.shape[-1])
         )  # z: [bs x nvars x patch_num x hidden_size]
         z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x hidden_size x patch_num]
 
         return z
-
-class TSTDecoder(nn.Module):
-    """
-    TSTDecoder
-    """
-
-    def __init__(
-        self,
-        q_len,
-        hidden_size,
-        n_heads,
-        d_k=None,
-        d_v=None,
-        linear_hidden_size=None,
-        norm="BatchNorm",
-        attn_dropout=0.0,
-        dropout=0.0,
-        activation="gelu",
-        res_attention=False,
-        n_layers=1,
-        pre_norm=False,
-        store_attn=False,
-        pe="zeros",
-        attn_mask="causal",
-    ):
-        super().__init__()
-
-        self.layers = nn.ModuleList(
-            [
-                TSTDecoderLayer(
-                    q_len,
-                    hidden_size,
-                    n_heads=n_heads,
-                    d_k=d_k,
-                    d_v=d_v,
-                    linear_hidden_size=linear_hidden_size,
-                    norm=norm,
-                    attn_dropout=attn_dropout,
-                    dropout=dropout,
-                    activation=activation,
-                    res_attention=res_attention,
-                    pre_norm=pre_norm,
-                    store_attn=store_attn,
-                    pe=pe,
-                )
-                for i in range(n_layers)
-            ]
-        )
-        self.res_attention = res_attention
-        self.q_len = q_len
-        self.attn_mask = attn_mask
-
-    def forward(
-        self,
-        src: torch.Tensor,
-        key_padding_mask: Optional[torch.Tensor] = None,
-    ):
-
-        if self.attn_mask == "causal":
-            self_attn_mask = torch.triu(torch.ones((1, self.q_len, self.q_len), 
-                                                   dtype=torch.bool
-                                                  ), 
-                                        diagonal=1
-                                       ).to(src.device)
-        elif self.attn_mask == "bidirectional":
-            self_attn_mask = None
-
-        output = src
-        scores = None
-        if self.res_attention:
-            for mod in self.layers:
-                output, scores = mod(
-                    output,
-                    prev=scores,
-                    key_padding_mask=key_padding_mask,
-                    attn_mask=self_attn_mask,
-                )
-            return output
-        else:
-            for mod in self.layers:
-                output = mod(
-                    output, 
-                    key_padding_mask=key_padding_mask, 
-                    attn_mask=self_attn_mask
-                )
-            return output
-
-
-class TSTDecoderLayer(nn.Module):
-    """
-    TSTDecoderLayer
-    """
-
-    def __init__(
-        self,
-        q_len,
-        hidden_size,
-        n_heads,
-        d_k=None,
-        d_v=None,
-        linear_hidden_size=256,
-        store_attn=False,
-        norm="BatchNorm",
-        attn_dropout=0,
-        dropout=0.0,
-        bias=True,
-        activation="gelu",
-        res_attention=False,
-        pre_norm=False,
-        pe="zeros",
-    ):
-        super().__init__()
-        assert (
-            not hidden_size % n_heads
-        ), f"hidden_size ({hidden_size}) must be divisible by n_heads ({n_heads})"
-        d_k = hidden_size // n_heads if d_k is None else d_k
-        d_v = hidden_size // n_heads if d_v is None else d_v
-
-        # Multi-Head attention
-        self.res_attention = res_attention
-        self.self_attn = _MultiheadAttention(
-            hidden_size,
-            n_heads,
-            d_k,
-            d_v,
-            attn_dropout=attn_dropout,
-            proj_dropout=dropout,
-            res_attention=res_attention,
-            pe=pe,
-        )
-
-        # Add & Norm
-        self.dropout_attn = nn.Dropout(dropout)
-        if "batch" in norm.lower():
-            self.norm_attn = nn.Sequential(
-                Transpose(1, 2), nn.BatchNorm1d(hidden_size), Transpose(1, 2)
-            )
-        else:
-            self.norm_attn = nn.LayerNorm(hidden_size)
-
-        # Position-wise Feed-Forward
-        self.ff = nn.Sequential(
-            nn.Linear(hidden_size, linear_hidden_size, bias=bias),
-            get_activation_fn(activation),
-            nn.Dropout(dropout),
-            nn.Linear(linear_hidden_size, hidden_size, bias=bias),
-        )
-
-        # Add & Norm
-        self.dropout_ffn = nn.Dropout(dropout)
-        if "batch" in norm.lower():
-            self.norm_ffn = nn.Sequential(
-                Transpose(1, 2), nn.BatchNorm1d(hidden_size), Transpose(1, 2)
-            )
-        else:
-            self.norm_ffn = nn.LayerNorm(hidden_size)
-
-        self.pre_norm = pre_norm
-        self.store_attn = store_attn
-
-    def forward(
-        self,
-        src: torch.Tensor,
-        prev: Optional[torch.Tensor] = None,
-        key_padding_mask:  Optional[torch.Tensor] = None,
-        attn_mask:  Optional[torch.Tensor] = None,
-    ):  # -> Tuple[torch.Tensor, Any]:
-
-        # Multi-Head attention sublayer
-        if self.pre_norm:
-            src = self.norm_attn(src)
-        ## Multi-Head attention
-        if self.res_attention:
-            src2, attn, scores = self.self_attn(
-                src,
-                src,
-                src,
-                prev,
-                key_padding_mask=key_padding_mask,
-                attn_mask=attn_mask,
-            )
-        else:
-            src2, attn = self.self_attn(
-                src, src, src, key_padding_mask=key_padding_mask, attn_mask=attn_mask
-            )
-        if self.store_attn:
-            self.attn = attn
-        ## Add & Norm
-        src = src + self.dropout_attn(
-            src2
-        )  # Add: residual connection with residual dropout
-        if not self.pre_norm:
-            src = self.norm_attn(src)
-
-        # Feed-forward sublayer
-        if self.pre_norm:
-            src = self.norm_ffn(src)
-        ## Position-wise Feed-Forward
-        src2 = self.ff(src)
-        ## Add & Norm
-        src = src + self.dropout_ffn(
-            src2
-        )  # Add: residual connection with residual dropout
-        if not self.pre_norm:
-            src = self.norm_ffn(src)
-
-        if self.res_attention:
-            return src, scores
-        else:
-            return src
-
-
-class _MultiheadAttention(nn.Module):
-    """
-    _MultiheadAttention
-    """
-
-    def __init__(
-        self,
-        hidden_size,
-        n_heads,
-        d_k=None,
-        d_v=None,
-        res_attention=False,
-        attn_dropout=0.0,
-        proj_dropout=0.0,
-        qkv_bias=True,
-        lsa=False,
-        pe="zeros", # Willa added
-    ):
-        """
-        Multi Head Attention Layer
-        Input shape:
-            Q:       [batch_size (bs) x max_q_len x hidden_size]
-            K, V:    [batch_size (bs) x q_len x hidden_size]
-            mask:    [q_len x q_len]
-        """
-        super().__init__()
-        d_k = hidden_size // n_heads if d_k is None else d_k
-        d_v = hidden_size // n_heads if d_v is None else d_v
-
-        self.n_heads, self.d_k, self.d_v = n_heads, d_k, d_v
-
-        self.W_Q = nn.Linear(hidden_size, d_k * n_heads, bias=qkv_bias)
-        self.W_K = nn.Linear(hidden_size, d_k * n_heads, bias=qkv_bias)
-        self.W_V = nn.Linear(hidden_size, d_v * n_heads, bias=qkv_bias)
-
-        # Scaled Dot-Product Attention (multiple heads)
-        self.res_attention = res_attention
-        self.sdp_attn = _ScaledDotProductAttention(
-            hidden_size,
-            n_heads,
-            attn_dropout=attn_dropout,
-            res_attention=self.res_attention,
-            lsa=lsa,
-        )
-
-        # Poject output
-        self.to_out = nn.Sequential(
-            nn.Linear(n_heads * d_v, hidden_size), nn.Dropout(proj_dropout)
-        )
-
-        self.pe = pe
-
-    def forward(
-        self,
-        Q: torch.Tensor,
-        K: Optional[torch.Tensor] = None,
-        V: Optional[torch.Tensor] = None,
-        prev: Optional[torch.Tensor] = None,
-        key_padding_mask: Optional[torch.Tensor] = None,
-        attn_mask: Optional[torch.Tensor] = None,
-    ):
-
-        bs, seq_len, _ = Q.size()
-        if K is None:
-            K = Q
-        if V is None:
-            V = Q
-
-        # Linear (+ split in multiple heads)
-        q_s = (
-            self.W_Q(Q).view(bs, -1, self.n_heads, self.d_k).transpose(1, 2)
-        )  # q_s    : [bs x n_heads x max_q_len x d_k]
-        k_s = (
-            self.W_K(K).view(bs, -1, self.n_heads, self.d_k).permute(0, 2, 3, 1)
-        )  # k_s    : [bs x n_heads x d_k x q_len] - transpose(1,2) + transpose(2,3)
-        v_s = (
-            self.W_V(V).view(bs, -1, self.n_heads, self.d_v).transpose(1, 2)
-        )  # v_s    : [bs x n_heads x q_len x d_v]
-
-        # Apply Rotary Positional Embeddings (RoPE)
-        if self.pe == "rope":
-            k_s = k_s.transpose(2, 3) #[bs x n_heads x q_len x d_k]
-            q_s = PositionalEncoding().RotaryPositionalEmbedding(q_s.clone()) #[bs x n_heads x q_len x d_k]
-            k_s = PositionalEncoding().RotaryPositionalEmbedding(k_s.clone()) #[bs x n_heads x q_len x d_k]
-            k_s = k_s.transpose(2, 3) #[bs x n_heads x d_k x q_len]
-
-        # Apply Scaled Dot-Product Attention (multiple heads)
-        if self.res_attention:
-            output, attn_weights, attn_scores = self.sdp_attn(
-                q_s,
-                k_s,
-                v_s,
-                prev=prev,
-                key_padding_mask=key_padding_mask,
-                attn_mask=attn_mask,
-            )
-        else:
-            output, attn_weights = self.sdp_attn(
-                q_s, 
-                k_s, 
-                v_s, 
-                key_padding_mask=key_padding_mask, 
-                attn_mask=attn_mask
-            )
-        # output: [bs x n_heads x q_len x d_v], attn: [bs x n_heads x q_len x q_len], scores: [bs x n_heads x max_q_len x q_len]
-
-        # back to the original inputs dimensions
-        output = (
-            output.transpose(1, 2).contiguous().view(bs, -1, self.n_heads * self.d_v)
-        )  # output: [bs x q_len x n_heads * d_v]
-        output = self.to_out(output)
-
-        if self.res_attention:
-            return output, attn_weights, attn_scores
-        else:
-            return output, attn_weights
-
-
-class _ScaledDotProductAttention(nn.Module):
-    """
-    Scaled Dot-Product Attention module (Attention is all you need by Vaswani et al., 2017) with optional residual attention from previous layer
-    (Realformer: Transformer likes residual attention by He et al, 2020) and locality self sttention (Vision Transformer for Small-Size Datasets
-    by Lee et al, 2021)
-    """
-
-    def __init__(
-        self, hidden_size, n_heads, attn_dropout=0.0, res_attention=False, lsa=False
-    ):
-        super().__init__()
-        self.attn_dropout = nn.Dropout(attn_dropout)
-        self.res_attention = res_attention
-        head_dim = hidden_size // n_heads
-        self.scale = nn.Parameter(torch.tensor(head_dim**-0.5), requires_grad=lsa)
-        self.lsa = lsa
-
-    def forward(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
-        prev: Optional[torch.Tensor] = None,
-        key_padding_mask: Optional[torch.Tensor] = None,
-        attn_mask: Optional[torch.Tensor] = None,
-    ):
-        """
-        Input shape:
-            q               : [bs x n_heads x max_q_len x d_k]
-            k               : [bs x n_heads x d_k x seq_len]
-            v               : [bs x n_heads x seq_len x d_v]
-            prev            : [bs x n_heads x q_len x seq_len]
-            key_padding_mask: [bs x seq_len]
-            attn_mask       : [1 x seq_len x seq_len]
-        Output shape:
-            output:  [bs x n_heads x q_len x d_v]
-            attn   : [bs x n_heads x q_len x seq_len]
-            scores : [bs x n_heads x q_len x seq_len]
-        """
-
-        # Scaled MatMul (q, k) - similarity scores for all pairs of positions in an input sequence
-        attn_scores = (
-            torch.matmul(q, k) * self.scale
-        )  # attn_scores : [bs x n_heads x max_q_len x q_len]
-
-        # Add pre-softmax attention scores from the previous layer (optional)
-        if prev is not None:
-            attn_scores = attn_scores + prev
-
-        # Attention mask 
-        if attn_mask is not None:
-            if attn_mask.dtype == torch.bool:
-                attn_scores.masked_fill_(attn_mask, -np.inf)
-            else:
-                attn_scores += attn_mask
-
-        # Key padding mask (optional)
-        if (
-            key_padding_mask is not None
-        ):  # mask with shape [bs x q_len] (only when max_w_len == q_len)
-            attn_scores.masked_fill_(
-                key_padding_mask.unsqueeze(1).unsqueeze(2), -np.inf
-            )
-
-        # normalize the attention weights
-        attn_weights = F.softmax(
-            attn_scores, dim=-1
-        )  # attn_weights   : [bs x n_heads x max_q_len x q_len]
-        attn_weights = self.attn_dropout(attn_weights)
-
-        # compute the new values given the attention weights
-        output = torch.matmul(
-            attn_weights, v
-        )  # output: [bs x n_heads x max_q_len x d_v]
-
-        if self.res_attention:
-            return output, attn_weights, attn_scores
-        else:
-            return output, attn_weights
 
 # %% ../../nbs/models.patchtst.ipynb 17
 class PatchDecoder(BasePatch):
@@ -846,6 +361,7 @@ class PatchDecoder(BasePatch):
         lr_scheduler_kwargs=None,
         pe="zeros",    # Initial zeros for positional encoding
         attn_mask = "causal",
+        head_type: str = "flatten", 
         **trainer_kwargs
     ):
         super(PatchDecoder, self).__init__(
@@ -887,22 +403,31 @@ class PatchDecoder(BasePatch):
         output_patch_len = min(h, output_patch_len)
 
         c_out = self.loss.outputsize_multiplier
+        self.output_patch_len = output_patch_len
 
-        # Fixed hyperparameters
+         # Fixed hyperparameters
         c_in = 1  # Always univariate
         padding_patch = "end"  # Padding at the end
-        pretrain_head = False  # No pretrained head
-        norm = "BatchNorm"  # Use BatchNorm (if batch_normalization is True)
-        d_k = None  # Key dimension
-        d_v = None  # Value dimension
-        store_attn = False  # Store attention weights
-        head_type = "flatten"  # Head type
         individual = False  # Separate heads for each time series
-        max_seq_len = 1024  # Not used
         key_padding_mask = "auto"  # Not used
-        padding_var = None  # Not used
+        
+        config={'num_layers': decoder_layers,
+            'num_heads': n_heads,
+            'num_decoder_layers': 0, 
+            'd_model': hidden_size,
+            'd_kv': hidden_size // n_heads,
+            'd_ff': linear_hidden_size,
+            'dropout_rate': dropout,
+            'feed_forward_proj': activation,
+            #'relative_attention_num_buckets': 32,
+            #'has_relative_attention_bias': False,
+            'enable_gradient_checkpointing': False,
+            'use_cache': False, 
+            'is_decoder': False #, True, 
+            }
 
         self.model = PatchTST_backbone(
+            config=config,
             c_in=c_in,
             c_out=c_out,
             input_size=input_size,
@@ -910,31 +435,15 @@ class PatchDecoder(BasePatch):
             input_patch_len=input_patch_len,
             output_patch_len=output_patch_len,
             stride=stride,
-            max_seq_len=max_seq_len,
-            n_layers=decoder_layers,
             hidden_size=hidden_size,
-            n_heads=n_heads,
-            d_k=d_k,
-            d_v=d_v,
-            linear_hidden_size=linear_hidden_size,
-            norm=norm,
-            attn_dropout=attn_dropout,
-            dropout=dropout,
-            act=activation,
             key_padding_mask=key_padding_mask,
-            padding_var=padding_var,
             attn_mask=attn_mask,
-            res_attention=res_attention,
-            pre_norm=batch_normalization,
-            store_attn=store_attn,
             pe=pe,
             learn_pe=learn_pos_embed,
             fc_dropout=fc_dropout,
             head_dropout=head_dropout,
             padding_patch=padding_patch,
-            pretrain_head=pretrain_head,
             head_type=head_type,
-            individual=individual,
             revin=revin,
             affine=revin_affine,
             subtract_last=revin_subtract_last,

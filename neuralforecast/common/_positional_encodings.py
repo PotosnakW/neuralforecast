@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import math
 
 
 class PositionalEncoding():
@@ -69,19 +70,22 @@ class PositionalEncoding():
         sin_remb = idx_theta.sin().unsqueeze(0).unsqueeze(0).to(q.device)
 
         # Reshape tensor to apply rotation and apply rotation matrix
-        q_reshaped = q.view(bs, n_heads, q_len, d_k // 2, 2).clone()
-        rotated_q = torch.stack([q_reshaped[..., 0] * cos_remb - q_reshaped[..., 1] * sin_remb,
-                                 q_reshaped[..., 0] * sin_remb + q_reshaped[..., 1] * cos_remb
-                                ], 
-                                 dim=-1
-                                )
-
-        # Reshape back to original tensor shape
-        rpe = rotated_q.view(bs, n_heads, q_len, d_k)
+#         q_reshaped = q.view(bs, n_heads, q_len, d_k // 2, 2).clone()
+#         rotated_q = torch.stack([q_reshaped[..., 0] * cos_remb - q_reshaped[..., 1] * sin_remb,
+#                                  q_reshaped[..., 0] * sin_remb + q_reshaped[..., 1] * cos_remb
+#                                 ], 
+#                                  dim=-1
+#                                 )
+#         # Reshape back to original tensor shape
+#         rpe = rotated_q.view(bs, n_heads, q_len, d_k)
+        
+        q1, q2 = q[..., ::2], q[..., 1::2]  # Split into even and odd dimensions
+        rpe = torch.cat([q1 * cos_remb - q2 * sin_remb,
+                               q1 * sin_remb + q2 * cos_remb], dim=-1)
 
         return rpe
 
-    def forward(self, learn_pe, q_len, hidden_size):
+    def output(self, learn_pe, q_len, hidden_size):
         # Positional encoding
         if self.pe == None:
             W_pos = torch.empty(
@@ -112,8 +116,12 @@ class PositionalEncoding():
         elif self.pe == "exp2d":
             W_pos = self.Coord2dPosEncoding(q_len, hidden_size, exponential=True, normalize=True)
         elif self.pe == "sincos":
-            W_pos = self.SinCosPositionalEncoding(q_len, hidden_size, normalize=True)
+            W_pos = self.SinCosPosEncoding(q_len, hidden_size, normalize=True)
         elif self.pe == "rope":
+            W_pos = torch.empty((q_len, hidden_size))
+            nn.init.uniform_(W_pos, -0.02, 0.02)
+        elif self.pe == "relative":
+            print('ye')
             W_pos = torch.empty((q_len, hidden_size))
             nn.init.uniform_(W_pos, -0.02, 0.02)
         else:
