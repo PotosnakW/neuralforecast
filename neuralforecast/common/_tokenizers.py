@@ -4,7 +4,10 @@ import torch.nn as nn
 
 class Tokenizer():
     def __init__(self, tokenizer_type, token_len, stride, 
-                 token_num, lag=None, padding_patch=None):
+                 token_num, lag=None, padding_patch=None,
+                 low_limit=-15.0, high_limit=15.0, n_bins=4094):
+        # B = 4094 used in Chronos paper
+        # bin centers c1 < . . . < cB on the real line where c1 = -15.0 and cB = 15.0
 
         self.tokenizer_type = tokenizer_type
         self.token_len = token_len
@@ -12,9 +15,21 @@ class Tokenizer():
         self.token_num = token_num
         self.lag = lag
         self.padding_patch = padding_patch
+        self.low_limit = low_limit
+        self.high_limit = high_limit
         
         if padding_patch=="end":
             self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
+            
+        self.centers = torch.linspace(low_limit, high_limit, 
+                                      n_bins - 1)  # Exclude special tokens
+        self.boundaries = torch.cat(
+            (
+                torch.tensor([-float("inf")]), 
+                (self.centers[1:] + self.centers[:-1]) / 2, 
+                torch.tensor([float("inf")])
+            )
+        )
         
     def _patch_fixed_len(self, z):
         """
@@ -72,6 +87,55 @@ class Tokenizer():
 
         return lags
     
+    def _bins(self, z):
+        """
+        Bins the data into uniform categories and returns categorical token IDs.
+        Parameters:
+        ----------
+        z : torch.Tensor
+            Input tensor of shape [batch_size, nvars, seq_len].
+        Returns:
+        -------
+        torch.Tensor
+            Token IDs of shape [batch_size, nvars, bins].
+        """
+        # Flatten last dimension for binning
+        batch_size, nvars, seq_len = z.shape
+        flattened_z = z.view(-1, seq_len)
+
+        # Bin data into categories
+        self.boundaries = self.boundaries.to(flattened_z.device)
+        token_ids = torch.bucketize(flattened_z, self.boundaries, right=True)
+
+        # Reshape back to original dimensions
+        token_ids = token_ids.view(batch_size, nvars, seq_len)
+        token_ids = token_ids.unsqueeze(-1) #[bs x nvars, seq_len, 1]
+        token_ids = token_ids.float()
+
+        return token_ids
+    
+    def unbin(self, token_ids):
+        """
+        Maps token IDs back to the corresponding bin centers.
+        Parameters:
+        ----------
+        token_ids : torch.Tensor
+            Tokenized data of shape [batch_size, nvars, seq_len].
+        Returns:
+        -------
+        torch.Tensor
+            Unbinned data of shape [batch_size, nvars, seq_len].
+        """
+         # Remove special tokens offset
+        self.centers = self.centers.to(token_ids.device)
+        token_ids = token_ids.clamp(0, len(self.centers) - 1)  # Ensure indices are valid
+        token_ids = token_ids.long()
+
+        # Map token IDs back to bin centers
+        unbinned = self.centers[token_ids]
+
+        return unbinned
+    
     def output_transform(self, z):
         if self.tokenizer_type == 'lags':
             output = self._lags(z)
@@ -80,6 +144,9 @@ class Tokenizer():
             if self.padding_patch == "end":
                 z = self.padding_patch_layer(z)
             output = self._patch_fixed_len(z)
+            
+        elif self.tokenizer_type == 'bins': 
+            output = self._bins(z)
             
         return output
 

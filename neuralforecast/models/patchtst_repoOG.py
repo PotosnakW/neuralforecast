@@ -2,8 +2,8 @@
 
 # %% auto 0
 __all__ = ['SinCosPosEncoding', 'Transpose', 'get_activation_fn', 'PositionalEncoding', 'Coord2dPosEncoding',
-           'Coord1dPosEncoding', 'positional_encoding', 'RevIN', 'PatchTST_backbone', 'Flatten_Head', 'iTransformer',
-           'TransformerEncoder', 'EncoderLayer', 'TransformerDecoder', 'DecoderLayer',  'PatchEncoderDecoder']
+           'Coord1dPosEncoding', 'positional_encoding', 'RevIN', 'PatchTST_backbone', 'Flatten_Head', 'TSTiEncoder',
+           'TSTEncoder', 'TSTEncoderLayer', 'PatchTST']
 
 # %% ../../nbs/models.patchtst.ipynb 5
 import math
@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..common._base_patchall import BasePatchall
+from ..common._base_windows import BaseWindows
 
 from ..losses.pytorch import MAE
 
@@ -63,29 +63,6 @@ def PositionalEncoding(q_len, hidden_size, normalize=True):
 
 SinCosPosEncoding = PositionalEncoding
 
-def RotaryPositionalEmbedding(q, base=10000.0):
-    """Compute Rotary Position Embedding (RoPE)."""
-
-    bs, n_heads, q_len, d_k = q.shape
-
-    theta = 1.0 / (base ** (torch.arange(0, d_k, 2).float() / d_k))
-    pos = torch.arange(0, q_len, dtype=torch.float) 
-    idx_theta = torch.einsum("i , j -> i j", pos, theta)
-    cos_remb = idx_theta.cos().unsqueeze(0).unsqueeze(0).to(q.device)
-    sin_remb = idx_theta.sin().unsqueeze(0).unsqueeze(0).to(q.device)
-
-    # Reshape tensor to apply rotation and apply rotation matrix
-    q_reshaped = q.view(bs, n_heads, q_len, d_k // 2, 2).clone()
-    rotated_q = torch.stack([q_reshaped[..., 0] * cos_remb - q_reshaped[..., 1] * sin_remb,
-                             q_reshaped[..., 0] * sin_remb + q_reshaped[..., 1] * cos_remb
-                            ], 
-                             dim=-1
-                            )
-
-    # Reshape back to original tensor shape
-    rpe = rotated_q.view(bs, n_heads, q_len, d_k)
-    
-    return rpe
 
 def Coord2dPosEncoding(q_len, hidden_size, exponential=False, normalize=True, eps=1e-3):
     x = 0.5 if exponential else 1
@@ -153,13 +130,10 @@ def positional_encoding(pe, learn_pe, q_len, hidden_size):
         W_pos = Coord2dPosEncoding(q_len, hidden_size, exponential=True, normalize=True)
     elif pe == "sincos":
         W_pos = PositionalEncoding(q_len, hidden_size, normalize=True)
-    elif pe == "rope":
-        W_pos = torch.empty((q_len, hidden_size))
-        nn.init.uniform_(W_pos, -0.02, 0.02)
     else:
         raise ValueError(
             f"{pe} is not a valid pe (positional encoder. Available types: 'gauss'=='normal', \
-        'zeros', 'zero', uniform', 'lin1d', 'exp1d', 'lin2d', 'exp2d', 'sincos', 'rope', None.)"
+        'zeros', 'zero', uniform', 'lin1d', 'exp1d', 'lin2d', 'exp2d', 'sincos', None.)"
         )
     return nn.Parameter(W_pos, requires_grad=learn_pe)
 
@@ -242,12 +216,10 @@ class PatchTST_backbone(nn.Module):
         c_out: int,
         input_size: int,
         h: int,
-        input_patch_len: int,
-        output_patch_len: int,
+        patch_len: int,
         stride: int,
         max_seq_len: Optional[int] = 1024,
-        n_encoder_layers: int = 3,
-        n_decoder_layers: int = 3,
+        n_layers: int = 3,
         hidden_size=128,
         n_heads=16,
         d_k: Optional[int] = None,
@@ -284,36 +256,21 @@ class PatchTST_backbone(nn.Module):
             self.revin_layer = RevIN(c_in, affine=affine, subtract_last=subtract_last)
 
         # Patching
-        self.input_patch_len = input_patch_len
+        self.patch_len = patch_len
         self.stride = stride
         self.padding_patch = padding_patch
-        
-        patch_num_encoder = int((input_size - input_patch_len*2) / stride + 1) 
+        patch_num = int((input_size - patch_len) / stride + 1)
         if padding_patch == "end":  # can be modified to general case
             self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
-            patch_num_encoder += 1
-
-        # Willa added
-        patch_h_repeats = int(torch.ceil(torch.tensor([h/output_patch_len]))) # Willa added
-        input_size_decoder = output_patch_len * patch_h_repeats # already taking 1 patch from input
-        patch_num_decoder = int((input_size_decoder - input_patch_len) / stride + 1)
-        if padding_patch == "end": 
-            self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
-            patch_num_decoder += 1
-        
-        self.patch_num_decoder=patch_num_decoder
-        self.input_size_decoder=input_size_decoder
-        self.input_size=input_size
+            patch_num += 1
 
         # Backbone
-        self.backbone = Transformeri(
+        self.backbone = TSTiEncoder(
             c_in,
-            patch_num_encoder=patch_num_encoder,
-            input_patch_len=input_patch_len,
-            patch_num_decoder=patch_num_decoder, 
+            patch_num=patch_num,
+            patch_len=patch_len,
             max_seq_len=max_seq_len,
-            n_encoder_layers=n_encoder_layers,
-            n_decoder_layers=n_decoder_layers,
+            n_layers=n_layers,
             hidden_size=hidden_size,
             n_heads=n_heads,
             d_k=d_k,
@@ -333,7 +290,7 @@ class PatchTST_backbone(nn.Module):
         )
 
         # Head
-        self.head_nf = hidden_size * patch_num_decoder
+        self.head_nf = hidden_size * patch_num
         self.n_vars = c_in
         self.c_out = c_out
         self.pretrain_head = pretrain_head
@@ -349,7 +306,7 @@ class PatchTST_backbone(nn.Module):
                 self.individual,
                 self.n_vars,
                 self.head_nf,
-                output_patch_len,
+                h,
                 c_out,
                 head_dropout=head_dropout,
             )
@@ -361,28 +318,16 @@ class PatchTST_backbone(nn.Module):
             z = self.revin_layer(z, "norm")
             z = z.permute(0, 2, 1)
 
-        # separate encoder and decoder inputs
-        ze = z[:, :, : self.input_size-self.input_patch_len]
-        zd = z[:, :, self.input_size-self.input_patch_len :]
-        
         # do patching
         if self.padding_patch == "end":
-            ze = self.padding_patch_layer(ze)
-        ze = ze.unfold(
-            dimension=-1, size=self.input_patch_len, step=self.stride
-        )  # z: [bs x nvars x patch_num x input_patch_len]
-        ze = ze.permute(0, 1, 3, 2)  # z: [bs x nvars x input_patch_len x patch_num]
-
-        if self.padding_patch == "end":
-            zd = self.padding_patch_layer(zd)
-        zd = zd.unfold(
-            dimension=-1, size=self.input_patch_len, step=self.stride
-        )  # z: [bs x nvars x patch_num x input_patch_len]
-        zd = zd.permute(0, 1, 3, 2)  # z: [bs x nvars x input_patch_len x patch_num]
+            z = self.padding_patch_layer(z)
+        z = z.unfold(
+            dimension=-1, size=self.patch_len, step=self.stride
+        )  # z: [bs x nvars x patch_num x patch_len]
+        z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x patch_len x patch_num]
 
         # model
-        z = self.backbone(ze, zd)  # z: [bs x nvars x hidden_size x patch_num]
-        # embeddings = z.clone() # WILLA ADDED THIS
+        z = self.backbone(z)  # z: [bs x nvars x hidden_size x patch_num]
         z = self.head(z)  # z: [bs x nvars x h]
 
         # denorm
@@ -391,7 +336,6 @@ class PatchTST_backbone(nn.Module):
             z = self.revin_layer(z, "denorm")
             z = z.permute(0, 2, 1)
         return z
-    # return z, embeddings # WILLA ADDED THIS
 
     def create_pretrain_head(self, head_nf, vars, dropout):
         return nn.Sequential(nn.Dropout(dropout), nn.Conv1d(head_nf, vars, 1))
@@ -402,7 +346,7 @@ class Flatten_Head(nn.Module):
     Flatten_Head
     """
 
-    def __init__(self, individual, n_vars, nf, output_patch_len, c_out, head_dropout=0):
+    def __init__(self, individual, n_vars, nf, h, c_out, head_dropout=0):
         super().__init__()
 
         self.individual = individual
@@ -415,11 +359,11 @@ class Flatten_Head(nn.Module):
             self.flattens = nn.ModuleList()
             for i in range(self.n_vars):
                 self.flattens.append(nn.Flatten(start_dim=-2))
-                self.linears.append(nn.Linear(nf, output_patch_len * c_out))
+                self.linears.append(nn.Linear(nf, h * c_out))
                 self.dropouts.append(nn.Dropout(head_dropout))
         else:
             self.flatten = nn.Flatten(start_dim=-2)
-            self.linear = nn.Linear(nf, output_patch_len * c_out)
+            self.linear = nn.Linear(nf, h * c_out)
             self.dropout = nn.Dropout(head_dropout)
 
     def forward(self, x):  # x: [bs x nvars x hidden_size x patch_num]
@@ -437,20 +381,19 @@ class Flatten_Head(nn.Module):
             x = self.dropout(x)
         return x
 
-class Transformeri(nn.Module):  # i means channel-independent
+
+class TSTiEncoder(nn.Module):  # i means channel-independent
     """
-    Transformeri
+    TSTiEncoder
     """
 
     def __init__(
         self,
         c_in,
-        patch_num_encoder,
-        input_patch_len,
-        patch_num_decoder,
+        patch_num,
+        patch_len,
         max_seq_len=1024,
-        n_encoder_layers=3,
-        n_decoder_layers=3,
+        n_layers=3,
         hidden_size=128,
         n_heads=16,
         d_k=None,
@@ -472,42 +415,25 @@ class Transformeri(nn.Module):  # i means channel-independent
 
         super().__init__()
 
-        self.patch_num_encoder = patch_num_encoder
-        self.input_patch_len = input_patch_len
+        self.patch_num = patch_num
+        self.patch_len = patch_len
 
         # Input encoding
-        q_len_encoder = patch_num_encoder
-        q_len_decoder = patch_num_decoder
-        self.q_len_decoder = q_len_decoder
-        
-        self.W_P_encoder = nn.Linear(
-            input_patch_len, hidden_size
+        q_len = patch_num
+        self.W_P = nn.Linear(
+            patch_len, hidden_size
         )  # Eq 1: projection of feature vectors onto a d-dim vector space
-        
-        self.W_P_decoder = nn.Linear(
-            input_patch_len, hidden_size
-        )  # Eq 1: projection of feature vectors onto a d-dim vector space
+        self.seq_len = q_len
 
-        # Positional encoding - Encoder
-        self.W_pos_encoder = positional_encoding(pe, 
-                                                 learn_pe=learn_pe, 
-                                                 q_len=q_len_encoder, 
-                                                 hidden_size=hidden_size
-                                                )
-
-        # Positional encoding - Decoder
-        self.W_pos_decoder = positional_encoding(pe, 
-                                         learn_pe=False,
-                                         q_len=q_len_decoder,
-                                         hidden_size=hidden_size
-                                        )
+        # Positional encoding
+        self.W_pos = positional_encoding(pe, learn_pe, q_len, hidden_size)
 
         # Residual dropout
         self.dropout = nn.Dropout(dropout)
 
         # Encoder
-        self.encoder = TransformerEncoder(
-            q_len_encoder,
+        self.encoder = TSTEncoder(
+            q_len,
             hidden_size,
             n_heads,
             d_k=d_k,
@@ -519,71 +445,24 @@ class Transformeri(nn.Module):  # i means channel-independent
             pre_norm=pre_norm,
             activation=act,
             res_attention=res_attention,
-            n_layers=n_encoder_layers,
+            n_layers=n_layers,
             store_attn=store_attn,
-            pe=pe,
         )
 
-        # Decoder
-        self.decoder = TransformerDecoder(
-            q_len_decoder,
-            hidden_size,
-            n_heads,
-            d_k=d_k,
-            d_v=d_v,
-            linear_hidden_size=linear_hidden_size,
-            norm=norm,
-            attn_dropout=attn_dropout,
-            dropout=dropout,
-            pre_norm=pre_norm,
-            activation=act,
-            res_attention=res_attention,
-            n_layers=n_decoder_layers,
-            store_attn=store_attn,
-            pe=pe,
-            )
+    def forward(self, x) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
 
-    def forward(self, x, xd) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
-        
         n_vars = x.shape[1]
-        # Input encoding - Encoder
+        # Input encoding
         x = x.permute(0, 1, 3, 2)  # x: [bs x nvars x patch_num x patch_len]
-        x = self.W_P_encoder(x)  # x: [bs x nvars x patch_num x hidden_size]
+        x = self.W_P(x)  # x: [bs x nvars x patch_num x hidden_size]
 
         u = torch.reshape(
             x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3])
         )  # u: [bs * nvars x patch_num x hidden_size]
-
-        u = self.dropout(u + self.W_pos_encoder)  # u: [bs * nvars x patch_num x hidden_size]
+        u = self.dropout(u + self.W_pos)  # u: [bs * nvars x patch_num x hidden_size]
 
         # Encoder
-        z, z_k_s, z_v_s = self.encoder(u)  # z: [bs * nvars x patch_num x hidden_size]
-
-        # pad patches if necessary - Decoder
-        key_padding_mask = torch.zeros((xd.shape[0], self.q_len_decoder), 
-                                        dtype=torch.bool
-                                       ).to(x.device)
-
-        if xd.shape[3] != self.q_len_decoder: 
-            patch_num_pad = self.q_len_decoder - xd.size(3)
-            xd = F.pad(xd, (0, patch_num_pad), mode='constant', value=0)
-            key_padding_mask[:, -patch_num_pad :] = True
-            
-        # Input encoding - Decoder
-        xd = xd.permute(0, 1, 3, 2)  # x: [bs x nvars x patch_num x patch_len]
-        xd = self.W_P_decoder(xd)  # x: [bs x nvars x patch_num x hidden_size]
-
-        ud = torch.reshape(
-            xd, (xd.shape[0] * xd.shape[1], xd.shape[2], xd.shape[3])
-        )  # u: [bs * nvars x patch_num x hidden_size]
-
-        ud = self.dropout(ud + self.W_pos_decoder)  # u: [bs * nvars x patch_num x hidden_size]
-
-        # Decoder
-        z = self.decoder(src=ud, k_s=z_k_s, v_s=z_v_s, 
-                         key_padding_mask=key_padding_mask
-                        )  # z: [bs * nvars x patch_num x hidden_size]
-        
+        z = self.encoder(u)  # z: [bs * nvars x patch_num x hidden_size]
         z = torch.reshape(
             z, (-1, n_vars, z.shape[-2], z.shape[-1])
         )  # z: [bs x nvars x patch_num x hidden_size]
@@ -591,212 +470,10 @@ class Transformeri(nn.Module):  # i means channel-independent
 
         return z
 
-class TransformerEncoder(nn.Module):
+
+class TSTEncoder(nn.Module):
     """
-    Transformer Encoder
-    """
-
-    def __init__(
-        self,
-        q_len,
-        hidden_size,
-        n_heads,
-        d_k=None,
-        d_v=None,
-        linear_hidden_size=None,
-        norm="BatchNorm",
-        attn_dropout=0.0,
-        dropout=0.0,
-        activation="gelu",
-        res_attention=False,
-        n_layers=1,
-        pre_norm=False,
-        store_attn=False,
-        pe="zeros",
-    ):
-        super().__init__()
-
-        self.layers = nn.ModuleList(
-            [
-                EncoderLayer(
-                    q_len,
-                    hidden_size,
-                    n_heads=n_heads,
-                    d_k=d_k,
-                    d_v=d_v,
-                    linear_hidden_size=linear_hidden_size,
-                    norm=norm,
-                    attn_dropout=attn_dropout,
-                    dropout=dropout,
-                    activation=activation,
-                    res_attention=res_attention,
-                    pre_norm=pre_norm,
-                    store_attn=store_attn,
-                    pe=pe,
-                )
-                for _ in range(n_layers)
-            ]
-        )
-        self.res_attention = res_attention
-
-    def forward(
-        self,
-        src: torch.Tensor,
-        key_padding_mask: Optional[torch.Tensor] = None,
-        attn_mask: Optional[torch.Tensor] = None,
-    ):
-        output = src
-        scores = None
-        if self.res_attention:
-            for mod in self.layers:
-                output, scores, key, value = mod(
-                    output,
-                    prev=scores,
-                    key_padding_mask=key_padding_mask,
-                    attn_mask=attn_mask,
-                )
-            return output, key, value
-        else:
-            for mod in self.layers:
-                output, key, value = mod(
-                    output, 
-                    key_padding_mask=key_padding_mask, 
-                    attn_mask=attn_mask,
-                )
-            return output, key, value
-
-class EncoderLayer(nn.Module):
-    """Encoder Layer"""
-    
-    def __init__(
-        self,
-        q_len,
-        hidden_size,
-        n_heads,
-        d_k=None,
-        d_v=None,
-        linear_hidden_size=256,
-        norm="BatchNorm",
-        attn_dropout=0,
-        dropout=0.0,
-        bias=True,
-        activation="gelu",
-        res_attention=False,
-        pre_norm=False,
-        pe="zeros",
-        store_attn=False,
-    ):
-        super().__init__()
-        assert (
-            not hidden_size % n_heads
-        ), f"hidden_size ({hidden_size}) must be divisible by n_heads ({n_heads})"
-        d_k = hidden_size // n_heads if d_k is None else d_k
-        d_v = hidden_size // n_heads if d_v is None else d_v
-
-        self.res_attention = res_attention
-
-        # Multi-Head attention
-        self.self_attn = _MultiheadAttention(
-            hidden_size,
-            n_heads,
-            d_k,
-            d_v,
-            attn_dropout=attn_dropout,
-            proj_dropout=dropout,
-            res_attention=res_attention,
-            pe=pe,
-        )
-
-        # Add & Norm
-        self.dropout_attn = nn.Dropout(dropout)
-        if "batch" in norm.lower():
-            self.norm_attn = nn.Sequential(
-                Transpose(1, 2), nn.BatchNorm1d(hidden_size), Transpose(1, 2)
-            )
-        else:
-            self.norm_attn = nn.LayerNorm(hidden_size)
-
-        # Position-wise Feed-Forward
-        self.ff = nn.Sequential(
-            nn.Linear(hidden_size, linear_hidden_size, bias=bias),
-            get_activation_fn(activation),
-            nn.Dropout(dropout),
-            nn.Linear(linear_hidden_size, hidden_size, bias=bias),
-        )
-
-        # Add & Norm
-        self.dropout_ffn = nn.Dropout(dropout)
-        if "batch" in norm.lower():
-            self.norm_ffn = nn.Sequential(
-                Transpose(1, 2), nn.BatchNorm1d(hidden_size), Transpose(1, 2)
-            )
-        else:
-            self.norm_ffn = nn.LayerNorm(hidden_size)
-
-        self.pre_norm = pre_norm
-        self.store_attn = store_attn
-
-    def forward(
-        self,
-        src: torch.Tensor,
-        prev: Optional[torch.Tensor] = None,
-        key_padding_mask: Optional[torch.Tensor] = None,
-        attn_mask: Optional[torch.Tensor] = None,
-    ):
-
-        # Multi-Head attention sublayer
-        if self.pre_norm:
-            src = self.norm_attn(src)
-
-        ## Multi-Head attention
-        if self.res_attention:
-            src2, attn, scores, k_s, v_s = self.self_attn(
-                Q=src,
-                K=src,
-                V=src,
-                prev=prev,
-                key_padding_mask=key_padding_mask,
-                attn_mask=attn_mask,
-            )
-        else:
-            src2, attn, k_s, v_s = self.self_attn(
-                Q=src,
-                K=src,
-                V=src,
-                key_padding_mask=key_padding_mask,
-                attn_mask=attn_mask,
-            )
-
-        if self.store_attn:
-            self.attn = attn
-
-        ## Add & Norm
-        src = src + self.dropout_attn(
-            src2
-        )  # Add: residual connection with residual dropout
-        if not self.pre_norm:
-            src = self.norm_attn(src)
-
-        # Feed-forward sublayer
-        if self.pre_norm:
-            src = self.norm_ffn(src)
-        ## Position-wise Feed-Forward
-        src2 = self.ff(src)
-        ## Add & Norm
-        src = src + self.dropout_ffn(
-            src2
-        )  # Add: residual connection with residual dropout
-        if not self.pre_norm:
-            src = self.norm_ffn(src)
-
-        if self.res_attention:
-            return src, scores, k_s, v_s
-        else:
-            return src, k_s, v_s # Return key and value tensors
-
-class TransformerDecoder(nn.Module):
-    """
-    Transformer Decoder
+    TSTEncoder
     """
 
     def __init__(
@@ -815,13 +492,12 @@ class TransformerDecoder(nn.Module):
         n_layers=1,
         pre_norm=False,
         store_attn=False,
-        pe="zeros",
     ):
         super().__init__()
 
         self.layers = nn.ModuleList(
             [
-                DecoderLayer(
+                TSTEncoderLayer(
                     q_len,
                     hidden_size,
                     n_heads=n_heads,
@@ -835,64 +511,42 @@ class TransformerDecoder(nn.Module):
                     res_attention=res_attention,
                     pre_norm=pre_norm,
                     store_attn=store_attn,
-                    pe=pe,
                 )
-                for _ in range(n_layers)
+                for i in range(n_layers)
             ]
         )
         self.res_attention = res_attention
-        self.q_len = q_len
 
     def forward(
         self,
         src: torch.Tensor,
-        k_s: torch.Tensor,
-        v_s: torch.Tensor,
-        key_padding_mask: torch.Tensor,
+        key_padding_mask: Optional[torch.Tensor] = None,
+        attn_mask: Optional[torch.Tensor] = None,
     ):
-
-        with torch.no_grad():
-            self_attn_mask = torch.triu(torch.ones((1, self.q_len, self.q_len), 
-                                               dtype=torch.bool
-                                              ), 
-                                    diagonal=1
-                                   ).to(src.device)
-
-        with torch.no_grad():
-            cross_attn_mask = torch.zeros((1, self.q_len, self.q_len), 
-                                      dtype=torch.bool
-                                     ).to(src.device)
-
         output = src
         scores = None
         if self.res_attention:
             for mod in self.layers:
                 output, scores = mod(
-                    src=output,
-                    k_s=k_s,
-                    v_s=v_s,
+                    output,
                     prev=scores,
                     key_padding_mask=key_padding_mask,
-                    self_attn_mask=self_attn_mask,
-                    cross_attn_mask=cross_attn_mask,
+                    attn_mask=attn_mask,
                 )
             return output
         else:
             for mod in self.layers:
                 output = mod(
-                    src=output, 
-                    k_s=k_s,
-                    v_s=v_s,
-                    key_padding_mask=key_padding_mask, 
-                    self_attn_mask=self_attn_mask,
-                    cross_attn_mask=cross_attn_mask,
+                    output, key_padding_mask=key_padding_mask, attn_mask=attn_mask
                 )
             return output
 
 
-class DecoderLayer(nn.Module):
-    """Decoder Layer"""
-    
+class TSTEncoderLayer(nn.Module):
+    """
+    TSTEncoderLayer
+    """
+
     def __init__(
         self,
         q_len,
@@ -901,6 +555,7 @@ class DecoderLayer(nn.Module):
         d_k=None,
         d_v=None,
         linear_hidden_size=256,
+        store_attn=False,
         norm="BatchNorm",
         attn_dropout=0,
         dropout=0.0,
@@ -908,8 +563,6 @@ class DecoderLayer(nn.Module):
         activation="gelu",
         res_attention=False,
         pre_norm=False,
-        pe="zeros",
-        store_attn=False,
     ):
         super().__init__()
         assert (
@@ -918,9 +571,8 @@ class DecoderLayer(nn.Module):
         d_k = hidden_size // n_heads if d_k is None else d_k
         d_v = hidden_size // n_heads if d_v is None else d_v
 
-        self.res_attention = res_attention
-
         # Multi-Head attention
+        self.res_attention = res_attention
         self.self_attn = _MultiheadAttention(
             hidden_size,
             n_heads,
@@ -929,18 +581,6 @@ class DecoderLayer(nn.Module):
             attn_dropout=attn_dropout,
             proj_dropout=dropout,
             res_attention=res_attention,
-            pe=pe,
-        )
-
-        self.cross_attn = _MultiheadAttention(
-            hidden_size,
-            n_heads,
-            d_k,
-            d_v,
-            attn_dropout=attn_dropout,
-            proj_dropout=dropout,
-            res_attention=res_attention,
-            pe=pe,
         )
 
         # Add & Norm
@@ -975,66 +615,34 @@ class DecoderLayer(nn.Module):
     def forward(
         self,
         src: torch.Tensor,
-        k_s: torch.Tensor,  # Only used in decoder for cross-attention
-        v_s: torch.Tensor,  # Only used in decoder for cross-attention
-        self_attn_mask: torch.Tensor,
-        cross_attn_mask: torch.Tensor,
         prev: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
-    ):
-        
+        attn_mask: Optional[torch.Tensor] = None,
+    ):  # -> Tuple[torch.Tensor, Any]:
+
         # Multi-Head attention sublayer
         if self.pre_norm:
             src = self.norm_attn(src)
-
         ## Multi-Head attention
         if self.res_attention:
-            src2, attn, scores, _, _ = self.self_attn(
-                Q=src,
-                K=src,
-                V=src,
-                prev=prev,
+            src2, attn, scores = self.self_attn(
+                src,
+                src,
+                src,
+                prev,
                 key_padding_mask=key_padding_mask,
-                attn_mask=self_attn_mask,
+                attn_mask=attn_mask,
             )
         else:
-            src2, attn, _, _ = self.self_attn(
-                Q=src,
-                K=src,
-                V=src,
-                key_padding_mask=key_padding_mask, 
-                attn_mask=self_attn_mask,
+            src2, attn = self.self_attn(
+                src, src, src, key_padding_mask=key_padding_mask, attn_mask=attn_mask
             )
-
         if self.store_attn:
             self.attn = attn
-
         ## Add & Norm
         src = src + self.dropout_attn(
             src2
         )  # Add: residual connection with residual dropout
-        if not self.pre_norm:
-            src = self.norm_attn(src)
-        
-        if self.res_attention:
-            src2, attn, scores, _, _ = self.cross_attn(
-                            Q=src,
-                            K=src,
-                            V=src,
-                            prev=prev,
-                            key_padding_mask=key_padding_mask,
-                            attn_mask=cross_attn_mask,
-                        )
-        else:
-            src2, attn, _, _ = self.cross_attn(
-                    Q=src, 
-                    k_s=k_s,
-                    v_s=v_s, 
-                    key_padding_mask=key_padding_mask, 
-                    attn_mask=cross_attn_mask,
-                )
-    
-        src = src + self.dropout_attn(src2)
         if not self.pre_norm:
             src = self.norm_attn(src)
 
@@ -1055,6 +663,7 @@ class DecoderLayer(nn.Module):
         else:
             return src
 
+
 class _MultiheadAttention(nn.Module):
     """
     _MultiheadAttention
@@ -1071,7 +680,6 @@ class _MultiheadAttention(nn.Module):
         proj_dropout=0.0,
         qkv_bias=True,
         lsa=False,
-        pe="zeros", # Willa added
     ):
         """
         Multi Head Attention Layer
@@ -1105,15 +713,11 @@ class _MultiheadAttention(nn.Module):
             nn.Linear(n_heads * d_v, hidden_size), nn.Dropout(proj_dropout)
         )
 
-        self.pe = pe
-
     def forward(
         self,
         Q: torch.Tensor,
         K: Optional[torch.Tensor] = None,
         V: Optional[torch.Tensor] = None,
-        k_s: Optional[torch.Tensor] = None,
-        v_s: Optional[torch.Tensor] = None,
         prev: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
         attn_mask: Optional[torch.Tensor] = None,
@@ -1125,26 +729,16 @@ class _MultiheadAttention(nn.Module):
         if V is None:
             V = Q
 
+        # Linear (+ split in multiple heads)
         q_s = (
             self.W_Q(Q).view(bs, -1, self.n_heads, self.d_k).transpose(1, 2)
         )  # q_s    : [bs x n_heads x max_q_len x d_k]
-        
-        # Linear (+ split in multiple heads)
-        if k_s is None:
-            k_s = (
-                self.W_K(K).view(bs, -1, self.n_heads, self.d_k).permute(0, 2, 3, 1)
-            )  # k_s    : [bs x n_heads x d_k x q_len] - transpose(1,2) + transpose(2,3)
-        if v_s is None:
-            v_s = (
-                self.W_V(V).view(bs, -1, self.n_heads, self.d_v).transpose(1, 2)
-            )  # v_s    : [bs x n_heads x q_len x d_v]
-
-        # Apply Rotary Positional Embeddings (RoPE)
-        if self.pe == "rope":
-            k_s = k_s.transpose(2, 3) #[bs x n_heads x q_len x d_k]
-            q_s = RotaryPositionalEmbedding(q_s.clone()) #[bs x n_heads x q_len x d_k]
-            k_s = RotaryPositionalEmbedding(k_s.clone()) #[bs x n_heads x q_len x d_k]
-            k_s = k_s.transpose(2, 3) #[bs x n_heads x d_k x q_len]
+        k_s = (
+            self.W_K(K).view(bs, -1, self.n_heads, self.d_k).permute(0, 2, 3, 1)
+        )  # k_s    : [bs x n_heads x d_k x q_len] - transpose(1,2) + transpose(2,3)
+        v_s = (
+            self.W_V(V).view(bs, -1, self.n_heads, self.d_v).transpose(1, 2)
+        )  # v_s    : [bs x n_heads x q_len x d_v]
 
         # Apply Scaled Dot-Product Attention (multiple heads)
         if self.res_attention:
@@ -1158,11 +752,7 @@ class _MultiheadAttention(nn.Module):
             )
         else:
             output, attn_weights = self.sdp_attn(
-                q_s, 
-                k_s, 
-                v_s, 
-                key_padding_mask=key_padding_mask, 
-                attn_mask=attn_mask
+                q_s, k_s, v_s, key_padding_mask=key_padding_mask, attn_mask=attn_mask
             )
         # output: [bs x n_heads x q_len x d_v], attn: [bs x n_heads x q_len x q_len], scores: [bs x n_heads x max_q_len x q_len]
 
@@ -1173,9 +763,9 @@ class _MultiheadAttention(nn.Module):
         output = self.to_out(output)
 
         if self.res_attention:
-            return output, attn_weights, attn_scores, k_s, v_s
+            return output, attn_weights, attn_scores
         else:
-            return output, attn_weights, k_s, v_s
+            return output, attn_weights
 
 
 class _ScaledDotProductAttention(nn.Module):
@@ -1231,8 +821,10 @@ class _ScaledDotProductAttention(nn.Module):
         if (
             attn_mask is not None
         ):  # attn_mask with shape [q_len x seq_len] - only used when q_len == seq_len
-            attn_mask = attn_mask.bool()
-            attn_scores.masked_fill_(attn_mask, -np.inf)
+            if attn_mask.dtype == torch.bool:
+                attn_scores.masked_fill_(attn_mask, -np.inf)
+            else:
+                attn_scores += attn_mask
 
         # Key padding mask (optional)
         if (
@@ -1259,7 +851,7 @@ class _ScaledDotProductAttention(nn.Module):
             return output, attn_weights
 
 # %% ../../nbs/models.patchtst.ipynb 17
-class PatchEncoderDecoder(BasePatchall):
+class PatchTST(BaseWindows):
     """PatchTST
 
     The PatchTST model is an efficient Transformer-based model for multivariate time series forecasting.
@@ -1283,8 +875,7 @@ class PatchEncoderDecoder(BasePatchall):
     `fc_dropout`: float=0.1, dropout rate for linear layer.<br>
     `head_dropout`: float=0.1, dropout rate for Flatten head layer.<br>
     `attn_dropout`: float=0.1, dropout rate for attention layer.<br>
-    `input_patch_len`: int=32, length of patch. Note: intput_patch_len = min(input_patch_len, input_size + stride).<br>
-    `output_patch_len`: int=32, length of patch. Note: output_patch_len = min(output_patch_len, h).<br>
+    `patch_len`: int=32, length of patch. Note: patch_len = min(patch_len, input_size + stride).<br>
     `stride`: int=16, stride of patch.<br>
     `revin`: bool=True, bool to use RevIn.<br>
     `revin_affine`: bool=False, bool to use affine in RevIn.<br>
@@ -1336,7 +927,6 @@ class PatchEncoderDecoder(BasePatchall):
         futr_exog_list=None,
         exclude_insample_y=False,
         encoder_layers: int = 3,
-        decoder_layers: int = 3,
         n_heads: int = 16,
         hidden_size: int = 128,
         linear_hidden_size: int = 256,
@@ -1344,8 +934,7 @@ class PatchEncoderDecoder(BasePatchall):
         fc_dropout: float = 0.2,
         head_dropout: float = 0.0,
         attn_dropout: float = 0.0,
-        input_patch_len: int = 16,
-        output_patch_len: int = 16,
+        patch_len: int = 16,
         stride: int = 8,
         revin: bool = True,
         revin_affine: bool = False,
@@ -1375,15 +964,10 @@ class PatchEncoderDecoder(BasePatchall):
         optimizer_kwargs=None,
         lr_scheduler=None,
         lr_scheduler_kwargs=None,
-        pe="zeros", 
-        attn_mask = None,  # Not used
         **trainer_kwargs
     ):
-        super(PatchEncoderDecoder, self).__init__(
+        super(PatchTST, self).__init__(
             h=h,
-            input_patch_len=input_patch_len, 
-            output_patch_len=output_patch_len, 
-            stride=stride,
             input_size=input_size,
             hist_exog_list=hist_exog_list,
             stat_exog_list=stat_exog_list,
@@ -1414,12 +998,7 @@ class PatchEncoderDecoder(BasePatchall):
         )
 
         # Enforce correct patch_len, regardless of user input
-        input_patch_len = min(input_size + stride, input_patch_len)
-        output_patch_len = min(h, output_patch_len)
-        
-        if input_size < input_patch_len * 2:
-            raise ValueError(f"input_size ({input_size}) must be less than or equal to 2x patch_len ({patch_len})")
-
+        patch_len = min(input_size + stride, patch_len)
 
         c_out = self.loss.outputsize_multiplier
 
@@ -1428,7 +1007,7 @@ class PatchEncoderDecoder(BasePatchall):
         padding_patch = "end"  # Padding at the end
         pretrain_head = False  # No pretrained head
         norm = "BatchNorm"  # Use BatchNorm (if batch_normalization is True)
-        #pe = "zeros"  # Initial zeros for positional encoding
+        pe = "zeros"  # Initial zeros for positional encoding
         d_k = None  # Key dimension
         d_v = None  # Value dimension
         store_attn = False  # Store attention weights
@@ -1437,18 +1016,17 @@ class PatchEncoderDecoder(BasePatchall):
         max_seq_len = 1024  # Not used
         key_padding_mask = "auto"  # Not used
         padding_var = None  # Not used
+        attn_mask = None  # Not used
 
         self.model = PatchTST_backbone(
             c_in=c_in,
             c_out=c_out,
             input_size=input_size,
             h=h,
-            input_patch_len=input_patch_len,
-            output_patch_len=output_patch_len,
+            patch_len=patch_len,
             stride=stride,
             max_seq_len=max_seq_len,
-            n_encoder_layers=encoder_layers,
-            n_decoder_layers=decoder_layers,
+            n_layers=encoder_layers,
             hidden_size=hidden_size,
             n_heads=n_heads,
             d_k=d_k,
@@ -1491,11 +1069,9 @@ class PatchEncoderDecoder(BasePatchall):
 
         x = x.permute(0, 2, 1)  # x: [Batch, 1, input_size]
         x = self.model(x)
-        #x, embeddings = self.model(x) #Willa added this 
-        x = x.reshape(x.shape[0], self.output_patch_len, -1)  # x: [Batch, output_patch_len, c_out]
-        
+        x = x.reshape(x.shape[0], self.h, -1)  # x: [Batch, h, c_out]
+
         # Domain map
         forecast = self.loss.domain_map(x)
 
-        #return forecast, embeddings # Willa added this
         return forecast

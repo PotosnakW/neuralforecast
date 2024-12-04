@@ -3,7 +3,7 @@ __all__ = ['RNN', 'GRU', 'LSTM', 'TCN', 'DeepAR', 'DilatedRNN',
            'TFT', 'VanillaTransformer', 'Informer', 'Autoformer', 'PatchTST', 'PatchDecoder', 
            'PatchEncoderDecoder', 'FEDformer',
            'StemGNN', 'HINT', 'TimesNet', 'TimeLLM', 'TSMixer', 'TSMixerx', 'MLPMultivariate',
-           'iTransformer', 'BiTCN', 'TiDE', 'DeepNPTS', 'SOFTS', 'TimeMixer', 'KAN'
+           'iTransformer', 'BiTCN', 'TiDE', 'DeepNPTS', 'SOFTS', 'TimeMixer', 'KAN', 'T5Flex',
            ]
 
 from .rnn import RNN
@@ -40,3 +40,4 @@ from .deepnpts import DeepNPTS
 from .softs import SOFTS
 from .timemixer import TimeMixer
 from .kan import KAN
+from .t5flex import T5Flex

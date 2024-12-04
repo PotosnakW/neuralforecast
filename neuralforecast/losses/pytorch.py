@@ -17,6 +17,7 @@ import torch.nn.functional as F
 from torch.distributions import Distribution
 from torch.distributions import (
     Bernoulli,
+    Categorical,
     Normal,
     StudentT,
     Poisson,
@@ -783,8 +784,8 @@ def bernoulli_domain_map(input: torch.Tensor):
     **Returns:**<br>
     `(probs,)`: tuple with tensors of Poisson distribution arguments.<br>
     """
-    return (input.squeeze(-1),)
 
+    return (input.squeeze(-1),)
 
 def bernoulli_scale_decouple(output, loc=None, scale=None):
     """Bernoulli Scale Decouple
@@ -799,6 +800,26 @@ def bernoulli_scale_decouple(output, loc=None, scale=None):
     probs = F.sigmoid(probs)  # .clone()
     return (probs,)
 
+def categorical_domain_map(input: torch.Tensor):
+    """Categorical Domain Map
+
+    **Parameters:**<br>
+    `input`: tensor, of dimensions [B,T,H,theta] or [B,H,theta].<br>
+
+    **Returns:**<br>
+    `(logits,)`: tuple with tensors of Poisson distribution arguments.<br>
+    """
+
+    return torch.unbind(input, dim=-1)
+
+def categorical_scale_decouple(output, loc=None, scale=None):
+    """Categorical Scale Decouple
+
+    """
+    logits = torch.stack(output, dim=-1)
+    probs = F.softmax(logits, dim=-1)
+    
+    return (probs,)
 
 def student_domain_map(input: torch.Tensor):
     """Student T Domain Map
@@ -1837,6 +1858,7 @@ def isqf_scale_decouple(output, loc=None, scale=None):
 
     return (spline_knots, spline_heights, beta_l, beta_r, qk_y, qk_x_repeat, loc, scale)
 
+
 # %% ../../nbs/losses.pytorch.ipynb 68
 class DistributionLoss(torch.nn.Module):
     """DistributionLoss
@@ -1900,9 +1922,15 @@ class DistributionLoss(torch.nn.Module):
             num_pieces = 5
         else:
             num_pieces = distribution_kwargs.pop("num_pieces")
+        
+        if "num_cats" not in distribution_kwargs:
+            num_cats = 0
+        else:
+            num_cats = distribution_kwargs.pop("num_cats")
 
         available_distributions = dict(
             Bernoulli=Bernoulli,
+            Categorical=Categorical,
             Normal=Normal,
             Poisson=Poisson,
             StudentT=StudentT,
@@ -1912,6 +1940,7 @@ class DistributionLoss(torch.nn.Module):
         )
         domain_maps = dict(
             Bernoulli=bernoulli_domain_map,
+            Categorical=categorical_domain_map,
             Normal=normal_domain_map,
             Poisson=poisson_domain_map,
             StudentT=student_domain_map,
@@ -1921,6 +1950,7 @@ class DistributionLoss(torch.nn.Module):
         )
         scale_decouples = dict(
             Bernoulli=bernoulli_scale_decouple,
+            Categorical=categorical_scale_decouple,
             Normal=normal_scale_decouple,
             Poisson=poisson_scale_decouple,
             StudentT=student_scale_decouple,
@@ -1930,6 +1960,7 @@ class DistributionLoss(torch.nn.Module):
         )
         param_names = dict(
             Bernoulli=["-logits"],
+            Categorical=[f"-logits{i + 1}" for i in range(num_cats)],
             Normal=["-loc", "-scale"],
             Poisson=["-loc"],
             StudentT=["-df", "-loc", "-scale"],
@@ -1996,15 +2027,18 @@ class DistributionLoss(torch.nn.Module):
         if num_samples is None:
             num_samples = self.num_samples
 
-        #  print(distr_args[0].size())
         B, H = distr_args[0].shape[:2]
         Q = len(self.quantiles)
 
         # Instantiate Scaled Decoupled Distribution
         distr = self.get_distribution(distr_args=distr_args, **self.distribution_kwargs)
-        samples = distr.sample(sample_shape=(num_samples,))
+        samples = distr.sample(sample_shape=(num_samples,)) #[samples,B,H]
         samples = samples.permute(1, 2, 0)  # [samples,B,H] -> [B,H,samples]
         samples = samples.view(B * H, num_samples)
+        
+        if self.distribution=='Categorical':
+            samples = samples.float()
+        
         sample_mean = torch.mean(samples, dim=-1)
 
         # Compute quantiles
