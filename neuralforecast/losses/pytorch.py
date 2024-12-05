@@ -817,7 +817,7 @@ def categorical_scale_decouple(output, loc=None, scale=None):
 
     """
     logits = torch.stack(output, dim=-1)
-    probs = F.softmax(logits, dim=-1)
+    probs = F.softmax(logits, dim=-1) #[B x H x num_cats]
     
     return (probs,)
 
@@ -2038,13 +2038,17 @@ class DistributionLoss(torch.nn.Module):
         
         if self.distribution=='Categorical':
             samples = samples.float()
-        
+
         sample_mean = torch.mean(samples, dim=-1)
 
         # Compute quantiles
         quantiles_device = self.quantiles.to(distr_args[0].device)
         quants = torch.quantile(input=samples, q=quantiles_device, dim=1)
         quants = quants.permute((1, 0))  # [Q, B*H] -> [B*H, Q]
+        
+        if self.distribution=='Categorical':
+            sample_mean = torch.round(sample_mean)
+            quants = torch.round(quants)
 
         # Final reshapes
         samples = samples.view(B, H, num_samples)

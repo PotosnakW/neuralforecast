@@ -475,9 +475,11 @@ class BaseFlex(BaseModel):
         output = self.model_output(windows_batch)
         # binning creates classes
         if self.tokenizer_type=='bins':
+            #print('before', original_outsample_y)
             original_outsample_y = original_outsample_y.unsqueeze(1)
             original_outsample_y = self.tokenizer.output_transform(original_outsample_y)
             original_outsample_y = original_outsample_y.squeeze(1).squeeze(-1)
+            #print('after', original_outsample_y)
 
         if self.loss.is_distribution_output:
             _, y_loc, y_scale = self._inv_normalization(
@@ -606,8 +608,7 @@ class BaseFlex(BaseModel):
             pos = fi % n_repeats
             if pos != 0:
                 seq_preds = previous_preds[:, : self.output_token_len*pos].clone()
-                if self.tokenizer_type != 'bins':
-                    y_hat, _, _ = self._inv_normalization(
+                y_hat, _, _ = self._inv_normalization(
                         y_hat=seq_preds,
                         y_idx=y_idx,
                         )
@@ -677,6 +678,7 @@ class BaseFlex(BaseModel):
                         output_batch=output,
                         y_idx=batch["y_idx"],
                         )
+            #print(y_hat[0])
             if self.loss.is_distribution_output:
                 y_hat = y_hat[:, :, 0]
                 output_stack = torch.stack(output, dim=-1)
@@ -891,13 +893,7 @@ class BaseFlex(BaseModel):
         if self.tokenizer_type=='bins':
             print('before_unbin', y_hat)
             y_hat = self.tokenizer.unbin(y_hat)
-            print('before_inv', y_hat)
-            y_hat, _, _ = self._inv_normalization(
-                y_hat=y_hat,
-               # temporal_cols=batch["temporal_cols"],
-                y_idx=y_idx,
-            )
-            print(y_hat)
+            print('final', y_hat)
 
         return y_hat
 
@@ -1021,13 +1017,16 @@ class BaseFlex(BaseModel):
         # Move from model code
         insample_y = windows_batch["insample_y"]
         x = insample_y.unsqueeze(-1)  # [Ws,L,1]
+        #print('insample_y', x[0])
         x = x.permute(0, 2, 1)  # x: [Batch, 1, input_size]
         if self.revin:
             x = x.permute(0, 2, 1)
             x = self.revin_layer(x, "norm")
             x = x.permute(0, 2, 1)
         # tokenize input
+       # print('revin', x[0])
         z = self.tokenizer.output_transform(x) 
+        #print('tokenize', z[0])
 
         # Model Predictions
         output = self(z)

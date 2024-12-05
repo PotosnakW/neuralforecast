@@ -168,12 +168,12 @@ class TSTEncoder(nn.Module):  # i means channel-independent
         )  # u: [bs * nvars x patch_num x hidden_size]
         u = self.dropout(u + self.W_pos)  
 
-        # Encoder
+        # Mask [bs x token_num]
         if self.attn_mask=='bidirectional':
-            attn_mask = torch.ones(x.shape[0], u.shape[2], dtype=torch.long).to(x.device)
+            attn_mask = torch.ones(x.shape[0], u.shape[1], dtype=torch.long).to(x.device)
         elif self.attn_mask=='causal':
-            attn_mask = torch.tril(torch.ones(x.shape[0], u.shape[2], dtype=torch.long, device=x.device))
-            
+            attn_mask = torch.tril(torch.ones(x.shape[0], u.shape[1], dtype=torch.long, device=x.device))
+
         z = self.encoder(inputs_embeds=u, attention_mask=attn_mask)
         z = z.last_hidden_state
         z = torch.reshape(
@@ -345,7 +345,7 @@ class T5Flex(BaseFlex):
         )
 
         # Enforce correct patch_len, regardless of user input
-        if (tokenizer_type == 'lags')|(tokenizer_type == 'bins'):
+        if tokenizer_type == 'lags':
             assert input_token_len==1, \
                 f"Assertion failed: input_token_len={input_token_len}, expected 1"
             assert stride==1, \
@@ -356,6 +356,16 @@ class T5Flex(BaseFlex):
         elif 'patch' in tokenizer_type:
             input_token_len = min(input_size + stride, input_token_len)
             output_token_len = min(h, output_token_len)
+            
+        elif tokenizer_type == 'bins':
+            assert revin==False, \
+                f"Assertion failed: revin={revin}, expected False"
+            assert input_token_len==1, \
+                f"Assertion failed: input_token_len={input_token_len}, expected 1"
+            assert stride==1, \
+                f"Assertion failed: stride={stride}, expected 1"
+            assert padding_patch==None, \
+                f"Assertion failed: padding_patch={padding_patch}, expected None"
 
         c_out = self.loss.outputsize_multiplier
         # Fixed hyperparameters

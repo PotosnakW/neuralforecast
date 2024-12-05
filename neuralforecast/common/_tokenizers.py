@@ -5,7 +5,12 @@ import torch.nn as nn
 class Tokenizer():
     def __init__(self, tokenizer_type, token_len, stride, 
                  token_num, lag=None, padding_patch=None,
-                 low_limit=-15.0, high_limit=15.0, n_bins=4094):
+                # low_limit=-15.0, high_limit=15.0, n_bins=4094):
+                 #low_limit=100.0, high_limit=560.0, 
+                 low_limit=100.0, high_limit=650.0, 
+                 #low_limit=-1.5, high_limit=2.0, 
+                 n_bins=10, #4094
+                ):
         # B = 4094 used in Chronos paper
         # bin centers c1 < . . . < cB on the real line where c1 = -15.0 and cB = 15.0
 
@@ -51,10 +56,13 @@ class Tokenizer():
             Patched tensor of shape [batch_size, nvars, patch_num, patch_len], 
             where selected_seq_len depends on `lag`.
         """
+
+        if self.padding_patch == "end":
+            z = self.padding_patch_layer(z)
         patches = z.unfold(
                 dimension=-1, size=self.token_len, step=self.stride
         ) #[bs x nvars x patch_num x patch_len]
-        
+
         return patches
 
     def _lags(self, z):
@@ -109,11 +117,11 @@ class Tokenizer():
 
         # Reshape back to original dimensions
         token_ids = token_ids.view(batch_size, nvars, seq_len)
-        token_ids = token_ids.unsqueeze(-1) #[bs x nvars, seq_len, 1]
+        token_ids = token_ids.unsqueeze(-1) #[bs x nvars x seq_len x 1]
         token_ids = token_ids.float()
 
         return token_ids
-    
+
     def unbin(self, token_ids):
         """
         Maps token IDs back to the corresponding bin centers.
@@ -141,12 +149,13 @@ class Tokenizer():
             output = self._lags(z)
             
         elif self.tokenizer_type == 'patch_fixed_length':
-            if self.padding_patch == "end":
-                z = self.padding_patch_layer(z)
             output = self._patch_fixed_len(z)
             
         elif self.tokenizer_type == 'bins': 
             output = self._bins(z)
+            
+        else:
+            raise ValueError(f"Unsupported tokenizer_type: {self.tokenizer_type}")
             
         return output
 
