@@ -1,21 +1,36 @@
 import torch
 import torch.nn as nn
 from transformers import T5Config
-from transformers.models.t5.modeling_t5 import T5Attention, T5Stack, T5Block, T5LayerNorm
+from transformers.models.t5.modeling_t5 import T5Attention, T5Stack, T5Block, T5LayerNorm, T5LayerSelfAttention, T5LayerCrossAttention, T5LayerFF
 from typing import Optional
 from ._positional_encodings import PositionalEncoding
-
-class CustomT5Stack(T5Stack):
-    def __init__(self, config, embed_tokens=None, pe=False):
-        super().__init__(config, embed_tokens)
         
+
+class blahT5Block(T5Block):
+    def __init__(self, config, has_relative_attention_bias=False, layer_idx: Optional[int] = None):
+        super().__init__()
+        self.is_decoder = config.is_decoder
+        self.layer = nn.ModuleList()
+        self.layer.append(
+            T5LayerSelfAttention(config, has_relative_attention_bias=has_relative_attention_bias, layer_idx=layer_idx)
+        )
+        if self.is_decoder:
+            print('decoderrrrr')
+            self.layer.append(T5LayerCrossAttention(config, layer_idx=layer_idx))
+
+        self.layer.append(T5LayerFF(config))
+        
+class CustomT5Stack(T5Stack):
+    def __init__(self, config, embed_tokens=None, pe="zeros"):
+        super().__init__(config, embed_tokens)
+
         self.embed_tokens = embed_tokens
         self.is_decoder = config.is_decoder
 
         # Override the block to ensure has_relative_attention_bias=False
-        if pe=='relative':
+        if pe=="relative":
             self.block = nn.ModuleList(
-                [T5Block(config, has_relative_attention_bias=bool(i == 0), layer_idx=i) for i in range(config.num_layers)]
+                [blahT5Block(config, has_relative_attention_bias=bool(i == 0), layer_idx=i) for i in range(config.num_layers)]
             )
         else:
             self.block = nn.ModuleList(
