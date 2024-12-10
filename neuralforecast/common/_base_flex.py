@@ -14,8 +14,6 @@ from ._base_model import BaseModel
 from ._scalers import TemporalNorm
 from ..tsdataset import TimeSeriesDataModule
 from ..utils import get_indexer_raise_missing
-
-from ..common._instance_norm import RevIN
 from ..common._tokenizers import Tokenizer
 
 # %% ../../nbs/common.base_windows.ipynb 6
@@ -64,9 +62,6 @@ class BaseFlex(BaseModel):
         optimizer_kwargs=None,
         lr_scheduler=None,
         lr_scheduler_kwargs=None,
-        revin=True,
-        revin_affine=False,
-        revin_subtract_last=True,
         tokenizer_type='patch_fixed_length',
         lag=None, 
         padding_patch=None,
@@ -167,13 +162,7 @@ class BaseFlex(BaseModel):
         self.alias = alias
         
         token_num = int((input_size - input_token_len) / stride + 1)
-        
-        self.revin = revin
-        if self.revin:
-            self.revin_layer = RevIN(1, # univariate!!
-                                     affine=revin_affine, 
-                                     subtract_last=revin_subtract_last
-                                    )
+
         self.tokenizer_type = tokenizer_type
         self.tokenizer = Tokenizer(tokenizer_type,
                                    token_len=input_token_len,
@@ -476,6 +465,7 @@ class BaseFlex(BaseModel):
         # binning creates classes
         if self.tokenizer_type=='bins':
             #print('before', original_outsample_y)
+            original_outsample_y = outsample_y #torch.clone(windows["temporal"][:, -self.output_token_len :, y_idx])
             original_outsample_y = original_outsample_y.unsqueeze(1)
             original_outsample_y = self.tokenizer.output_transform(original_outsample_y)
             original_outsample_y = original_outsample_y.squeeze(1).squeeze(-1)
@@ -593,6 +583,7 @@ class BaseFlex(BaseModel):
                 i * windows_batch_size, min((i + 1) * windows_batch_size, n_windows)
             )
             windows = self._create_windows(batch, window_size=window_size, step="val", w_idxs=w_idxs)
+            original_outsample_y = torch.clone(windows["temporal"][:, -self.h :, y_idx])
             
             (
                 insample_y,
@@ -626,7 +617,7 @@ class BaseFlex(BaseModel):
                                            extend_mask,
                                            horizon_filler),
                                           dim=1)
-                
+
                  # Shift insample_y by patches to include new appended predictions
                 insample_y = insample_y[:, self.output_token_len*pos :]
                 insample_mask = insample_mask[:, self.output_token_len*pos :]
@@ -643,20 +634,20 @@ class BaseFlex(BaseModel):
                     previous_preds = torch.zeros(remainder_windows_count, self.output_token_len*n_repeats, 
                                                  device=windows["temporal"].device)
                     previous_params = torch.zeros(remainder_windows_count, self.output_token_len*n_repeats, self.c_out,
-                                     device=windows["temporal"].device)
+                                      device=windows["temporal"].device)
                 else:
                     previous_preds = torch.zeros(windows_batch_size, self.output_token_len*n_repeats, 
                                      device=windows["temporal"].device)
                     previous_params = torch.zeros(windows_batch_size, self.output_token_len*n_repeats, self.c_out,
-                                     device=windows["temporal"].device)
+                                      device=windows["temporal"].device)
             
             windows = self._normalization(windows=windows, y_idx=y_idx)
 
             (
                 insample_y,
                 insample_mask,
-                _,
-                _,
+                outsample_y, # willa add
+                outsample_mask, # willa add
                 hist_exog,
                 futr_exog,
                 stat_exog,
@@ -671,14 +662,14 @@ class BaseFlex(BaseModel):
             )  # [Ws, S]
 
             output = self.model_output(windows_batch)
-            
+
             y_hat = self._get_predictions(
                         batch=batch,
                         insample_y=insample_y,
                         output_batch=output,
                         y_idx=batch["y_idx"],
                         )
-            #print(y_hat[0])
+
             if self.loss.is_distribution_output:
                 y_hat = y_hat[:, :, 0]
                 output_stack = torch.stack(output, dim=-1)
@@ -691,25 +682,14 @@ class BaseFlex(BaseModel):
                     output_horizon = torch.unbind(output_horizon, dim=-1)
                 else:
                     output_horizon = previous_preds[:, : self.h]
-                windows_h = self._create_windows(batch, window_size=window_size, 
-                                                 step="val", w_idxs=w_idxs)
-                original_outsample_y = torch.clone(windows_h["temporal"][:, -self.h :, y_idx])
+                
                 # binning creates classes
                 if self.tokenizer_type=='bins':
+                    original_outsample_y = outsample_y
                     original_outsample_y = original_outsample_y.unsqueeze(1)
                     original_outsample_y = self.tokenizer.output_transform(original_outsample_y)
                     original_outsample_y = original_outsample_y.squeeze(1).squeeze(-1)
 
-                (
-                insample_y,
-                insample_mask,
-                _,
-                outsample_mask,
-                hist_exog,
-                futr_exog,
-                stat_exog,
-                ) = self._parse_windows(batch, windows_h)
-                
                 valid_loss_batch = self._compute_valid_loss(
                     outsample_y=original_outsample_y,
                     output=output_horizon,
@@ -726,6 +706,8 @@ class BaseFlex(BaseModel):
         batch_sizes = torch.tensor(batch_sizes, device=valid_loss.device)
         batch_size = torch.sum(batch_sizes)
         valid_loss = torch.sum(valid_loss * batch_sizes) / batch_size
+        
+        print(valid_loss)
 
         if torch.isnan(valid_loss):
             raise Exception("Loss is NaN, training stopped.")
@@ -891,9 +873,11 @@ class BaseFlex(BaseModel):
 
         y_hat = torch.cat(y_hats, dim=0)
         if self.tokenizer_type=='bins':
-            print('before_unbin', y_hat)
             y_hat = self.tokenizer.unbin(y_hat)
-            print('final', y_hat)
+            y_hat, _, _ = self._inv_normalization(
+                    y_hat=y_hat,
+                    y_idx=y_idx,
+                    )
 
         return y_hat
 
@@ -1017,24 +1001,13 @@ class BaseFlex(BaseModel):
         # Move from model code
         insample_y = windows_batch["insample_y"]
         x = insample_y.unsqueeze(-1)  # [Ws,L,1]
-        #print('insample_y', x[0])
         x = x.permute(0, 2, 1)  # x: [Batch, 1, input_size]
-        if self.revin:
-            x = x.permute(0, 2, 1)
-            x = self.revin_layer(x, "norm")
-            x = x.permute(0, 2, 1)
+
         # tokenize input
-       # print('revin', x[0])
         z = self.tokenizer.output_transform(x) 
-        #print('tokenize', z[0])
 
         # Model Predictions
         output = self(z)
-
-        if self.revin:
-            output = output.permute(0, 2, 1)
-            output = self.revin_layer(output, "denorm")
-            output = output.permute(0, 2, 1)
 
         output = output.reshape(output.shape[0], self.h, self.c_out)  # x: [Batch, h, c_out]
         output = self.loss.domain_map(output)

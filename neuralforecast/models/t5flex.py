@@ -15,7 +15,6 @@ import torch.nn.functional as F
 from transformers import T5Config, T5EncoderModel, T5Model
 
 from ..common._base_flex import BaseFlex
-from ..common._instance_norm import RevIN
 from ..common._positional_encodings import PositionalEncoding
 from ..common._projections import ProjectionHead 
 from ..common._tokenizers import Tokenizer
@@ -163,10 +162,6 @@ class TSTEncoder(nn.Module):  # i means channel-independent
             self.decoder = transformer_backbone.get_decoder() 
             self.W_pos_encoder = PositionalEncoding(pe=pe).output(learn_pe, token_num-1, hidden_size)
             self.W_pos_decoder = PositionalEncoding(pe=pe).output(learn_pe, 1, hidden_size)           
-
-        for layer_idx, layer in enumerate(self.encoder.block):
-            if layer_idx==0:
-                layer.layer[0].SelfAttention = CustomT5Attention(model_config, pe=pe)
         
         if config["enable_gradient_checkpointing"]==True:
             transformer_backbone.gradient_checkpointing_enable()
@@ -200,7 +195,12 @@ class TSTEncoder(nn.Module):  # i means channel-independent
         
         # Decoder
         if self.decoder:
-            causal_attn_mask = torch.tril(torch.ones(xd.shape[0], xd.shape[3], dtype=torch.long, device=x.device))
+            causal_attn_mask = torch.tril(torch.ones(xd.shape[0], 
+                                                     xd.shape[3], 
+                                                     dtype=torch.long, 
+                                                     device=x.device
+                                                    )
+                                         )
             xd = xd.permute(0, 1, 3, 2)  # x: [bs x nvars x patch_num x patch_len]
             xd = self.W_P(xd)  # x: [bs x nvars x patch_num x hidden_size]
             ud = torch.reshape(
@@ -211,7 +211,7 @@ class TSTEncoder(nn.Module):  # i means channel-independent
             z = self.decoder(
                 attention_mask=causal_attn_mask,
                 inputs_embeds=ud,
-                encoder_hidden_states=z.hidden_states,
+                encoder_hidden_states=z.last_hidden_state, #output of the last layer of the model
                 encoder_attention_mask=attn_mask,
                 )
 
@@ -251,9 +251,6 @@ class T5Flex(BaseFlex):
     `attn_dropout`: float=0.1, dropout rate for attention layer.<br>
     `patch_len`: int=32, length of patch. Note: patch_len = min(patch_len, input_size + stride).<br>
     `stride`: int=16, stride of patch.<br>
-    `revin`: bool=True, bool to use RevIn.<br>
-    `revin_affine`: bool=False, bool to use affine in RevIn.<br>
-    `revin_substract_last`: bool=False, bool to use substract last in RevIn.<br>
     `activation`: str='ReLU', activation from ['gelu','relu'].<br>
     `learn_pos_embedding`: bool=True, bool to learn positional embedding.<br>
     `loss`: PyTorch module, instantiated train loss class from [losses collection](https://nixtla.github.io/neuralforecast/losses.pytorch.html).<br>
@@ -311,9 +308,6 @@ class T5Flex(BaseFlex):
         output_token_len: int = 16,
         lag: int=1,
         stride: int = 8,
-        revin: bool = True,
-        revin_affine: bool = False,
-        revin_subtract_last: bool = True,
         activation: str = "gated-gelu",
         key_padding_mask: str = "auto",
         batch_normalization: bool = False,
@@ -377,9 +371,6 @@ class T5Flex(BaseFlex):
             optimizer_kwargs=optimizer_kwargs,
             lr_scheduler=lr_scheduler,
             lr_scheduler_kwargs=lr_scheduler_kwargs,
-            revin=revin,
-            revin_affine=revin_affine,
-            revin_subtract_last=revin_subtract_last,
             tokenizer_type=tokenizer_type,
             lag=lag, 
             padding_patch=padding_patch,
@@ -400,8 +391,6 @@ class T5Flex(BaseFlex):
             output_token_len = min(h, output_token_len)
             
         elif tokenizer_type == 'bins':
-            assert revin==False, \
-                f"Assertion failed: revin={revin}, expected False"
             assert input_token_len==1, \
                 f"Assertion failed: input_token_len={input_token_len}, expected 1"
             assert stride==1, \

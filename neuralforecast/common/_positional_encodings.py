@@ -121,7 +121,6 @@ class PositionalEncoding():
             W_pos = torch.empty((q_len, hidden_size))
             nn.init.uniform_(W_pos, -0.02, 0.02)
         elif self.pe == "relative":
-            print('ye')
             W_pos = torch.empty((q_len, hidden_size))
             nn.init.uniform_(W_pos, -0.02, 0.02)
         else:

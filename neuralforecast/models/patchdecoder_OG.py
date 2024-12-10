@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..common._base_patch import BasePatch
-from ..common._instance_norm import RevIN
+from ..common._modules import RevIN
 from ..common._positional_encodings import PositionalEncoding
 from ..common._projections import ProjectionHead 
 

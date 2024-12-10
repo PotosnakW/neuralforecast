@@ -5,11 +5,9 @@ import torch.nn as nn
 class Tokenizer():
     def __init__(self, tokenizer_type, token_len, stride, 
                  token_num, lag=None, padding_patch=None,
-                # low_limit=-15.0, high_limit=15.0, n_bins=4094):
-                 #low_limit=100.0, high_limit=560.0, 
-                 low_limit=100.0, high_limit=650.0, 
-                 #low_limit=-1.5, high_limit=2.0, 
-                 n_bins=10, #4094
+                 low_limit=-5.0, high_limit=5.0, 
+                 #low_limit=-2, high_limit=2, 
+                 n_bins=10, n_special_tokens=0, #4094
                 ):
         # B = 4094 used in Chronos paper
         # bin centers c1 < . . . < cB on the real line where c1 = -15.0 and cB = 15.0
@@ -22,12 +20,17 @@ class Tokenizer():
         self.padding_patch = padding_patch
         self.low_limit = low_limit
         self.high_limit = high_limit
+        self.n_bins = n_bins
+        self.n_special_tokens = n_special_tokens
         
         if padding_patch=="end":
             self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
             
-        self.centers = torch.linspace(low_limit, high_limit, 
-                                      n_bins - 1)  # Exclude special tokens
+        self.centers = torch.linspace(
+            low_limit,
+            high_limit,
+            n_bins - n_special_tokens - 1,
+        )
         self.boundaries = torch.cat(
             (
                 torch.tensor([-float("inf")]), 
@@ -111,9 +114,11 @@ class Tokenizer():
         batch_size, nvars, seq_len = z.shape
         flattened_z = z.view(-1, seq_len)
 
-        # Bin data into categories
         self.boundaries = self.boundaries.to(flattened_z.device)
-        token_ids = torch.bucketize(flattened_z, self.boundaries, right=True)
+        token_ids = torch.bucketize(
+                flattened_z, self.boundaries, right=True)
+
+        token_ids.clamp_(0, self.n_bins - 1)
 
         # Reshape back to original dimensions
         token_ids = token_ids.view(batch_size, nvars, seq_len)
@@ -136,13 +141,14 @@ class Tokenizer():
         """
          # Remove special tokens offset
         self.centers = self.centers.to(token_ids.device)
-        token_ids = token_ids.clamp(0, len(self.centers) - 1)  # Ensure indices are valid
-        token_ids = token_ids.long()
+        indices = torch.clamp(
+            token_ids - self.n_special_tokens - 1,
+            min=0,
+            max=len(self.centers) - 1,
+        )
+        indices = indices.long()
 
-        # Map token IDs back to bin centers
-        unbinned = self.centers[token_ids]
-
-        return unbinned
+        return self.centers[indices]
     
     def output_transform(self, z):
         if self.tokenizer_type == 'lags':

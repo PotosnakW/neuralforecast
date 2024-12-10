@@ -4,81 +4,53 @@ from transformers import T5Config
 from transformers.models.t5.modeling_t5 import T5Attention, T5Stack, T5Block, T5LayerNorm, T5LayerSelfAttention, T5LayerCrossAttention, T5LayerFF
 from typing import Optional
 from ._positional_encodings import PositionalEncoding
-        
 
-class blahT5Block(T5Block):
-    def __init__(self, config, has_relative_attention_bias=False, layer_idx: Optional[int] = None):
-        super().__init__()
-        self.is_decoder = config.is_decoder
-        self.layer = nn.ModuleList()
-        self.layer.append(
-            T5LayerSelfAttention(config, has_relative_attention_bias=has_relative_attention_bias, layer_idx=layer_idx)
+     
+class CustomT5LayerSelfAttention(T5LayerSelfAttention):
+    def __init__(self, config, pe, has_relative_attention_bias=False, layer_idx: Optional[int] = None):
+        super().__init__(config, has_relative_attention_bias, layer_idx)
+        self.SelfAttention = CustomT5Attention(
+           config, pe=pe, has_relative_attention_bias=has_relative_attention_bias, layer_idx=layer_idx, 
         )
-        if self.is_decoder:
-            print('decoderrrrr')
-            self.layer.append(T5LayerCrossAttention(config, layer_idx=layer_idx))
-
-        self.layer.append(T5LayerFF(config))
         
 class CustomT5Stack(T5Stack):
-    def __init__(self, config, embed_tokens=None, pe="zeros"):
+    def __init__(self, config, pe="zeros", embed_tokens=None):
         super().__init__(config, embed_tokens)
 
-        self.embed_tokens = embed_tokens
-        self.is_decoder = config.is_decoder
-
-        # Override the block to ensure has_relative_attention_bias=False
-        if pe=="relative":
-            self.block = nn.ModuleList(
-                [blahT5Block(config, has_relative_attention_bias=bool(i == 0), layer_idx=i) for i in range(config.num_layers)]
-            )
+        # Modify the blocks based on the 'pe' parameter
+        if pe == "relative":
+            for i, block in enumerate(self.block):
+                block.layer[0] = CustomT5LayerSelfAttention(
+                    config, pe=pe, has_relative_attention_bias=bool(i == 0), layer_idx=i,
+                )
+        if pe == "rope":
+            for i, block in enumerate(self.block):
+                if i == 0:  # Apply RoPE only for the first layer
+                    block.layer[0] = CustomT5LayerSelfAttention(
+                        config, pe="rope", has_relative_attention_bias=False, layer_idx=i
+                    )
+                else:  # For other layers, use default or other configurations
+                    block.layer[0] = T5LayerSelfAttention(
+                        config, has_relative_attention_bias=False, layer_idx=i
+                    )
         else:
-            self.block = nn.ModuleList(
-            [T5Block(config, has_relative_attention_bias=False, layer_idx=i) for i in range(config.num_layers)]
-            )
-        
-        self.final_layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
-        self.dropout = nn.Dropout(config.dropout_rate)
+            for i, block in enumerate(self.block):
+                block.layer[0] = CustomT5LayerSelfAttention(
+                    config, pe=pe, has_relative_attention_bias=False, layer_idx=i,
+                )
 
-        # Initialize weights and apply final processing
-        self.post_init()
-        # Model parallel
-        self.model_parallel = False
-        self.device_map = None
-        self.gradient_checkpointing = False
-
-class CustomT5Attention(nn.Module):
+class CustomT5Attention(T5Attention):
     def __init__(
         self,
         config: T5Config,
+        pe='zeros',  # Added option for RoPE
         has_relative_attention_bias=False,
         layer_idx: Optional[int] = None,
-        pe='zeros',  # Added option for RoPE
     ):
-        super().__init__()
-        self.is_decoder = config.is_decoder
-        self.has_relative_attention_bias = has_relative_attention_bias
-        self.relative_attention_num_buckets = config.relative_attention_num_buckets
-        self.relative_attention_max_distance = config.relative_attention_max_distance
-        self.d_model = config.d_model
-        self.key_value_proj_dim = config.d_kv
-        self.n_heads = config.num_heads
-        self.dropout = config.dropout_rate
-        self.inner_dim = self.n_heads * self.key_value_proj_dim
-        self.layer_idx = layer_idx
+        super().__init__(config, has_relative_attention_bias, layer_idx)
+        
         self.pe = pe  # RoPE flag
-
-        # Linear projections
-        self.q = nn.Linear(self.d_model, self.inner_dim, bias=False)
-        self.k = nn.Linear(self.d_model, self.inner_dim, bias=False)
-        self.v = nn.Linear(self.d_model, self.inner_dim, bias=False)
-        self.o = nn.Linear(self.inner_dim, self.d_model, bias=False)
-
-        # Relative position embeddings
-        if self.has_relative_attention_bias:
-            self.relative_attention_bias = nn.Embedding(self.relative_attention_num_buckets, self.n_heads)
-        self.pruned_heads = set()
-        self.gradient_checkpointing = False
+        print('has_relative_attention_bias:', has_relative_attention_bias)
 
     def forward(
         self,
@@ -98,6 +70,7 @@ class CustomT5Attention(nn.Module):
         """
         # Input is (batch_size, seq_length, dim)
         # Mask is (batch_size, 1, 1, key_length) (non-causal encoder) or (batch_size, 1, seq_length, key_length) (causal decoder)
+
         batch_size, seq_length = hidden_states.shape[:2]
 
         # if key_value_states are provided this layer is used as a cross-attention layer for the decoder
