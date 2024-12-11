@@ -23,6 +23,51 @@ from ..common._t5_utils import CustomT5Stack, CustomT5Attention
 from ..losses.pytorch import MAE
 
 
+# %% ../../nbs/models.tsmixer.ipynb 8
+class TemporalMixing(nn.Module):
+    """
+    TemporalMixing
+    """
+
+    def __init__(self, n_series, input_size, dropout):
+        super().__init__()
+        self.temporal_norm = nn.BatchNorm1d(
+            num_features=n_series * input_size, eps=0.001, momentum=0.01
+        )
+        self.temporal_lin = nn.Linear(input_size, input_size)
+        self.temporal_drop = nn.Dropout(dropout)
+
+    def forward(self, input):
+        # Get shapes
+        batch_size = input.shape[0]
+        input_size = input.shape[2]
+        n_series = input.shape[1]
+
+        # Temporal MLP
+        x = input.reshape(batch_size, -1)  # [B, N, L] -> [B, N * L]
+        x = self.temporal_norm(x)  # [B, N * L] -> [B, N * L]
+        x = x.reshape(batch_size, n_series, input_size)  # [B, N * L] -> [B, N, L]
+        x = F.relu(self.temporal_lin(x))  # [B, N, L] -> [B, N, L]
+        x = self.temporal_drop(x)  #[B, N, L] -> [B, N, L]
+
+        return x + input
+    
+class MixingLayer(nn.Module):
+    """
+    MixingLayer
+    """
+
+    def __init__(self, n_series, input_size, dropout, ff_dim=None):
+        super().__init__()
+        # Mixing layer consists of a temporal and feature mixer
+        self.temporal_mixer = TemporalMixing(n_series, input_size, dropout)
+       # self.feature_mixer = FeatureMixing(n_series, input_size, dropout, ff_dim)
+
+    def forward(self, input):
+        x = self.temporal_mixer(input)
+        #x = self.feature_mixer(x)
+        return x
+
 # %% ../../nbs/models.patchtst.ipynb 15
 class TSTbackbone(nn.Module):
     """
@@ -49,6 +94,7 @@ class TSTbackbone(nn.Module):
         head_dropout=0,
         padding_patch=None,
         head_type="flatten",
+        backbone_type="T5",
         individual=False,
         subtract_last=False,
     ):
@@ -61,17 +107,28 @@ class TSTbackbone(nn.Module):
             token_num += 1
 
         # Backbone
-        self.backbone = TSTEncoder(
-            config,
-            c_in,
-            hidden_size,
-            token_num=token_num,
-            token_len=input_token_len,
-            key_padding_mask=key_padding_mask,
-            attn_mask=attn_mask,
-            pe=pe,
-            learn_pe=learn_pe,
-        )
+        if backbone_type=='T5':
+            self.backbone = T5backbone(
+                config,
+                hidden_size,
+                token_num=token_num,
+                token_len=input_token_len,
+                key_padding_mask=key_padding_mask,
+                attn_mask=attn_mask,
+                pe=pe,
+                learn_pe=learn_pe,
+            )
+        elif backbone_type=='tsmixer':
+            self.backbone = TSMixerbackbone(
+                config,
+                hidden_size,
+                token_num=token_num,
+                token_len=input_token_len,
+                key_padding_mask=key_padding_mask,
+                attn_mask=attn_mask,
+                pe=pe,
+                learn_pe=learn_pe,
+            )
 
         #Head
         if config['num_decoder_layers'] > 0:
@@ -111,7 +168,7 @@ class TSTbackbone(nn.Module):
         #return z, embeddings # WILLA ADDED THIS
 
 
-class TSTEncoder(nn.Module):  # i means channel-independent
+class T5backbone(nn.Module):  # i means channel-independent
     """
     TSTEncoder
     """
@@ -119,7 +176,6 @@ class TSTEncoder(nn.Module):  # i means channel-independent
     def __init__(
         self,
         config,
-        c_in,
         hidden_size,
         token_num,
         token_len,
@@ -223,6 +279,50 @@ class TSTEncoder(nn.Module):  # i means channel-independent
 
         return z
 
+class TSMixerbackbone(nn.Module):  # i means channel-independent
+
+    def __init__(
+        self,
+        config,
+        hidden_size,
+        token_num,
+        token_len,
+        attn_dropout=0.0,
+        dropout=0.0,
+        act="gelu",
+        key_padding_mask="auto",
+        attn_mask="bidirectional",
+        pe="zeros",
+        learn_pe=True,
+    ):
+
+        super().__init__()
+        
+        # Mixing layers
+        mixing_layers = [
+            MixingLayer(
+                n_series=token_num, input_size=hidden_size, dropout=dropout, #ff_dim=ff_dim
+            )
+            for _ in range(config['num_layers']) #--> change to block
+        ]
+        self.mixing_layers = nn.Sequential(*mixing_layers)
+        
+        # Input encoding
+        self.W_P = nn.Linear(
+            token_len, hidden_size
+        )  # Eq 1: projection of feature vectors onto a d-dim vector space
+        
+    def forward(self, x) -> torch.Tensor:
+        x = x.permute(0, 1, 3, 2)  # x: [bs x nvars x patch_num x patch_len]
+        x = self.W_P(x)  # x: [bs x nvars x patch_num x hidden_size]
+        u = torch.reshape(
+            x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3])
+        )  # u: [bs * nvars x patch_num x hidden_size]
+
+        z = self.mixing_layers(u)
+        z = z.unsqueeze(1)
+
+        return z
 
 # %% ../../nbs/models.patchtst.ipynb 17
 class T5Flex(BaseFlex):
@@ -338,6 +438,7 @@ class T5Flex(BaseFlex):
         tokenizer_type = 'patch_fixed_length',
         attn_mask: str = "bidirectional",
         head_type: str = "flatten", 
+        backbone_type: str = "T5",
         **trainer_kwargs
     ):
         super(T5Flex, self).__init__(
@@ -437,6 +538,7 @@ class T5Flex(BaseFlex):
             head_dropout=head_dropout,
             padding_patch=padding_patch,
             head_type=head_type,
+            backbone_type=backbone_type,
         )
 
     def forward(self, x):  # x: [batch, input_size]
