@@ -35,7 +35,7 @@ class BaseFlex(BaseModel):
         input_token_len,
         output_token_len,
         stride,
-        input_size,
+        context_len,
         loss,
         valid_loss,
         learning_rate,
@@ -89,10 +89,10 @@ class BaseFlex(BaseModel):
         if tokenizer_type=='patch_fixed_length':
             input_token_len = torch.minimum(
                                     torch.tensor(input_token_len), 
-                                    torch.tensor(input_size + stride)
+                                    torch.tensor(context_len + stride)
                                     )
         if tokenizer_type=='lags':
-            input_size=input_size*lag
+            context_len*=lag
         
         self.input_token_len = input_token_len
         self.output_token_len = torch.minimum(
@@ -103,12 +103,12 @@ class BaseFlex(BaseModel):
         self.c_out = self.loss.outputsize_multiplier
 
         self.h = h
-        self.input_size = input_size
+        self.context_len = context_len
         self.windows_batch_size = windows_batch_size
         self.start_padding_enabled = start_padding_enabled
         if start_padding_enabled:
             self.padder_train = nn.ConstantPad1d(
-                padding=(self.input_size - 1, self.h), value=0
+                padding=(self.context_len - 1, self.h), value=0
             )
         else:
             #self.padder_train = nn.ConstantPad1d(padding=(0, self.h), value=0)
@@ -161,7 +161,7 @@ class BaseFlex(BaseModel):
         self.validation_step_outputs = []
         self.alias = alias
         
-        token_num = int((input_size - input_token_len) / stride + 1)
+        token_num = int((context_len - input_token_len) / stride + 1)
 
         self.tokenizer_type = tokenizer_type
         self.tokenizer = Tokenizer(tokenizer_type,
@@ -199,11 +199,11 @@ class BaseFlex(BaseModel):
 
             # Sample and Available conditions
             available_idx = temporal_cols.get_loc("available_mask")
-            available_condition = windows[:, : self.input_size, available_idx]
+            available_condition = windows[:, : self.context_len, available_idx]
             available_condition = torch.sum(available_condition, axis=1)
             final_condition = available_condition > 0
             if self.h > 0:
-                sample_condition = windows[:, self.input_size :, available_idx]
+                sample_condition = windows[:, self.context_len :, available_idx]
                 sample_condition = torch.sum(sample_condition, axis=1)
                 final_condition = (sample_condition > 0) & (available_condition > 0)
             windows = windows[final_condition]
@@ -250,19 +250,19 @@ class BaseFlex(BaseModel):
             if step == "predict":
                 initial_input = temporal.shape[-1] - self.test_size
                 if (
-                    initial_input <= self.input_size
+                    initial_input <= self.context_len
                 ):  # There is not enough data to predict first timestamp
                     padder_left = nn.ConstantPad1d(
-                        padding=(self.input_size - initial_input, 0), value=0
+                        padding=(self.context_len - initial_input, 0), value=0
                     )
                     temporal = padder_left(temporal)
                 predict_step_size = self.predict_step_size
-                cutoff = -self.input_size - self.test_size
+                cutoff = -self.context_len - self.test_size
                 temporal = temporal[:, :, cutoff:]
 
             elif step == "val":
                 predict_step_size = self.step_size
-                cutoff = -self.input_size - self.val_size - self.test_size
+                cutoff = -self.context_len - self.val_size - self.test_size
                 if self.test_size > 0:
                     temporal = batch["temporal"][:, :, cutoff : -self.test_size]
                 else:
@@ -270,7 +270,7 @@ class BaseFlex(BaseModel):
                 if temporal.shape[-1] < window_size:
                     initial_input = temporal.shape[-1] - self.val_size
                     padder_left = nn.ConstantPad1d(
-                        padding=(self.input_size - initial_input, 0), value=0
+                        padding=(self.context_len - initial_input, 0), value=0
                     )
                     temporal = padder_left(temporal) 
 
@@ -387,8 +387,8 @@ class BaseFlex(BaseModel):
         y_idx = batch["y_idx"]
         mask_idx = batch["temporal_cols"].get_loc("available_mask")
 
-        insample_y = windows["temporal"][:, : self.input_size, y_idx]
-        insample_mask = windows["temporal"][:, : self.input_size, mask_idx]
+        insample_y = windows["temporal"][:, : self.context_len, y_idx]
+        insample_mask = windows["temporal"][:, : self.context_len, mask_idx]
 
         # Declare additional information
         outsample_y = None
@@ -398,14 +398,14 @@ class BaseFlex(BaseModel):
         stat_exog = None
 
         if self.h > 0:
-            outsample_y = windows["temporal"][:, self.input_size :, y_idx]
-            outsample_mask = windows["temporal"][:, self.input_size :, mask_idx]
+            outsample_y = windows["temporal"][:, self.context_len :, y_idx]
+            outsample_mask = windows["temporal"][:, self.context_len :, mask_idx]
 
         if len(self.hist_exog_list):
             hist_exog_idx = get_indexer_raise_missing(
                 windows["temporal_cols"], self.hist_exog_list
             )
-            hist_exog = windows["temporal"][:, : self.input_size, hist_exog_idx]
+            hist_exog = windows["temporal"][:, : self.context_len, hist_exog_idx]
 
         if len(self.futr_exog_list):
             futr_exog_idx = get_indexer_raise_missing(
@@ -435,7 +435,7 @@ class BaseFlex(BaseModel):
 
     def training_step(self, batch, batch_idx):
         # Create and normalize windows [Ws, L+H, C]
-        window_size = self.input_size + self.output_token_len
+        window_size = self.context_len + self.output_token_len
         windows = self._create_windows(batch, window_size=window_size, step="train")
         y_idx = batch["y_idx"]
         #original_outsample_y = torch.clone(windows["temporal"][:, -self.h :, y_idx])
@@ -547,8 +547,8 @@ class BaseFlex(BaseModel):
         if self.val_size == 0:
             return np.nan
 
-        # using window_size = self.input_size + self.token_len is given error when identifying windows with w_idxs
-        window_size = self.input_size + self.h
+        # using window_size = self.context_len + self.token_len is given error when identifying windows with w_idxs
+        window_size = self.context_len + self.h
 
         # TODO: Hack to compute number of windows
         windows = self._create_windows(batch, window_size=window_size, step="val")
@@ -725,7 +725,7 @@ class BaseFlex(BaseModel):
 
     def predict_step(self, batch, batch_idx):
 
-        window_size = self.input_size + self.h
+        window_size = self.context_len + self.h
 
        # TODO: Hack to compute number of windows
         windows = self._create_windows(batch, window_size=window_size, step="predict")
@@ -1001,7 +1001,7 @@ class BaseFlex(BaseModel):
         # Move from model code
         insample_y = windows_batch["insample_y"]
         x = insample_y.unsqueeze(-1)  # [Ws,L,1]
-        x = x.permute(0, 2, 1)  # x: [Batch, 1, input_size]
+        x = x.permute(0, 2, 1)  # x: [Batch, 1, context_len]
 
         # tokenize input
         z = self.tokenizer.output_transform(x) 

@@ -12,61 +12,15 @@ import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import T5Config, T5EncoderModel, T5Model
 
 from ..common._base_flex import BaseFlex
-from ..common._positional_encodings import PositionalEncoding
 from ..common._projections import ProjectionHead 
 from ..common._tokenizers import Tokenizer
-from ..common._t5_utils import CustomT5Stack, CustomT5Attention
+from ..common._T5backbone import T5backbone
+from ..common._TTMbackbone import TTMbackbone
 
 from ..losses.pytorch import MAE
 
-
-# %% ../../nbs/models.tsmixer.ipynb 8
-class TemporalMixing(nn.Module):
-    """
-    TemporalMixing
-    """
-
-    def __init__(self, n_series, input_size, dropout):
-        super().__init__()
-        self.temporal_norm = nn.BatchNorm1d(
-            num_features=n_series * input_size, eps=0.001, momentum=0.01
-        )
-        self.temporal_lin = nn.Linear(input_size, input_size)
-        self.temporal_drop = nn.Dropout(dropout)
-
-    def forward(self, input):
-        # Get shapes
-        batch_size = input.shape[0]
-        input_size = input.shape[2]
-        n_series = input.shape[1]
-
-        # Temporal MLP
-        x = input.reshape(batch_size, -1)  # [B, N, L] -> [B, N * L]
-        x = self.temporal_norm(x)  # [B, N * L] -> [B, N * L]
-        x = x.reshape(batch_size, n_series, input_size)  # [B, N * L] -> [B, N, L]
-        x = F.relu(self.temporal_lin(x))  # [B, N, L] -> [B, N, L]
-        x = self.temporal_drop(x)  #[B, N, L] -> [B, N, L]
-
-        return x + input
-    
-class MixingLayer(nn.Module):
-    """
-    MixingLayer
-    """
-
-    def __init__(self, n_series, input_size, dropout, ff_dim=None):
-        super().__init__()
-        # Mixing layer consists of a temporal and feature mixer
-        self.temporal_mixer = TemporalMixing(n_series, input_size, dropout)
-       # self.feature_mixer = FeatureMixing(n_series, input_size, dropout, ff_dim)
-
-    def forward(self, input):
-        x = self.temporal_mixer(input)
-        #x = self.feature_mixer(x)
-        return x
 
 # %% ../../nbs/models.patchtst.ipynb 15
 class TSTbackbone(nn.Module):
@@ -79,7 +33,7 @@ class TSTbackbone(nn.Module):
         config: dict,
         c_in: int,
         c_out: int,
-        input_size: int,
+        context_len: int,
         h: int,
         input_token_len: int,
         output_token_len: int,
@@ -96,50 +50,32 @@ class TSTbackbone(nn.Module):
         head_type="flatten",
         backbone_type="T5",
         individual=False,
-        subtract_last=False,
     ):
 
         super().__init__()
 
         # Patching
-        token_num = int((input_size - input_token_len) / stride + 1)
+        token_num = int((context_len - input_token_len) / stride + 1)
         if padding_patch == "end":  # can be modified to general case
             token_num += 1
+        config['token_num'] = token_num
 
         # Backbone
         if backbone_type=='T5':
             self.backbone = T5backbone(
                 config,
-                hidden_size,
-                token_num=token_num,
-                token_len=input_token_len,
-                key_padding_mask=key_padding_mask,
-                attn_mask=attn_mask,
-                pe=pe,
-                learn_pe=learn_pe,
             )
         elif backbone_type=='tsmixer':
-            self.backbone = TSMixerbackbone(
-                config,
-                hidden_size,
-                token_num=token_num,
-                token_len=input_token_len,
-                key_padding_mask=key_padding_mask,
-                attn_mask=attn_mask,
-                pe=pe,
-                learn_pe=learn_pe,
+            self.backbone = TTMbackbone(
+                config
             )
 
-        #Head
-        if config['num_decoder_layers'] > 0:
-            self.head_nf = hidden_size * 1
-        else:
-            self.head_nf = hidden_size * token_num
+        self.head_nf = hidden_size * token_num
         self.n_vars = c_in
         self.c_out = c_out
         self.head_type = head_type
         self.individual = individual
-        
+
         proj_hd = ProjectionHead(
             self.individual,
             self.n_vars,
@@ -158,7 +94,6 @@ class TSTbackbone(nn.Module):
 
     def forward(self, z):  # z: [bs x nvars x seq_len]
         z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x patch_len x patch_num]
-
         # model
         z = self.backbone(z)  # z: [bs x nvars x hidden_size x patch_num]
         #embeddings = z.clone() # WILLA ADDED THIS
@@ -166,163 +101,6 @@ class TSTbackbone(nn.Module):
 
         return z
         #return z, embeddings # WILLA ADDED THIS
-
-
-class T5backbone(nn.Module):  # i means channel-independent
-    """
-    TSTEncoder
-    """
-
-    def __init__(
-        self,
-        config,
-        hidden_size,
-        token_num,
-        token_len,
-        attn_dropout=0.0,
-        dropout=0.0,
-        act="gelu",
-        key_padding_mask="auto",
-        attn_mask="bidirectional",
-        pe="zeros",
-        learn_pe=True,
-    ):
-
-        super().__init__()
-
-        self.attn_mask = attn_mask
-
-        # Input encoding
-        self.W_P = nn.Linear(
-            token_len, hidden_size
-        )  # Eq 1: projection of feature vectors onto a d-dim vector space
-
-        self.decoder = None
-        self.W_pos_encoder = PositionalEncoding(pe=pe).output(learn_pe, token_num, hidden_size)
-        
-        # Residual dropout
-        self.dropout = nn.Dropout(dropout)
-
-        # Encoder
-        model_config = T5Config.from_dict(config)
-        transformer_backbone = T5Model(model_config)
-        transformer_backbone.encoder = CustomT5Stack(model_config, pe=pe)
-        self.encoder = transformer_backbone.get_encoder()
-        
-        if model_config.num_decoder_layers > 0:
-            decoder_config = copy.deepcopy(model_config)
-            decoder_config.is_decoder = True
-            #decoder_config.is_encoder_decoder = True
-            decoder_config.num_layers = model_config.num_decoder_layers
-            transformer_backbone.decoder = CustomT5Stack(decoder_config, pe=pe)
-            self.decoder = transformer_backbone.get_decoder() 
-            self.W_pos_encoder = PositionalEncoding(pe=pe).output(learn_pe, token_num-1, hidden_size)
-            self.W_pos_decoder = PositionalEncoding(pe=pe).output(learn_pe, 1, hidden_size)           
-        
-        if config["enable_gradient_checkpointing"]==True:
-            transformer_backbone.gradient_checkpointing_enable()
-
-    def forward(self, x) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
-  
-        n_vars = x.shape[1]
-        if self.decoder:
-            xe = x[:, :, :, :-1].clone()
-            xd = x[:, :, :, -1].clone()
-            xd = xd.unsqueeze(-1)
-        else:
-            xe = x.clone()
-
-        # Mask [bs x token_num]
-        if (self.attn_mask=='bidirectional') & (self.decoder==None):
-            attn_mask = torch.ones(xe.shape[0], xe.shape[3], dtype=torch.long).to(x.device)
-        elif (self.attn_mask=='bidirectional') & (self.decoder!=None):
-            attn_mask = torch.ones(xe.shape[0], xe.shape[3], dtype=torch.long).to(x.device)
-        elif self.attn_mask=='causal':
-            attn_mask = torch.tril(torch.ones(xe.shape[0], xe.shape[3], dtype=torch.long, device=x.device))
-           
-        # Encoder
-        xe = xe.permute(0, 1, 3, 2)  # x: [bs x nvars x patch_num x patch_len]
-        xe = self.W_P(xe)  # x: [bs x nvars x patch_num x hidden_size]
-        ue = torch.reshape(
-            xe, (xe.shape[0] * xe.shape[1], xe.shape[2], xe.shape[3])
-        )  # u: [bs * nvars x patch_num x hidden_size]
-        ue = self.dropout(ue + self.W_pos_encoder)  
-        z = self.encoder(inputs_embeds=ue, attention_mask=attn_mask)
-        
-        # Decoder
-        if self.decoder:
-            causal_attn_mask = torch.tril(torch.ones(xd.shape[0], 
-                                                     xd.shape[3], 
-                                                     dtype=torch.long, 
-                                                     device=x.device
-                                                    )
-                                         )
-            xd = xd.permute(0, 1, 3, 2)  # x: [bs x nvars x patch_num x patch_len]
-            xd = self.W_P(xd)  # x: [bs x nvars x patch_num x hidden_size]
-            ud = torch.reshape(
-                xd, (xd.shape[0] * xd.shape[1], xd.shape[2], xd.shape[3])
-            )  # u: [bs * nvars x patch_num x hidden_size]
-            ud = self.dropout(ud + self.W_pos_decoder)  
-        
-            z = self.decoder(
-                attention_mask=causal_attn_mask,
-                inputs_embeds=ud,
-                encoder_hidden_states=z.last_hidden_state, #output of the last layer of the model
-                encoder_attention_mask=attn_mask,
-                )
-
-        z = z.last_hidden_state
-        z = torch.reshape(
-            z, (-1, n_vars, z.shape[-2], z.shape[-1])
-        )  # z: [bs x nvars x patch_num x hidden_size]
-        z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x hidden_size x patch_num]
-
-        return z
-
-class TSMixerbackbone(nn.Module):  # i means channel-independent
-
-    def __init__(
-        self,
-        config,
-        hidden_size,
-        token_num,
-        token_len,
-        attn_dropout=0.0,
-        dropout=0.0,
-        act="gelu",
-        key_padding_mask="auto",
-        attn_mask="bidirectional",
-        pe="zeros",
-        learn_pe=True,
-    ):
-
-        super().__init__()
-        
-        # Mixing layers
-        mixing_layers = [
-            MixingLayer(
-                n_series=token_num, input_size=hidden_size, dropout=dropout, #ff_dim=ff_dim
-            )
-            for _ in range(config['num_layers']) #--> change to block
-        ]
-        self.mixing_layers = nn.Sequential(*mixing_layers)
-        
-        # Input encoding
-        self.W_P = nn.Linear(
-            token_len, hidden_size
-        )  # Eq 1: projection of feature vectors onto a d-dim vector space
-        
-    def forward(self, x) -> torch.Tensor:
-        x = x.permute(0, 1, 3, 2)  # x: [bs x nvars x patch_num x patch_len]
-        x = self.W_P(x)  # x: [bs x nvars x patch_num x hidden_size]
-        u = torch.reshape(
-            x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3])
-        )  # u: [bs * nvars x patch_num x hidden_size]
-
-        z = self.mixing_layers(u)
-        z = z.unsqueeze(1)
-
-        return z
 
 # %% ../../nbs/models.patchtst.ipynb 17
 class T5Flex(BaseFlex):
@@ -336,7 +114,7 @@ class T5Flex(BaseFlex):
 
     **Parameters:**<br>
     `h`: int, Forecast horizon. <br>
-    `input_size`: int, autorregresive inputs size, y=[1,2,3,4] input_size=2 -> y_[t-2:t]=[1,2].<br>
+    `context_len`: int, autorregresive inputs size, y=[1,2,3,4] input_size=2 -> y_[t-2:t]=[1,2].<br>
     `stat_exog_list`: str list, static exogenous columns.<br>
     `hist_exog_list`: str list, historic exogenous columns.<br>
     `futr_exog_list`: str list, future exogenous columns.<br>
@@ -390,13 +168,13 @@ class T5Flex(BaseFlex):
     def __init__(
         self,
         h,
-        input_size,
+        context_len,
         stat_exog_list=None,
         hist_exog_list=None,
         futr_exog_list=None,
         exclude_insample_y=False,
-        encoder_layers: int = 3,
-        decoder_layers: int = 3,
+        encoder_num_layers: int = 3,
+        decoder_num_layers: int = 0,
         n_heads: int = 16,
         hidden_size: int = 128,
         linear_hidden_size: int = 256,
@@ -443,7 +221,7 @@ class T5Flex(BaseFlex):
     ):
         super(T5Flex, self).__init__(
             h=h,
-            input_size=input_size,
+            context_len=context_len,
             input_token_len=input_token_len, 
             output_token_len=output_token_len, 
             stride=stride,
@@ -488,7 +266,7 @@ class T5Flex(BaseFlex):
                 f"Assertion failed: padding_patch={padding_patch}, expected None"
 
         elif 'patch' in tokenizer_type:
-            input_token_len = min(input_size + stride, input_token_len)
+            input_token_len = min(context_len + stride, input_token_len)
             output_token_len = min(h, output_token_len)
             
         elif tokenizer_type == 'bins':
@@ -500,30 +278,52 @@ class T5Flex(BaseFlex):
                 f"Assertion failed: padding_patch={padding_patch}, expected None"
 
         c_out = self.loss.outputsize_multiplier
-        # Fixed hyperparameters
         c_in = 1  # Always univariate
         individual = False  # Separate heads for each time series
+        if tokenizer_type=='patch_adaptive_len': 
+            adaptive_patching_levels = 2
+        else:
+            adaptive_patching_levels = 0
+
         
-        config={'num_layers': encoder_layers,
-            'num_heads': n_heads,
-            'num_decoder_layers' : decoder_layers,
-            'd_model': hidden_size,
-            'd_kv': hidden_size // n_heads,
-            'd_ff': linear_hidden_size,
-            'dropout_rate': dropout,
-            'feed_forward_proj': activation,
-            #'relative_attention_num_buckets': 32,
-            #'has_relative_attention_bias': False,
-            'enable_gradient_checkpointing': False,
-            'use_cache': False, 
+        # config={'num_layers': encoder_layers,
+        #     'num_heads': n_heads,
+        #     'num_decoder_layers' : decoder_layers,
+        #     'd_model': hidden_size,
+        #     'd_kv': hidden_size // n_heads,
+        #     'd_ff': linear_hidden_size,
+        #     'dropout_rate': dropout,
+        #     'feed_forward_proj': activation,
+        #     #'relative_attention_num_buckets': 32,
+        #     #'has_relative_attention_bias': False,
+        #     'enable_gradient_checkpointing': False,
+        #     'use_cache': False, 
+        #     'is_decoder': False,
+        #     }
+
+        
+        config={'context_len': context_len,
+            'num_layers': encoder_num_layers,
+            'decoder_num_layers': decoder_num_layers,
+            'dropout': dropout,
             'is_decoder': False,
+            'd_model': hidden_size,
+            'decoder_d_model': hidden_size,
+            'expansion_factor': 2, 
+            'c_in': 1,
+            'gated_attn': False, 
+            'self_attn': False,
+            'self_attn_heads': n_heads,
+            'mode': "common_channel",
+            'adaptive_patching_levels': adaptive_patching_levels,
+            'patch_length': input_token_len,
             }
 
         self.model = TSTbackbone(
             config=config,
             c_in=c_in,
             c_out=c_out,
-            input_size=input_size,
+            context_len=context_len,
             h=h,
             input_token_len=input_token_len,
             output_token_len=output_token_len,
