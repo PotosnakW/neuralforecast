@@ -1004,10 +1004,10 @@ class BaseFlex(BaseModel):
         x = x.permute(0, 2, 1)  # x: [Batch, 1, context_len]
 
         # tokenize input
-        z = self.tokenizer.output_transform(x) 
+        x = self.tokenizer.output_transform(x) 
 
         # Model Predictions
-        output = self(z)
+        output = self(x)
 
         output = output.reshape(output.shape[0], self.h, self.c_out)  # x: [Batch, h, c_out]
         output = self.loss.domain_map(output)

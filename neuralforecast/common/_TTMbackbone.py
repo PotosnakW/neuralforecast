@@ -64,7 +64,7 @@ class TTMConfig(PretrainedConfig):
         norm_eps: float = 1e-5,
         adaptive_patching_levels: int = 0,
         # decoder parameters
-        decoder_num_layers: int = 0,
+        num_decoder_layers: int = 0,
         decoder_d_model: int = 128,
         decoder_mode: str = "common_channel",
         self_attn: bool = False,
@@ -85,7 +85,7 @@ class TTMConfig(PretrainedConfig):
         self.norm_eps = norm_eps
         self.adaptive_patching_levels = adaptive_patching_levels
         # decoder params
-        self.decoder_num_layers = decoder_num_layers
+        self.num_decoder_layers = num_decoder_layers
         self.decoder_d_model = decoder_d_model
         self.decoder_adaptive_patching_levels = adaptive_patching_levels
         self.decoder_mode = decoder_mode
@@ -579,9 +579,9 @@ class TTMbackbone(nn.Module):
         
         self.encoder = TinyTimeMixerBlock(config=config)
 
-        if config.decoder_num_layers > 0: 
+        if config.num_decoder_layers > 0: 
             decoder_config = copy.deepcopy(config)
-            decoder_config.num_layers = config.decoder_num_layers
+            decoder_config.num_layers = config.num_decoder_layers
             decoder_config.d_model = config.decoder_d_model
             decoder_config.adaptive_patching_levels = config.decoder_adaptive_patching_levels
             decoder_config.mode = config.decoder_mode
@@ -596,7 +596,8 @@ class TTMbackbone(nn.Module):
 
     def forward(
         self,
-        x: torch.Tensor,
+        xe: torch.Tensor, #encoder input
+        xd: torch. Tensor, # decoder output
         output_hidden_states: Optional[bool] = False,
     ) -> Union[Tuple, TinyTimeMixerEncoderOutput]:
         r"""
@@ -635,7 +636,5 @@ class TTMbackbone(nn.Module):
                 hidden_state=decoder_input, 
                 output_hidden_states=output_hidden_states
                 )  # bs x nvars+n_cat x n_patches x d_model
-
-        z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x hidden_size x patch_num]
 
         return z

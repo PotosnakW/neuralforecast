@@ -15,7 +15,6 @@ import torch.nn.functional as F
 
 from ..common._base_flex import BaseFlex
 from ..common._projections import ProjectionHead 
-from ..common._tokenizers import Tokenizer
 from ..common._T5backbone import T5backbone
 from ..common._TTMbackbone import TTMbackbone
 
@@ -44,7 +43,6 @@ class TSTbackbone(nn.Module):
         attn_mask: str = "bidirectional",
         pe: str = "zeros",
         learn_pe: bool = True,
-        fc_dropout: float = 0.0,
         head_dropout=0,
         padding_patch=None,
         head_type="flatten",
@@ -92,11 +90,24 @@ class TSTbackbone(nn.Module):
             proj_hd.residual_network()  # Initialize layers in ProjectionHead
             self.head = proj_hd
 
-    def forward(self, z):  # z: [bs x nvars x seq_len]
-        z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x patch_len x patch_num]
+    def forward(self, x):  
+        #z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x patch_len x patch_num]
+        
+        n_vars = x.shape[1]
+        if self.decoder:
+            xe = x[:, :, :-1, :].clone()
+            xd = x[:, :, -1, :].clone()
+            xd = self.W_P(xd)  # x: [bs x nvars x patch_num x hidden_size]
+        else:
+            xe = x.clone()
+            xd = None
+
+        xe = self.W_P(xe)  # x: [bs x nvars x patch_num x hidden_size]
+        
         # model
-        z = self.backbone(z)  # z: [bs x nvars x hidden_size x patch_num]
+        z = self.backbone(xe, xd)  # z: [bs x nvars x patch_num x hidden_size]
         #embeddings = z.clone() # WILLA ADDED THIS
+        z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x hidden_size x patch_num]
         z = self.head(z)  # z: [bs x nvars x h]
 
         return z
@@ -124,7 +135,6 @@ class T5Flex(BaseFlex):
     `hidden_size`: int=128, units of embeddings and encoders.<br>
     `linear_hidden_size`: int=256, units of linear layer.<br>
     `dropout`: float=0.1, dropout rate for residual connection.<br>
-    `fc_dropout`: float=0.1, dropout rate for linear layer.<br>
     `head_dropout`: float=0.1, dropout rate for Flatten head layer.<br>
     `attn_dropout`: float=0.1, dropout rate for attention layer.<br>
     `patch_len`: int=32, length of patch. Note: patch_len = min(patch_len, input_size + stride).<br>
@@ -173,15 +183,14 @@ class T5Flex(BaseFlex):
         hist_exog_list=None,
         futr_exog_list=None,
         exclude_insample_y=False,
-        encoder_num_layers: int = 3,
-        decoder_num_layers: int = 0,
-        n_heads: int = 16,
+        num_layers: int = 3,
+        num_decoder_layers: int = 0,
+        num_heads: int = 16,
         d_model: int = 128,
-        linear_hidden_size: int = 256,
-        dropout: float = 0.2,
-        fc_dropout: float = 0.2,
+        d_ff: int = 256,
+        dropout: float = 0.1,
+        dropout_rate: float = 0.1, ##attn_dropout
         head_dropout: float = 0.0,
-        attn_dropout: float = 0.0,
         input_token_len: int = 16,
         output_token_len: int = 16,
         lag: int=1,
@@ -213,6 +222,7 @@ class T5Flex(BaseFlex):
         lr_scheduler=None,
         lr_scheduler_kwargs=None,
         pe: str = "zeros", 
+        learn_pe: bool = True,
         tokenizer_type = 'patch_fixed_length',
         attn_mask: str = "bidirectional",
         head_type: str = "flatten", 
@@ -283,23 +293,13 @@ class T5Flex(BaseFlex):
         if tokenizer_type!='patch_adaptive_len': 
             adaptive_patching_levels = 0
 
-        
-        # config={'num_layers': encoder_layers,
-        #     'num_heads': n_heads,
-        #     'num_decoder_layers' : decoder_layers,
-        #     'd_kv': hidden_size // n_heads,
-        #     'd_ff': linear_hidden_size,
-        #     'dropout_rate': dropout,
-        #     'feed_forward_proj': activation,
-        #     'enable_gradient_checkpointing': False,
-        #     'use_cache': False, 
-        #     }
-
-    
         config = {key: value for key, value in self.hparams.items() 
                   if key != 'loss'}
         config['c_in'] = c_in
         config['decoder_d_model'] = d_model
+        config['d_kv'] = d_model // num_heads
+        config['use_cache'] = False
+        config['enable_gradient_checkpointing'] = False
 
         self.model = TSTbackbone(
             config=config,
@@ -316,7 +316,6 @@ class T5Flex(BaseFlex):
             attn_mask=attn_mask,
             pe=pe,
             learn_pe=learn_pos_embed,
-            fc_dropout=fc_dropout,
             head_dropout=head_dropout,
             padding_patch=padding_patch,
             head_type=head_type,
