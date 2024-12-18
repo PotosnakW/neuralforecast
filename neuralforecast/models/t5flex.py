@@ -39,7 +39,7 @@ class TSTbackbone(nn.Module):
         output_token_len: int,
         lag: int,
         stride: int,
-        hidden_size: int,
+        d_model: int,
         key_padding_mask: str = "auto",
         attn_mask: str = "bidirectional",
         pe: str = "zeros",
@@ -70,7 +70,7 @@ class TSTbackbone(nn.Module):
                 config
             )
 
-        self.head_nf = hidden_size * token_num
+        self.head_nf = d_model * token_num
         self.n_vars = c_in
         self.c_out = c_out
         self.head_type = head_type
@@ -176,7 +176,7 @@ class T5Flex(BaseFlex):
         encoder_num_layers: int = 3,
         decoder_num_layers: int = 0,
         n_heads: int = 16,
-        hidden_size: int = 128,
+        d_model: int = 128,
         linear_hidden_size: int = 256,
         dropout: float = 0.2,
         fc_dropout: float = 0.2,
@@ -280,44 +280,26 @@ class T5Flex(BaseFlex):
         c_out = self.loss.outputsize_multiplier
         c_in = 1  # Always univariate
         individual = False  # Separate heads for each time series
-        if tokenizer_type=='patch_adaptive_len': 
-            adaptive_patching_levels = 2
-        else:
+        if tokenizer_type!='patch_adaptive_len': 
             adaptive_patching_levels = 0
 
         
         # config={'num_layers': encoder_layers,
         #     'num_heads': n_heads,
         #     'num_decoder_layers' : decoder_layers,
-        #     'd_model': hidden_size,
         #     'd_kv': hidden_size // n_heads,
         #     'd_ff': linear_hidden_size,
         #     'dropout_rate': dropout,
         #     'feed_forward_proj': activation,
-        #     #'relative_attention_num_buckets': 32,
-        #     #'has_relative_attention_bias': False,
         #     'enable_gradient_checkpointing': False,
         #     'use_cache': False, 
-        #     'is_decoder': False,
         #     }
 
-        
-        config={'context_len': context_len,
-            'num_layers': encoder_num_layers,
-            'decoder_num_layers': decoder_num_layers,
-            'dropout': dropout,
-            'is_decoder': False,
-            'd_model': hidden_size,
-            'decoder_d_model': hidden_size,
-            'expansion_factor': 2, 
-            'c_in': 1,
-            'gated_attn': False, 
-            'self_attn': False,
-            'self_attn_heads': n_heads,
-            'mode': "common_channel",
-            'adaptive_patching_levels': adaptive_patching_levels,
-            'patch_length': input_token_len,
-            }
+    
+        config = {key: value for key, value in self.hparams.items() 
+                  if key != 'loss'}
+        config['c_in'] = c_in
+        config['decoder_d_model'] = d_model
 
         self.model = TSTbackbone(
             config=config,
@@ -329,7 +311,7 @@ class T5Flex(BaseFlex):
             output_token_len=output_token_len,
             lag=lag,
             stride=stride,
-            hidden_size=hidden_size,
+            d_model=d_model,
             key_padding_mask=key_padding_mask,
             attn_mask=attn_mask,
             pe=pe,

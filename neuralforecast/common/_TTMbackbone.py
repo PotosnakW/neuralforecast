@@ -51,7 +51,7 @@ class TTMConfig(PretrainedConfig):
         self,
         # Time series specific configuration
         context_len: int = 64,
-        patch_length: int = 12,
+        input_token_len: int = 12,
         token_num: int = 1,
         c_in: int = 1,
         d_model: int = 128,
@@ -67,11 +67,12 @@ class TTMConfig(PretrainedConfig):
         decoder_num_layers: int = 0,
         decoder_d_model: int = 128,
         decoder_mode: str = "common_channel",
+        self_attn: bool = False,
         **kwargs,
     ):
 
         self.context_len = context_len
-        self.patch_length = patch_length
+        self.input_token_len = input_token_len
         self.token_num = token_num
         self.c_in = c_in
         self.d_model = d_model
@@ -88,7 +89,8 @@ class TTMConfig(PretrainedConfig):
         self.decoder_d_model = decoder_d_model
         self.decoder_adaptive_patching_levels = adaptive_patching_levels
         self.decoder_mode = decoder_mode
-
+        self.self_attn = self_attn
+        
         super().__init__(**kwargs)
   
     
@@ -572,7 +574,7 @@ class TTMbackbone(nn.Module):
         
         # Input encoding
         self.W_P = nn.Linear(
-            config.patch_length, config.d_model
+            config.input_token_len, config.d_model
         )  # Eq 1: projection of feature vectors onto a d-dim vector space
         
         self.encoder = TinyTimeMixerBlock(config=config)
