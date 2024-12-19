@@ -16,7 +16,7 @@ from transformers import T5Config, T5EncoderModel, T5Model
 from ..common._base_patch import BasePatch
 from ..common._modules import RevIN
 from ..common._positional_encodings import PositionalEncoding
-from ..common._projections import ProjectionHead 
+from ..common._projections import ProjectionHead
 from ..common._tokenizers import Tokenizer
 from ..common._t5_utils import CustomT5Stack, CustomT5Attention
 

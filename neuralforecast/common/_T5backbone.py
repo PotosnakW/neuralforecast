@@ -1,3 +1,4 @@
+import copy
 import torch
 import torch.nn as nn
 
@@ -20,14 +21,9 @@ class T5backbone(nn.Module):  # i means channel-independent
 
         super().__init__()
 
+        self.num_vars = config['c_in']
         self.attn_mask = config['attn_mask']
-
-        # Input encoding
-        self.W_P = nn.Linear(
-            config['input_token_len'], config['d_model']
-        )  # Eq 1: projection of feature vectors onto a d-dim vector space
-
-        self.decoder = None
+        self.decoder = None # Assume encoder-only first
         self.W_pos_encoder = PositionalEncoding(pe=config['pe']).output(config['learn_pe'], 
                                                                      config['token_num'], 
                                                                      config['d_model']
@@ -49,58 +45,48 @@ class T5backbone(nn.Module):  # i means channel-independent
             decoder_config.num_layers = model_config.num_decoder_layers
             transformer_backbone.decoder = CustomT5Stack(decoder_config, pe=config['pe'])
             self.decoder = transformer_backbone.get_decoder() 
-            self.W_pos_encoder = PositionalEncoding(pe=config['pe']).output(config['learn_pe'], 
-                                                                     config['token_num']-1, 
-                                                                     config['d_model']
-                                                                        )
-            self.W_pos_decoder = PositionalEncoding(pe=config['pe']).output(config['learn_pe'], 
-                                                                         1, 
-                                                                         config['d_model']
-                                                                        )           
-        
+    
         if config["enable_gradient_checkpointing"]==True:
             transformer_backbone.gradient_checkpointing_enable()
-            
-    def forward(self, xe, xd=None) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
 
-         # Mask [bs x token_num]
-        if (self.attn_mask=='bidirectional') & (self.decoder==None):
-            attn_mask = torch.ones(xe.shape[0], xe.shape[3], dtype=torch.long).to(x.device)
-        elif (self.attn_mask=='bidirectional') & (self.decoder!=None):
-            attn_mask = torch.ones(xe.shape[0], xe.shape[3], dtype=torch.long).to(x.device)
-        elif self.attn_mask=='causal':
-            attn_mask = torch.tril(torch.ones(xe.shape[0], xe.shape[3], dtype=torch.long, device=x.device))
-
-        ue = torch.reshape(
-            xe, (xe.shape[0] * xe.shape[1], xe.shape[2], xe.shape[3])
-        )  # u: [bs * nvars x patch_num x hidden_size]
-        ue = self.dropout(ue + self.W_pos_encoder)  
-        z = self.encoder(inputs_embeds=ue, attention_mask=attn_mask)
+    def forward(self, x) -> torch.Tensor:  # x:  [bs x nvars x patch_num x hidden_size]
+        attn_mask = torch.ones(x.shape[0], x.shape[2], dtype=torch.long).to(x.device)
+        if self.attn_mask=='causal':
+            attn_mask = torch.tril(attn_mask)
         
-        # Decoder
+        u = torch.reshape(
+            x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3])
+        )  # u: [bs * nvars x patch_num x hidden_size]
+        u = self.dropout(u + self.W_pos_encoder)  
+        
         if self.decoder:
-            causal_attn_mask = torch.tril(torch.ones(xd.shape[0], 
-                                                     xd.shape[3], 
+            ue = u[:, :-1, :].clone()
+            ud = u[:, -1:, :].clone()
+            attn_mask = torch.ones(x.shape[0], x.shape[2]-1, dtype=torch.long).to(x.device)
+            causal_attn_mask = torch.tril(torch.ones(x.shape[0], 
+                                                     1, 
                                                      dtype=torch.long, 
                                                      device=x.device
                                                     )
                                          )
+        else:
+            ue = u.clone()
+            ud = None
 
-            ud = torch.reshape(
-                xd, (xd.shape[0] * xd.shape[1], xd.shape[2], xd.shape[3])
-            )  # u: [bs * nvars x patch_num x hidden_size]
-            ud = self.dropout(ud + self.W_pos_decoder)  
-        
+        z = self.encoder(inputs_embeds=ue, attention_mask=attn_mask)
+
+        #Decoder
+        if self.decoder:
             z = self.decoder(
                 attention_mask=causal_attn_mask,
                 inputs_embeds=ud,
                 encoder_hidden_states=z.last_hidden_state, #output of the last layer of the model
                 encoder_attention_mask=attn_mask,
                 )
-
+        
         z = z.last_hidden_state
         z = torch.reshape(
-            z, (-1, n_vars, z.shape[-2], z.shape[-1])
+            z, (-1, self.num_vars, z.shape[-2], z.shape[-1])
         )  # z: [bs x nvars x patch_num x hidden_size]
 
         return z

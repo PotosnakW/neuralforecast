@@ -14,7 +14,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..common._base_flex import BaseFlex
-from ..common._projections import ProjectionHead 
+from ..common._projections import ProjectionHead, ProjectionEmbd
+from ..common._tokenizers import Tokenizer
 from ..common._T5backbone import T5backbone
 from ..common._TTMbackbone import TTMbackbone
 
@@ -43,9 +44,11 @@ class TSTbackbone(nn.Module):
         attn_mask: str = "bidirectional",
         pe: str = "zeros",
         learn_pe: bool = True,
+        tokenizer_type = 'patch_fixed_length',
         head_dropout=0,
         padding_patch=None,
-        head_type="flatten",
+        proj_head_type="flatten",
+        proj_embd_type="flatten",
         backbone_type="T5",
         individual=False,
     ):
@@ -67,45 +70,38 @@ class TSTbackbone(nn.Module):
             self.backbone = TTMbackbone(
                 config
             )
+            
+        if config['num_decoder_layers']>0:
+            head_nf = d_model * 1
+        else:
+            head_nf = d_model * token_num
 
-        self.head_nf = d_model * token_num
-        self.n_vars = c_in
-        self.c_out = c_out
-        self.head_type = head_type
-        self.individual = individual
+        proj_embd = ProjectionEmbd(
+            individual,
+            c_in,
+            input_token_len,
+            d_model,
+            c_out, 
+            head_dropout,
+        )
 
         proj_hd = ProjectionHead(
-            self.individual,
-            self.n_vars,
-            self.head_nf,
+            individual,
+            c_in,
+            head_nf,
             output_token_len,
             c_out,
             head_dropout,
         )
 
-        if head_type == "flatten":
-            proj_hd.flatten_head()  # Initialize layers in ProjectionHead
-            self.head = proj_hd
-        elif head_type == "residual_network":
-            proj_hd.residual_network()  # Initialize layers in ProjectionHead
-            self.head = proj_hd
+        self.W_P = proj_embd.projection_layer(proj_embd_type)
+        self.head = proj_hd.projection_layer(proj_head_type)
 
     def forward(self, x):  
-        #z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x patch_len x patch_num]
-        
-        n_vars = x.shape[1]
-        if self.decoder:
-            xe = x[:, :, :-1, :].clone()
-            xd = x[:, :, -1, :].clone()
-            xd = self.W_P(xd)  # x: [bs x nvars x patch_num x hidden_size]
-        else:
-            xe = x.clone()
-            xd = None
-
-        xe = self.W_P(xe)  # x: [bs x nvars x patch_num x hidden_size]
+        u = self.W_P(x)  # x: [bs x nvars x patch_num x hidden_size]
         
         # model
-        z = self.backbone(xe, xd)  # z: [bs x nvars x patch_num x hidden_size]
+        z = self.backbone(u)  # z: [bs x nvars x patch_num x hidden_size]
         #embeddings = z.clone() # WILLA ADDED THIS
         z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x hidden_size x patch_num]
         z = self.head(z)  # z: [bs x nvars x h]
@@ -193,7 +189,6 @@ class T5Flex(BaseFlex):
         head_dropout: float = 0.0,
         input_token_len: int = 16,
         output_token_len: int = 16,
-        lag: int=1,
         stride: int = 8,
         activation: str = "gated-gelu",
         key_padding_mask: str = "auto",
@@ -224,8 +219,10 @@ class T5Flex(BaseFlex):
         pe: str = "zeros", 
         learn_pe: bool = True,
         tokenizer_type = 'patch_fixed_length',
+        lag: int=1,
         attn_mask: str = "bidirectional",
-        head_type: str = "flatten", 
+        proj_embd_type: str = "linear", 
+        proj_head_type: str = "linear", 
         backbone_type: str = "T5",
         **trainer_kwargs
     ):
@@ -261,7 +258,7 @@ class T5Flex(BaseFlex):
             lr_scheduler=lr_scheduler,
             lr_scheduler_kwargs=lr_scheduler_kwargs,
             tokenizer_type=tokenizer_type,
-            lag=lag, 
+            lag=lag,
             padding_patch=padding_patch,
             **trainer_kwargs
         )
@@ -287,6 +284,8 @@ class T5Flex(BaseFlex):
             assert padding_patch==None, \
                 f"Assertion failed: padding_patch={padding_patch}, expected None"
 
+        self.output_token_len = output_token_len
+
         c_out = self.loss.outputsize_multiplier
         c_in = 1  # Always univariate
         individual = False  # Separate heads for each time series
@@ -296,6 +295,7 @@ class T5Flex(BaseFlex):
         config = {key: value for key, value in self.hparams.items() 
                   if key != 'loss'}
         config['c_in'] = c_in
+        config['c_out'] = c_out
         config['decoder_d_model'] = d_model
         config['d_kv'] = d_model // num_heads
         config['use_cache'] = False
@@ -318,7 +318,8 @@ class T5Flex(BaseFlex):
             learn_pe=learn_pos_embed,
             head_dropout=head_dropout,
             padding_patch=padding_patch,
-            head_type=head_type,
+            proj_embd_type=proj_embd_type,
+            proj_head_type=proj_head_type,
             backbone_type=backbone_type,
         )
 
@@ -326,6 +327,9 @@ class T5Flex(BaseFlex):
         
         x = self.model(x)
         #x, embeddings = self.model(x) # Willa added 
+        
+        x = x.reshape(x.shape[0], self.output_token_len, self.c_out)  # x: [Batch, h, c_out]
+        x = self.loss.domain_map(x)
         
         return x
         #return forecast, embeddings # Willa added

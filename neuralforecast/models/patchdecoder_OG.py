@@ -17,7 +17,7 @@ import torch.nn.functional as F
 from ..common._base_patch import BasePatch
 from ..common._modules import RevIN
 from ..common._positional_encodings import PositionalEncoding
-from ..common._projections import ProjectionHead 
+from ..common._projections import Projectionhead
 
 from ..losses.pytorch import MAE
 

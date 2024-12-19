@@ -50,7 +50,7 @@ class CustomT5Attention(T5Attention):
         super().__init__(config, has_relative_attention_bias, layer_idx)
         
         self.pe = pe  # RoPE flag
-        print('has_relative_attention_bias:', has_relative_attention_bias)
+        #print('has_relative_attention_bias:', has_relative_attention_bias)
 
     def forward(
         self,

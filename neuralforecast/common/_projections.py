@@ -17,7 +17,7 @@ class ProjectionHead(nn.Module):
     """
 
     def __init__(
-        self, individual, n_vars, nf, h, c_out, head_dropout=0
+        self, individual, n_vars, nf, h, c_out=1, head_dropout=0
     ):
         super().__init__()
 
@@ -32,7 +32,7 @@ class ProjectionHead(nn.Module):
         self.dropout = head_dropout
         self.use_skip = False
         
-    def flatten_head(self):
+    def linear_head(self):
         layers = [
                 nn.Flatten(start_dim=-2),
                 nn.Linear(self.nf, self.h * self.c_out),
@@ -41,7 +41,7 @@ class ProjectionHead(nn.Module):
         
         self.layers = nn.Sequential(*layers)
         
-    def residual_network(self, num_layers=1):
+    def residual_head(self, num_layers=1):
         layers = [
                 nn.Flatten(start_dim=-2),
                 nn.Linear(self.nf, self.nf),
@@ -59,11 +59,88 @@ class ProjectionHead(nn.Module):
 
         self.use_skip == True
         self.layers = nn.Sequential(*layers)
+        
+    def projection_layer(self, head_type):
+        if head_type == "linear":
+            self.linear_head()
+        elif head_type == "residual":
+            self.residual_head()
+            
+        return self
 
     def forward(self, x):
         residual = x.clone()
 
         x = self.layers(x)
+        if self.use_skip:
+            x += residual  # Add skip connection
+
+        return x
+    
+
+class ProjectionEmbd(nn.Module):
+    """Multi-Layer Perceptron with Skip Connection
+
+    **Parameters:**<br>
+    `in_features`: int, dimension of input.<br>
+    `out_features`: int, dimension of output.<br>
+    `activation`: str, activation function to use.<br>
+    `hidden_size`: int, dimension of hidden layers.<br>
+    `num_layers`: int, number of hidden layers.<br>
+    `dropout`: float, dropout rate.<br>
+    """
+
+    def __init__(
+        self, individual, n_vars, nf, h, c_out=1, dropout=0
+    ):
+        super().__init__()
+
+        activation="ReLU"
+        
+        self.individual = individual
+        self.n_vars = n_vars
+        self.nf = nf
+        self.h = h
+        self.c_out = c_out
+        self.activation = getattr(nn, activation)()
+        self.dropout = dropout
+        self.use_skip = False
+        
+    def linear_embd(self):
+        self.W_P = nn.Linear(
+            self.nf, self.h
+        )  # Eq 1: projection of feature vectors onto a d-dim vector space
+        
+    def residual_embd(self, num_layers=1):
+        layers = [
+                nn.Linear(self.nf, self.nf),
+                self.activation,
+                nn.Dropout(self.dropout)
+            ]
+        for i in range(num_layers):
+            layers += [
+                nn.Linear(in_features=self.nf, out_features=self.nf),
+                self.activation,
+                nn.Dropout(self.dropout),
+            ]
+            # Output layer
+        layers += [nn.Linear(in_features=self.nf, out_features=self.h * self.c_out)]
+
+        self.use_skip == True
+        self.W_P = nn.Sequential(*layers)
+        
+    def projection_layer(self, head_type):
+        if head_type == "linear":
+            self.linear_embd()
+        elif head_type == "residual":
+            self.residual_embd()
+
+        return self
+
+    def forward(self, x):
+        residual = x.clone()
+
+        x = self.W_P(x)
         if self.use_skip:
             x += residual  # Add skip connection
 

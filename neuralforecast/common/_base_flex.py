@@ -14,6 +14,7 @@ from ._base_model import BaseModel
 from ._scalers import TemporalNorm
 from ..tsdataset import TimeSeriesDataModule
 from ..utils import get_indexer_raise_missing
+
 from ..common._tokenizers import Tokenizer
 
 # %% ../../nbs/common.base_windows.ipynb 6
@@ -62,10 +63,10 @@ class BaseFlex(BaseModel):
         optimizer_kwargs=None,
         lr_scheduler=None,
         lr_scheduler_kwargs=None,
-        tokenizer_type='patch_fixed_length',
-        lag=None, 
-        padding_patch=None,
         ckpt_path=None,
+        tokenizer_type='patch_fixed_length',
+        lag=1,
+        padding_patch='end',
         **trainer_kwargs,
     ):
         super().__init__(
@@ -93,6 +94,16 @@ class BaseFlex(BaseModel):
                                     )
         if tokenizer_type=='lags':
             context_len*=lag
+            
+        token_num = int((context_len - input_token_len) / stride + 1)
+        self.tokenizer_type = tokenizer_type
+        self.tokenizer = Tokenizer(tokenizer_type,
+                                   token_len=input_token_len,
+                                   stride=stride,
+                                   token_num=token_num,
+                                   lag=lag,
+                                   padding_patch=padding_patch,
+                                   )
         
         self.input_token_len = input_token_len
         self.output_token_len = torch.minimum(
@@ -160,17 +171,6 @@ class BaseFlex(BaseModel):
         # used by on_validation_epoch_end hook
         self.validation_step_outputs = []
         self.alias = alias
-        
-        token_num = int((context_len - input_token_len) / stride + 1)
-
-        self.tokenizer_type = tokenizer_type
-        self.tokenizer = Tokenizer(tokenizer_type,
-                                   token_len=input_token_len,
-                                   stride=stride,
-                                   token_num=token_num,
-                                   lag=lag,
-                                   padding_patch=padding_patch,
-                                   )
 
     def _create_windows(self, batch, step, window_size, w_idxs=None):
         # Parse common data
@@ -1002,15 +1002,10 @@ class BaseFlex(BaseModel):
         insample_y = windows_batch["insample_y"]
         x = insample_y.unsqueeze(-1)  # [Ws,L,1]
         x = x.permute(0, 2, 1)  # x: [Batch, 1, context_len]
-
         # tokenize input
-        x = self.tokenizer.output_transform(x) 
-
+        x = self.tokenizer.output_transform(x) #x: [Batch, 1, num_tokens, input_token_len]
         # Model Predictions
         output = self(x)
-
-        output = output.reshape(output.shape[0], self.h, self.c_out)  # x: [Batch, h, c_out]
-        output = self.loss.domain_map(output)
         
         return output
 
