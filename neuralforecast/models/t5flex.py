@@ -218,6 +218,8 @@ class T5Flex(BaseFlex):
         lr_scheduler_kwargs=None,
         pe: str = "zeros", 
         learn_pe: bool = True,
+        decomposition_type=None,
+        top_k=None, 
         tokenizer_type = 'patch_fixed_length',
         lag: int=1,
         attn_mask: str = "bidirectional",
@@ -260,6 +262,8 @@ class T5Flex(BaseFlex):
             tokenizer_type=tokenizer_type,
             lag=lag,
             padding_patch=padding_patch,
+            decomposition_type=decomposition_type,
+            top_k=top_k,
             **trainer_kwargs
         )
 
@@ -325,11 +329,9 @@ class T5Flex(BaseFlex):
 
     def forward(self, x):  # x: [batch, input_size]
         
-        x = self.model(x)
+        forecast = self.model(x)
         #x, embeddings = self.model(x) # Willa added 
+        forecast = forecast.reshape(x.shape[0], self.output_token_len, self.c_out)  # x: [Batch, h, c_out]
         
-        x = x.reshape(x.shape[0], self.output_token_len, self.c_out)  # x: [Batch, h, c_out]
-        x = self.loss.domain_map(x)
-        
-        return x
+        return forecast
         #return forecast, embeddings # Willa added
