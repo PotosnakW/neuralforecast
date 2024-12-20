@@ -18,6 +18,7 @@ from ..common._projections import ProjectionHead, ProjectionEmbd
 from ..common._tokenizers import Tokenizer
 from ..common._T5backbone import T5backbone
 from ..common._TTMbackbone import TTMbackbone
+from ..common.input_tests import check_input_validity
 
 from ..losses.pytorch import MAE
 
@@ -33,20 +34,13 @@ class TSTbackbone(nn.Module):
         config: dict,
         c_in: int,
         c_out: int,
-        context_len: int,
         h: int,
         input_token_len: int,
         output_token_len: int,
-        lag: int,
-        stride: int,
         d_model: int,
-        key_padding_mask: str = "auto",
-        attn_mask: str = "bidirectional",
-        pe: str = "zeros",
-        learn_pe: bool = True,
-        tokenizer_type = 'patch_fixed_length',
+        token_num: int,
+        num_decoder_layers: int,
         head_dropout=0,
-        padding_patch=None,
         proj_head_type="flatten",
         proj_embd_type="flatten",
         backbone_type="T5",
@@ -55,23 +49,17 @@ class TSTbackbone(nn.Module):
 
         super().__init__()
 
-        # Patching
-        token_num = int((context_len - input_token_len) / stride + 1)
-        if padding_patch == "end":  # can be modified to general case
-            token_num += 1
-        config['token_num'] = token_num
-
         # Backbone
-        if backbone_type=='T5':
+        if 't5' in backbone_type:
             self.backbone = T5backbone(
                 config,
             )
-        elif backbone_type=='tsmixer':
+        elif backbone_type=='ttm':
             self.backbone = TTMbackbone(
                 config
             )
             
-        if config['num_decoder_layers']>0:
+        if num_decoder_layers>0:
             head_nf = d_model * 1
         else:
             head_nf = d_model * token_num
@@ -104,6 +92,7 @@ class TSTbackbone(nn.Module):
         z = self.backbone(u)  # z: [bs x nvars x patch_num x hidden_size]
         #embeddings = z.clone() # WILLA ADDED THIS
         z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x hidden_size x patch_num]
+        #print(z.shape)
         z = self.head(z)  # z: [bs x nvars x h]
 
         return z
@@ -111,13 +100,7 @@ class TSTbackbone(nn.Module):
 
 # %% ../../nbs/models.patchtst.ipynb 17
 class T5Flex(BaseFlex):
-    """PatchTST
-
-    The PatchTST model is an efficient Transformer-based model for multivariate time series forecasting.
-
-    It is based on two key components:
-    - segmentation of time series into windows (patches) which are served as input tokens to Transformer
-    - channel-independence, where each channel contains a single univariate time series.
+    """T5Flex
 
     **Parameters:**<br>
     `h`: int, Forecast horizon. <br>
@@ -191,8 +174,6 @@ class T5Flex(BaseFlex):
         output_token_len: int = 16,
         stride: int = 8,
         activation: str = "gated-gelu",
-        key_padding_mask: str = "auto",
-        batch_normalization: bool = False,
         learn_pos_embed: bool = True,
         loss=MAE(),
         valid_loss=None,
@@ -220,6 +201,7 @@ class T5Flex(BaseFlex):
         learn_pe: bool = True,
         decomposition_type=None,
         top_k=None, 
+        moving_avg_window=None,
         tokenizer_type = 'patch_fixed_length',
         lag: int=1,
         attn_mask: str = "bidirectional",
@@ -264,67 +246,44 @@ class T5Flex(BaseFlex):
             padding_patch=padding_patch,
             decomposition_type=decomposition_type,
             top_k=top_k,
+            moving_avg_window=moving_avg_window,
             **trainer_kwargs
         )
 
-        # Enforce correct patch_len, regardless of user input
-        if tokenizer_type == 'lags':
-            assert input_token_len==1, \
-                f"Assertion failed: input_token_len={input_token_len}, expected 1"
-            assert stride==1, \
-                f"Assertion failed: stride={stride}, expected 1"
-            assert padding_patch==None, \
-                f"Assertion failed: padding_patch={padding_patch}, expected None"
-
-        elif 'patch' in tokenizer_type:
-            input_token_len = min(context_len + stride, input_token_len)
-            output_token_len = min(h, output_token_len)
-            
-        elif tokenizer_type == 'bins':
-            assert input_token_len==1, \
-                f"Assertion failed: input_token_len={input_token_len}, expected 1"
-            assert stride==1, \
-                f"Assertion failed: stride={stride}, expected 1"
-            assert padding_patch==None, \
-                f"Assertion failed: padding_patch={padding_patch}, expected None"
-
         self.output_token_len = output_token_len
-
         c_out = self.loss.outputsize_multiplier
         c_in = 1  # Always univariate
         individual = False  # Separate heads for each time series
-        if tokenizer_type!='patch_adaptive_len': 
-            adaptive_patching_levels = 0
 
         config = {key: value for key, value in self.hparams.items() 
-                  if key != 'loss'}
+                  if key != 'loss'
+                 }
         config['c_in'] = c_in
         config['c_out'] = c_out
-        config['decoder_d_model'] = d_model
         config['d_kv'] = d_model // num_heads
-        config['use_cache'] = False
-        config['enable_gradient_checkpointing'] = False
+        # Check whether inputs are valid and correct
+        config = check_input_validity(config)
+
+        token_num = int((context_len - config['input_token_len']) / config['stride'] + 1)
+        if config['padding_patch'] == "end":  # can be modified to general case
+            token_num += 1
+        config['token_num'] = token_num
 
         self.model = TSTbackbone(
             config=config,
             c_in=c_in,
             c_out=c_out,
-            context_len=context_len,
             h=h,
-            input_token_len=input_token_len,
-            output_token_len=output_token_len,
-            lag=lag,
-            stride=stride,
-            d_model=d_model,
-            key_padding_mask=key_padding_mask,
-            attn_mask=attn_mask,
-            pe=pe,
-            learn_pe=learn_pos_embed,
+            input_token_len=config['input_token_len'],
+            output_token_len=config['output_token_len'],
+            d_model=config['d_model'],
             head_dropout=head_dropout,
-            padding_patch=padding_patch,
-            proj_embd_type=proj_embd_type,
             proj_head_type=proj_head_type,
+            proj_embd_type=proj_embd_type,
             backbone_type=backbone_type,
+            individual=individual,
+            token_num=token_num,
+            num_decoder_layers=num_decoder_layers,
         )
 
     def forward(self, x):  # x: [batch, input_size]

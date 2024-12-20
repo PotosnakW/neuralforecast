@@ -13,7 +13,7 @@ class HierarchicalDecomposition:
 
         self.mode = mode
         if mode == 'dlinear_trend_seasonality':
-            self.decomp_block = SeriesDecomp(kernel_size=kwargs.get('kernel_size', 3))
+            self.decomp_block = SeriesDecomp(kernel_size=kwargs.get('moving_avg_window', 3))
         elif mode == 'fourier_bases':
             self.decomp_block = FourierDecomp(top_k=kwargs.get('top_k', 3))
         elif mode == 'nhits_interpolation':

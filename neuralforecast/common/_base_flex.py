@@ -66,6 +66,7 @@ class BaseFlex(BaseModel):
         ckpt_path=None,
         decomposition_type=None,
         top_k=None,
+        moving_avg_window=None,
         tokenizer_type='patch_fixed_length',
         lag=1,
         padding_patch='end',
@@ -90,7 +91,9 @@ class BaseFlex(BaseModel):
         )
         
         self.decomposition_type = decomposition_type
-        self.decompose = HierarchicalDecomposition(decomposition_type, top_k=top_k)
+        self.decompose = HierarchicalDecomposition(decomposition_type, 
+                                                   top_k=top_k, 
+                                                   moving_avg_window=moving_avg_window)
         self.top_k = top_k
         if self.decomposition_type == 'dlinear_trend_seasonality':
             self.num_decomps = 2
@@ -1024,7 +1027,6 @@ class BaseFlex(BaseModel):
         if self.decomposition_type is not None:
             output = output.view(-1, self.num_decomps, output.shape[1], output.shape[2])
             output = output.sum(dim=1)
-            print(output.shape)
 
         output = self.loss.domain_map(output)
 

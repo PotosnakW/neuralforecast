@@ -2,7 +2,7 @@ import copy
 import torch
 import torch.nn as nn
 
-from transformers import T5Config, T5Model
+from transformers import T5Config, T5Model, AutoConfig
 
 from ..common._positional_encodings import PositionalEncoding
 from ..common._t5_utils import CustomT5Stack, CustomT5Attention
@@ -33,7 +33,17 @@ class T5backbone(nn.Module):  # i means channel-independent
         self.dropout = nn.Dropout(config['dropout'])
 
         # Encoder
-        model_config = T5Config.from_dict(config)
+        if 'google' in config['backbone_type']:
+            model_config = T5Config.from_pretrained(config['backbone_type'])
+        else:
+            model_config = T5Config.from_dict(config)
+
+        model_config.num_decoder_layers = config["num_decoder_layers"]
+        model_config.is_decoder = False
+        model_config.enable_gradient_checkpointing = False
+        model_config.use_cache = False
+        model_config.is_encoder_decoder = False
+
         transformer_backbone = T5Model(model_config)
         transformer_backbone.encoder = CustomT5Stack(model_config, pe=config['pe'])
         self.encoder = transformer_backbone.get_encoder()
@@ -45,9 +55,6 @@ class T5backbone(nn.Module):  # i means channel-independent
             decoder_config.num_layers = model_config.num_decoder_layers
             transformer_backbone.decoder = CustomT5Stack(decoder_config, pe=config['pe'])
             self.decoder = transformer_backbone.get_decoder() 
-    
-        if config["enable_gradient_checkpointing"]==True:
-            transformer_backbone.gradient_checkpointing_enable()
 
     def forward(self, x) -> torch.Tensor:  # x:  [bs x nvars x patch_num x hidden_size]
         attn_mask = torch.ones(x.shape[0], x.shape[2], dtype=torch.long).to(x.device)
