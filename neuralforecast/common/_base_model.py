@@ -188,11 +188,8 @@ class BaseModel(pl.LightningModule):
         self.trainer_kwargs = trainer_kwargs
         
         # Willa added   
-        if ckpt_path is None:
-            self.ckpt_path = None
-        else:
-            self.ckpt_path = ckpt_path       
-            fs, _, _ = fsspec.get_fs_token_paths(self.ckpt_path)
+        self.ckpt_path = ckpt_path
+        if ckpt_path is not None:
             if not fs.exists(self.ckpt_path):
                 fs.makedirs(self.ckpt_path)
 
@@ -443,7 +440,7 @@ class BaseModel(pl.LightningModule):
         self.validation_step_outputs.clear()  # free memory (compute `avg_loss` per epoch)
         
         # Willa added for grokking experiments
-        if (self.ckpt_path is not None) & (self.global_step % 300 == 0):
+        if (self.ckpt_path is not None) & (self.global_step % 100 == 0):
             self.save(self.ckpt_path+f'/{self.alias}_step:{self.global_step}.ckpt')
 
     def save(self, path):

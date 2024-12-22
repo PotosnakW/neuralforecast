@@ -40,9 +40,9 @@ class T5backbone(nn.Module):  # i means channel-independent
 
         model_config.num_decoder_layers = config["num_decoder_layers"]
         model_config.is_decoder = False
+        model_config.is_encoder_decoder = False
         model_config.enable_gradient_checkpointing = False
         model_config.use_cache = False
-        model_config.is_encoder_decoder = False
 
         transformer_backbone = T5Model(model_config)
         transformer_backbone.encoder = CustomT5Stack(model_config, pe=config['pe'])
@@ -51,7 +51,7 @@ class T5backbone(nn.Module):  # i means channel-independent
         if model_config.num_decoder_layers > 0:
             decoder_config = copy.deepcopy(model_config)
             decoder_config.is_decoder = True
-            #decoder_config.is_encoder_decoder = True
+            decoder_config.is_encoder_decoder = True
             decoder_config.num_layers = model_config.num_decoder_layers
             transformer_backbone.decoder = CustomT5Stack(decoder_config, pe=config['pe'])
             self.decoder = transformer_backbone.get_decoder() 

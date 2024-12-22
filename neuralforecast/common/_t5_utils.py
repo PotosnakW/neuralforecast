@@ -18,7 +18,7 @@ class CustomT5Stack(T5Stack):
         super().__init__(config, embed_tokens)
 
         # Modify the blocks based on the 'pe' parameter
-        if pe == "relative":
+        if (pe == "relative")|(pe == "sincos_relative"):
             for i, block in enumerate(self.block):
                 block.layer[0] = CustomT5LayerSelfAttention(
                     config, pe=pe, has_relative_attention_bias=bool(i == 0), layer_idx=i,
@@ -27,11 +27,11 @@ class CustomT5Stack(T5Stack):
             for i, block in enumerate(self.block):
                 if i == 0:  # Apply RoPE only for the first layer
                     block.layer[0] = CustomT5LayerSelfAttention(
-                        config, pe="rope", has_relative_attention_bias=False, layer_idx=i
+                        config, pe=pe, has_relative_attention_bias=False, layer_idx=i
                     )
                 else:  # For other layers, use default or other configurations
-                    block.layer[0] = T5LayerSelfAttention(
-                        config, has_relative_attention_bias=False, layer_idx=i
+                    block.layer[0] = CustomT5LayerSelfAttention(
+                        config, pe="zeros", has_relative_attention_bias=False, layer_idx=i
                     )
         else:
             for i, block in enumerate(self.block):
@@ -43,7 +43,7 @@ class CustomT5Attention(T5Attention):
     def __init__(
         self,
         config: T5Config,
-        pe='zeros',  # Added option for RoPE
+        pe="zeros",  # Added option for RoPE
         has_relative_attention_bias=False,
         layer_idx: Optional[int] = None,
     ):

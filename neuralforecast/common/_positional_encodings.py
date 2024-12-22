@@ -117,6 +117,8 @@ class PositionalEncoding():
             W_pos = self.Coord2dPosEncoding(q_len, hidden_size, exponential=True, normalize=True)
         elif self.pe == "sincos":
             W_pos = self.SinCosPosEncoding(q_len, hidden_size, normalize=True)
+        elif self.pe == "sincos_relative":
+            W_pos = self.SinCosPosEncoding(q_len, hidden_size, normalize=True)
         elif self.pe == "rope":
             W_pos = torch.empty((q_len, hidden_size))
             nn.init.uniform_(W_pos, -0.02, 0.02)
