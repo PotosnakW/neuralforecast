@@ -59,7 +59,10 @@ class TSTbackbone(nn.Module):
                 config
             )
             
-        head_nf = d_model * token_num
+        if num_decoder_layers>0:
+            head_nf = d_model * 1
+        else:
+            head_nf = d_model * token_num
 
         proj_embd = ProjectionEmbd(
             individual,

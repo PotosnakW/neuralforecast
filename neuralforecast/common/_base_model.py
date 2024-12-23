@@ -12,6 +12,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 
 import fsspec
+import os
 import numpy as np
 import torch
 import torch.nn as nn
@@ -190,8 +191,8 @@ class BaseModel(pl.LightningModule):
         # Willa added   
         self.ckpt_path = ckpt_path
         if ckpt_path is not None:
-            if not fs.exists(self.ckpt_path):
-                fs.makedirs(self.ckpt_path)
+            if not os.path.exists(ckpt_path):
+                os.makedirs(ckpt_path, exist_ok=True)
 
     def __repr__(self):
         return type(self).__name__ if self.alias is None else self.alias

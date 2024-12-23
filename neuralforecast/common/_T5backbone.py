@@ -50,8 +50,8 @@ class T5backbone(nn.Module):  # i means channel-independent
         
         if model_config.num_decoder_layers > 0:
             decoder_config = copy.deepcopy(model_config)
-            decoder_config.is_decoder = True
-            decoder_config.is_encoder_decoder = True
+            decoder_config.is_decoder = True 
+            decoder_config.is_encoder_decoder = False # does this do something?
             decoder_config.num_layers = model_config.num_decoder_layers
             transformer_backbone.decoder = CustomT5Stack(decoder_config, pe=config['pe'])
             self.decoder = transformer_backbone.get_decoder() 
