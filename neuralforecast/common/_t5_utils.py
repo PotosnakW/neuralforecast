@@ -9,35 +9,72 @@ from ._positional_encodings import PositionalEncoding
 class CustomT5LayerSelfAttention(T5LayerSelfAttention):
     def __init__(self, config, pe, has_relative_attention_bias=False, layer_idx: Optional[int] = None):
         super().__init__(config, has_relative_attention_bias, layer_idx)
+
         self.SelfAttention = CustomT5Attention(
            config, pe=pe, has_relative_attention_bias=has_relative_attention_bias, layer_idx=layer_idx, 
         )
         
+class CustomT5Block(T5Block):
+    def __init__(self, config, pe, has_relative_attention_bias=False, layer_idx: Optional[int] = None):
+        super().__init__(config, has_relative_attention_bias, layer_idx)
+
+        # Store whether the block is a decoder
+        #self.is_decoder = config.is_decoder
+        self.is_encoder_decoder = config.is_encoder_decoder
+        
+        # Create a list of layers
+        self.layer = nn.ModuleList()
+        
+        # Always add self-attention
+        if (pe == "relative")|(pe == "sincos_relative"):
+            self.layer.append(
+                CustomT5LayerSelfAttention(config, 
+                                           pe, 
+                                           has_relative_attention_bias=bool(layer_idx == 0), 
+                                           layer_idx=layer_idx,
+                )
+            )
+
+        if pe =="rope":
+            if i == 0: 
+                self.layer.append(
+                    CustomT5LayerSelfAttention(config, 
+                                               pe=pe, 
+                                               has_relative_attention_bias=False, 
+                                               layer_idx=layer_idx,
+                    )
+                )
+            else:
+                self.layer.append(
+                    CustomT5LayerSelfAttention(config, 
+                                               pe="zeros", 
+                                               has_relative_attention_bias=False, 
+                                               layer_idx=layer_idx,
+                    )
+                )
+        else:
+            self.layer.append(
+                    CustomT5LayerSelfAttention(config, 
+                                               pe=pe,
+                                               has_relative_attention_bias=False, 
+                                               layer_idx=layer_idx,
+                    )
+                )
+        
+        # Conditionally add cross-attention only if the block is a decoder and encoder_decoder is True
+        if self.is_encoder_decoder:
+            self.layer.append(T5LayerCrossAttention(config, layer_idx=layer_idx))
+
+        # Always add feed-forward layer
+        self.layer.append(T5LayerFF(config))
+
 class CustomT5Stack(T5Stack):
     def __init__(self, config, pe="zeros", embed_tokens=None):
         super().__init__(config, embed_tokens)
-
-        # Modify the blocks based on the 'pe' parameter
-        if (pe == "relative")|(pe == "sincos_relative"):
-            for i, block in enumerate(self.block):
-                block.layer[0] = CustomT5LayerSelfAttention(
-                    config, pe=pe, has_relative_attention_bias=bool(i == 0), layer_idx=i,
-                )
-        if pe == "rope":
-            for i, block in enumerate(self.block):
-                if i == 0:  # Apply RoPE only for the first layer
-                    block.layer[0] = CustomT5LayerSelfAttention(
-                        config, pe=pe, has_relative_attention_bias=False, layer_idx=i
-                    )
-                else:  # For other layers, use default or other configurations
-                    block.layer[0] = CustomT5LayerSelfAttention(
-                        config, pe="zeros", has_relative_attention_bias=False, layer_idx=i
-                    )
-        else:
-            for i, block in enumerate(self.block):
-                block.layer[0] = CustomT5LayerSelfAttention(
-                    config, pe=pe, has_relative_attention_bias=False, layer_idx=i,
-                )
+        
+        self.block = nn.ModuleList(
+            [CustomT5Block(config, pe=pe, layer_idx=i) for i in range(config.num_layers)]
+        )
 
 class CustomT5Attention(T5Attention):
     def __init__(
