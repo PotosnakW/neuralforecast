@@ -396,13 +396,18 @@ class BaseFlex(BaseModel):
 
         return y_hat, y_loc, y_scale
 
-    def _parse_windows(self, batch, windows):
+    
+    def _parse_windows(self, batch, windows, keep_len=None):
+        
+        if keep_len == None:
+             keep_len = self.context_len
+
         # Filter insample lags from outsample horizon
         y_idx = batch["y_idx"]
         mask_idx = batch["temporal_cols"].get_loc("available_mask")
 
-        insample_y = windows["temporal"][:, : self.context_len, y_idx]
-        insample_mask = windows["temporal"][:, : self.context_len, mask_idx]
+        insample_y = windows["temporal"][:, : keep_len, y_idx]
+        insample_mask = windows["temporal"][:, : keep_len, mask_idx]
 
         # Declare additional information
         outsample_y = None
@@ -412,14 +417,14 @@ class BaseFlex(BaseModel):
         stat_exog = None
 
         if self.h > 0:
-            outsample_y = windows["temporal"][:, self.context_len :, y_idx]
-            outsample_mask = windows["temporal"][:, self.context_len :, mask_idx]
+            outsample_y = windows["temporal"][:, keep_len :, y_idx]
+            outsample_mask = windows["temporal"][:, keep_len :, mask_idx]
 
         if len(self.hist_exog_list):
             hist_exog_idx = get_indexer_raise_missing(
                 windows["temporal_cols"], self.hist_exog_list
             )
-            hist_exog = windows["temporal"][:, : self.context_len, hist_exog_idx]
+            hist_exog = windows["temporal"][:, : keep_len, hist_exog_idx]
 
         if len(self.futr_exog_list):
             futr_exog_idx = get_indexer_raise_missing(
@@ -446,6 +451,7 @@ class BaseFlex(BaseModel):
             futr_exog,
             stat_exog,
         )
+
 
     def training_step(self, batch, batch_idx):
         # Create and normalize windows [Ws, L+H, C]
@@ -596,7 +602,7 @@ class BaseFlex(BaseModel):
             )
             windows = self._create_windows(batch, window_size=window_size, step="val", w_idxs=w_idxs)
             original_outsample_y = torch.clone(windows["temporal"][:, -self.h :, y_idx])
-            
+
             (
                 insample_y,
                 insample_mask,
@@ -615,9 +621,9 @@ class BaseFlex(BaseModel):
                         y_hat=seq_preds,
                         y_idx=y_idx,
                         )
-  
+
                 horizon_filler = torch.zeros(insample_y.shape[0], self.h).to(windows['temporal'].device)
-                insample_y = torch.cat((insample_y, 
+                new_windows_temporal = torch.cat((insample_y, 
                                         y_hat, 
                                         horizon_filler), 
                                        dim=1)
@@ -631,13 +637,13 @@ class BaseFlex(BaseModel):
                                           dim=1)
 
                  # Shift insample_y by patches to include new appended predictions
-                insample_y = insample_y[:, self.output_token_len*pos :]
-                insample_mask = insample_mask[:, self.output_token_len*pos :]
-                
-                wcat = torch.zeros(insample_y.shape[0],
-                                   insample_y.shape[1], 
+                #insample_y = insample_y[:, self.output_token_len*pos :]
+                #insample_mask = insample_mask[:, self.output_token_len*pos :]
+
+                wcat = torch.zeros(new_windows_temporal.shape[0],
+                                   new_windows_temporal.shape[1], 
                                    2).to(windows['temporal'].device)
-                wcat[:, :, y_idx] = insample_y
+                wcat[:, :, y_idx] = new_windows_temporal
                 wcat[:, :, mask_idx] = insample_mask
                 windows["temporal"] = wcat
 
@@ -652,9 +658,10 @@ class BaseFlex(BaseModel):
                                      device=windows["temporal"].device)
                     previous_params = torch.zeros(windows_batch_size, self.output_token_len*n_repeats, self.c_out,
                                       device=windows["temporal"].device)
-            
-            windows = self._normalization(windows=windows, y_idx=y_idx)
 
+            windows = self._normalization(windows=windows, y_idx=y_idx)
+            keep_len = self.context_len+self.output_token_len*pos
+            
             (
                 insample_y,
                 insample_mask,
@@ -663,7 +670,8 @@ class BaseFlex(BaseModel):
                 hist_exog,
                 futr_exog,
                 stat_exog,
-            ) = self._parse_windows(batch, windows)
+            ) = self._parse_windows(batch, windows, keep_len=keep_len)
+            print('insample_y', insample_y.shape)
 
             windows_batch = dict(
                 insample_y=insample_y,  # [Ws, L]
@@ -792,7 +800,7 @@ class BaseFlex(BaseModel):
                     )
 
                 horizon_filler = torch.zeros(insample_y.shape[0], self.h).to(windows['temporal'].device)
-                insample_y = torch.cat((insample_y, 
+                new_windows_temporal = torch.cat((insample_y, 
                                         y_hat, 
                                         horizon_filler), 
                                        dim=1)
@@ -804,15 +812,15 @@ class BaseFlex(BaseModel):
                                            extend_mask,
                                            horizon_filler),
                                           dim=1)
-                
+
                  # Shift insample_y by patches to include new appended predictions
-                insample_y = insample_y[:, self.output_token_len*pos :]
-                insample_mask = insample_mask[:, self.output_token_len*pos :]
-                
-                wcat = torch.zeros(insample_y.shape[0],
-                                   insample_y.shape[1], 
+                #insample_y = insample_y[:, self.output_token_len*pos :]
+                #insample_mask = insample_mask[:, self.output_token_len*pos :]
+
+                wcat = torch.zeros(new_windows_temporal.shape[0],
+                                   new_windows_temporal.shape[1], 
                                    2).to(windows['temporal'].device)
-                wcat[:, :, y_idx] = insample_y
+                wcat[:, :, y_idx] = new_windows_temporal
                 wcat[:, :, mask_idx] = insample_mask
                 windows["temporal"] = wcat
                 
@@ -831,6 +839,7 @@ class BaseFlex(BaseModel):
                                       device=windows["temporal"].device)
 
             windows = self._normalization(windows=windows, y_idx=y_idx)
+            keep_len = self.context_len+self.output_token_len*pos
 
             (
                 insample_y,
@@ -840,7 +849,7 @@ class BaseFlex(BaseModel):
                 hist_exog,
                 futr_exog,
                 stat_exog,
-            ) = self._parse_windows(batch, windows)
+            ) = self._parse_windows(batch, windows, keep_len=keep_len)
 
             windows_batch = dict(
                 insample_y=insample_y,  # [Ws, L]

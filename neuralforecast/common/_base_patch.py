@@ -591,7 +591,7 @@ class BasePatch(BaseModel):
                  # Shift insample_y by patches to include new appended predictions
                 insample_y = insample_y[:, self.output_patch_len*pos :]
                 insample_mask = insample_mask[:, self.output_patch_len*pos :]
-                
+
                 wcat = torch.zeros(insample_y.shape[0],
                                    insample_y.shape[1], 
                                    2).to(windows['temporal'].device)

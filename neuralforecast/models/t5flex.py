@@ -63,7 +63,7 @@ class TSTbackbone(nn.Module):
         if num_decoder_layers>0:
             head_nf = d_model * token_num_decoder 
         else:
-            head_nf = d_model * token_num
+            head_nf = d_model * (token_num+token_num_decoder-1)
 
         proj_embd = ProjectionEmbd(
             individual,
@@ -87,11 +87,13 @@ class TSTbackbone(nn.Module):
         self.head = proj_hd.projection_layer(proj_head_type)
 
     def forward(self, x):  
+        # project tokens
         u = self.W_P(x)  # x: [bs x nvars x patch_num x hidden_size]
-        
         # model
+
         z = self.backbone(u)  # z: [bs x nvars x patch_num x hidden_size]
-        #embeddings = z.clone() # WILLA ADDED THIS
+        # embeddings = z.clone() # WILLA ADDED THIS
+
         z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x hidden_size x patch_num]
         #print(z.shape)
         z = self.head(z)  # z: [bs x nvars x h]

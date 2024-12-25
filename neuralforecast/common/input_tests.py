@@ -1,4 +1,8 @@
 def check_input_validity(config):
+    
+    assert config['h'] % config['output_token_len']==0, "'h' must be a multiple of 'output_token_len'"
+    assert config['h'] % config['input_token_len']==0, "'h' must be a multiple of 'input_token_len'"
+        
     assert config['backbone_type'] in [
         "ttm", 
         "t5", 
@@ -15,7 +19,7 @@ def check_input_validity(config):
                         'google/t5-efficient-base'."
         
       
-    # Check number of decoder layers
+    # Check d_model
     d_model_check = {"t5": config['d_model'],
              "ttm": config['d_model'],
              "google/t5-efficient-tiny": 256,
