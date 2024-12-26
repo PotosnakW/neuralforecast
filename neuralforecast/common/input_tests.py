@@ -2,6 +2,9 @@ def check_input_validity(config):
     
     assert config['h'] % config['output_token_len']==0, "'h' must be a multiple of 'output_token_len'"
     assert config['h'] % config['input_token_len']==0, "'h' must be a multiple of 'input_token_len'"
+    
+    if config['output_token_len'] < config['h']:
+        config['padding_patch'] = None
         
     assert config['backbone_type'] in [
         "ttm", 

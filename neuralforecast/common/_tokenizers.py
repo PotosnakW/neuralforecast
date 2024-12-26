@@ -23,9 +23,8 @@ class Tokenizer():
         self.n_bins = n_bins
         self.n_special_tokens = n_special_tokens
         
-        if padding_patch=="end":
-            self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
-            
+        self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
+
         self.centers = torch.linspace(
             low_limit,
             high_limit,
@@ -62,6 +61,7 @@ class Tokenizer():
 
         if self.padding_patch == "end":
             z = self.padding_patch_layer(z)
+
         patches = z.unfold(
                 dimension=-1, size=self.token_len, step=self.stride
         ) #[bs x nvars x patch_num x patch_len]

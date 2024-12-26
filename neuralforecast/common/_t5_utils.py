@@ -35,8 +35,8 @@ class CustomT5Block(T5Block):
                 )
             )
 
-        if pe =="rope":
-            if i == 0: 
+        elif pe =="rope":
+            if layer_idx == 0: 
                 self.layer.append(
                     CustomT5LayerSelfAttention(config, 
                                                pe=pe, 

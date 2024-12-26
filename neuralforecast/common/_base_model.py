@@ -441,7 +441,7 @@ class BaseModel(pl.LightningModule):
         self.validation_step_outputs.clear()  # free memory (compute `avg_loss` per epoch)
         
         # Willa added for grokking experiments
-        if (self.ckpt_path is not None) & (self.global_step % 100 == 0):
+        if (self.ckpt_path is not None) & (self.global_step % 50 == 0):
             self.save(self.ckpt_path+f'/{self.alias}_step:{self.global_step}.ckpt')
 
     def save(self, path):

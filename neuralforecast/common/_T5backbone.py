@@ -26,8 +26,7 @@ class T5backbone(nn.Module):  # i means channel-independent
         self.d_model = config['d_model']     
         self.decoder = None # Assume encoder-only first
         self.token_num_decoder = config['token_num_decoder']
-        token_num_total = self.token_num+self.token_num_decoder-1 # account for auto 1 decoder token
-        self.token_num_total = token_num_total
+        self.token_num_total = self.token_num+self.token_num_decoder-1 # account for auto 1 decoder token
         self.W_pos = PositionalEncoding(pe=config['pe']).output(config['learn_pe'], 
                                                                 self.token_num_total, 
                                                                 config['d_model']
@@ -73,23 +72,19 @@ class T5backbone(nn.Module):  # i means channel-independent
 
     def forward(self, x) -> torch.Tensor:  # x:  [bs x nvars x patch_num x hidden_size]
         bs = x.shape[0]
-        patch_num_pad = self.token_num_total - x.shape[2]
-
+        u = torch.reshape(
+            x, (bs * self.num_vars, x.shape[2], self.d_model)
+        )  # u: [bs * nvars x token_num x hidden_size]
+        
         attn_mask = torch.ones(bs, 
                                self.token_num_total, 
                                dtype=torch.long
                               ).to(x.device)
 
+        patch_num_pad = self.token_num_total - x.shape[2]
         if patch_num_pad != 0:
-            attn_mask[:, self.token_num_total-patch_num_pad] = 0
-        
-        u = torch.reshape(
-            x, (bs * self.num_vars, x.shape[2], self.d_model)
-        )  # u: [bs * nvars x token_num x hidden_size]
-        
-        patch_num_pad = self.token_num_total - u.shape[1]
-        if patch_num_pad != 0: 
             u = F.pad(u, (0, 0, 0, patch_num_pad), mode='constant', value=0)
+            attn_mask[:, -patch_num_pad:] = 0
 
         u = self.dropout(u + self.W_pos)  
         

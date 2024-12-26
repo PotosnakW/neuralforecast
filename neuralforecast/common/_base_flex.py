@@ -99,8 +99,7 @@ class BaseFlex(BaseModel):
             self.num_decomps = 2
         elif self.decomposition_type == 'fourier_bases':
             self.num_decomps = top_k + 1
-            
-        
+
         if tokenizer_type=='patch_fixed_length':
             input_token_len = torch.minimum(
                                     torch.tensor(input_token_len), 
@@ -616,15 +615,11 @@ class BaseFlex(BaseModel):
             # Concatenate along dimension 1
             pos = fi % n_repeats
             if pos != 0:
-                seq_preds = previous_preds[:, : self.output_token_len*pos].clone()
-                y_hat, _, _ = self._inv_normalization(
-                        y_hat=seq_preds,
-                        y_idx=y_idx,
-                        )
+                prev_y_hat = previous_preds[:, : self.output_token_len*pos].clone()
 
                 horizon_filler = torch.zeros(insample_y.shape[0], self.h).to(windows['temporal'].device)
                 new_windows_temporal = torch.cat((insample_y, 
-                                        y_hat, 
+                                        prev_y_hat, 
                                         horizon_filler), 
                                        dim=1)
                 
@@ -671,7 +666,6 @@ class BaseFlex(BaseModel):
                 futr_exog,
                 stat_exog,
             ) = self._parse_windows(batch, windows, keep_len=keep_len)
-            print('insample_y', insample_y.shape)
 
             windows_batch = dict(
                 insample_y=insample_y,  # [Ws, L]
@@ -793,15 +787,11 @@ class BaseFlex(BaseModel):
             # Concatenate along dimension 1
             pos = fi % n_repeats
             if pos != 0:
-                seq_preds = previous_preds[:, : self.output_token_len*pos].clone()
-                y_hat, _, _ = self._inv_normalization(
-                    y_hat=seq_preds,
-                    y_idx=y_idx,
-                    )
+                prev_y_hat = previous_preds[:, : self.output_token_len*pos].clone()
 
                 horizon_filler = torch.zeros(insample_y.shape[0], self.h).to(windows['temporal'].device)
                 new_windows_temporal = torch.cat((insample_y, 
-                                        y_hat, 
+                                        prev_y_hat, 
                                         horizon_filler), 
                                        dim=1)
                 
