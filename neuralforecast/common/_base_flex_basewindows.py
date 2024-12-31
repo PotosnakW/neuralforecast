@@ -18,8 +18,8 @@ from ..common._tokenizers import Tokenizer
 from ..common._decompositions import HierarchicalDecomposition
 
 # %% ../../nbs/common.base_windows.ipynb 6
-class BaseFlex(BaseModel):
-    """Base Flex
+class BaseFlexBaseWindows(BaseModel):
+    """Base Windows
 
     Base class for all windows-based models. The forecasts are produced separately
     for each window, which are randomly sampled during training.
@@ -90,6 +90,7 @@ class BaseFlex(BaseModel):
             **trainer_kwargs,
         )
         
+        
         self.decomposition_type = decomposition_type
         self.decompose = HierarchicalDecomposition(decomposition_type, 
                                                    top_k=top_k, 
@@ -117,8 +118,7 @@ class BaseFlex(BaseModel):
                                    lag=lag,
                                    padding_patch=padding_patch,
                                    )
-        
-        self.input_token_len = input_token_len
+
         self.output_token_len = torch.minimum(
                                     torch.tensor(output_token_len), 
                                     torch.tensor(h)
@@ -126,13 +126,18 @@ class BaseFlex(BaseModel):
         
         self.c_out = self.loss.outputsize_multiplier
 
+        # Padder to complete train windows,
+        # example y=[1,2,3,4,5] h=3 -> last y_output = [5,0,0]
         self.h = h
         self.context_len = context_len
         self.windows_batch_size = windows_batch_size
         self.start_padding_enabled = start_padding_enabled
         if start_padding_enabled:
+            # self.padder_train = nn.ConstantPad1d(
+            #     padding=(self.context_len - 1, self.h), value=0
+            # )
             self.padder_train = nn.ConstantPad1d(
-                padding=(self.context_len - 1, self.h), value=0
+                padding=(self.context_len - 1, self.output_token_len), value=0
             )
         else:
             #self.padder_train = nn.ConstantPad1d(padding=(0, self.h), value=0)
@@ -144,8 +149,7 @@ class BaseFlex(BaseModel):
             self.valid_batch_size = batch_size
         else:
             self.valid_batch_size = valid_batch_size
-
-        if inference_windows_batch_size is None: 
+        if inference_windows_batch_size is None:
             self.inference_windows_batch_size = windows_batch_size
         else:
             self.inference_windows_batch_size = inference_windows_batch_size
@@ -285,19 +289,14 @@ class BaseFlex(BaseModel):
                     padder_left = nn.ConstantPad1d(
                         padding=(self.context_len - initial_input, 0), value=0
                     )
-                    temporal = padder_left(temporal) 
+                    temporal = padder_left(temporal)
 
             if (
                 (step == "predict")
                 and (self.test_size == 0)
                 and (len(self.futr_exog_list) == 0)
             ):
-                #Willa update
-                #shouldn't change anything since insample_y and outsample_y  
-                # depend on self.input_size only
-
-                #padder_right = nn.ConstantPad1d(padding=(0, self.h), value=0)
-                padder_right = nn.ConstantPad1d(padding=(0, self.output_token_len), value=0) 
+                padder_right = nn.ConstantPad1d(padding=(0, self.output_token_len), value=0)
                 temporal = padder_right(temporal)
 
             windows = temporal.unfold(
@@ -333,7 +332,7 @@ class BaseFlex(BaseModel):
         else:
             raise ValueError(f"Unknown step {step}")
 
-    def _normalization(self, windows, y_idx):
+    def _normalization(self, windows, output_len, y_idx):
         # windows are already filtered by train/validation/test
         # from the `create_windows_method` nor leakage risk
         temporal = windows["temporal"]  # B, L+H, C
@@ -348,8 +347,8 @@ class BaseFlex(BaseModel):
         temporal_idxs = np.append(y_idx, temporal_idxs)
         temporal_data = temporal[:, :, temporal_idxs]
         temporal_mask = temporal[:, :, temporal_cols.get_loc("available_mask")].clone()
-        if self.h > 0:
-            temporal_mask[:, -self.h :] = 0.0
+        if output_len > 0:
+            temporal_mask[:, -output_len :] = 0.0
 
         # Normalize. self.scaler stores the shift and scale for inverse transform
         temporal_mask = temporal_mask.unsqueeze(
@@ -395,7 +394,6 @@ class BaseFlex(BaseModel):
 
         return y_hat, y_loc, y_scale
 
-    
     def _parse_windows(self, batch, windows, keep_len=None):
         
         if keep_len == None:
@@ -451,15 +449,13 @@ class BaseFlex(BaseModel):
             stat_exog,
         )
 
-
     def training_step(self, batch, batch_idx):
         # Create and normalize windows [Ws, L+H, C]
         window_size = self.context_len + self.output_token_len
         windows = self._create_windows(batch, window_size=window_size, step="train")
         y_idx = batch["y_idx"]
-        #original_outsample_y = torch.clone(windows["temporal"][:, -self.h :, y_idx])
         original_outsample_y = torch.clone(windows["temporal"][:, -self.output_token_len :, y_idx])
-        windows = self._normalization(windows=windows, y_idx=y_idx)
+        windows = self._normalization(windows=windows, output_len=self.output_token_len, y_idx=y_idx)
 
         # Parse windows
         (
@@ -480,18 +476,18 @@ class BaseFlex(BaseModel):
             stat_exog=stat_exog,
         )  # [Ws, S]
 
+        # Model Predictions
         output = self.model_output(windows_batch)
         # binning creates classes
         if self.tokenizer_type=='bins':
-            original_outsample_y = outsample_y #torch.clone(windows["temporal"][:, -self.output_token_len :, y_idx])
+            original_outsample_y = outsample_y
             original_outsample_y = original_outsample_y.unsqueeze(1)
             original_outsample_y = self.tokenizer.output_transform(original_outsample_y)
             original_outsample_y = original_outsample_y.squeeze(1).squeeze(-1)
-
+        
         if self.loss.is_distribution_output:
             _, y_loc, y_scale = self._inv_normalization(
                 y_hat=outsample_y, 
-                #temporal_cols=batch["temporal_cols"], 
                 y_idx=y_idx
             )
             outsample_y = original_outsample_y
@@ -524,8 +520,7 @@ class BaseFlex(BaseModel):
     ):
         if self.loss.is_distribution_output:
             _, y_loc, y_scale = self._inv_normalization(
-                y_hat=outsample_y, 
-                #temporal_cols=temporal_cols,
+                y_hat=outsample_y,
                 y_idx=y_idx
             )
             distr_args = self.loss.scale_decouple(
@@ -550,8 +545,7 @@ class BaseFlex(BaseModel):
             )
         else:
             output, _, _ = self._inv_normalization(
-                y_hat=output, 
-                #temporal_cols=temporal_cols,
+                y_hat=output,
                 y_idx=y_idx
             )
             valid_loss = self.valid_loss(
@@ -559,113 +553,42 @@ class BaseFlex(BaseModel):
             )
         return valid_loss
 
-
     def validation_step(self, batch, batch_idx):
         if self.val_size == 0:
             return np.nan
 
-        # using window_size = self.context_len + self.token_len is given error when identifying windows with w_idxs
-        window_size = self.context_len + self.h
-
         # TODO: Hack to compute number of windows
+        window_size = self.context_len + self.h
         windows = self._create_windows(batch, window_size=window_size, step="val")
         n_windows = len(windows["temporal"])
         y_idx = batch["y_idx"]
-        mask_idx = batch["temporal_cols"].get_loc("available_mask")
-        
+
         # Number of windows in batch
         windows_batch_size = self.inference_windows_batch_size
-
-        #Calculate how many times each window should be repeated
-        n_repeats = int(torch.ceil(torch.tensor([self.h/self.output_token_len])))
-        # Repeat each index in the range of n_windows, n_repeats times
+        if windows_batch_size < 0:
+            windows_batch_size = n_windows
         n_batches = int(np.ceil(n_windows / windows_batch_size))
-        repeated_idxs = torch.arange(n_batches).repeat_interleave(n_repeats)
-        
-        # if n_windows < windows_batch_size results will equal n_windows
-        # if n_batches==1 and n_windows<windows_batch_size, previous_preds.shape[0]==n_windows==remainder_windows_count
-        remainder_windows_count = n_windows%windows_batch_size
 
         valid_losses = []
         batch_sizes = []
-
-        previous_preds = torch.zeros(windows_batch_size, self.output_token_len*n_repeats, 
-                                     device=windows["temporal"].device)
-        previous_params = torch.zeros(windows_batch_size, self.output_token_len*n_repeats, self.c_out, 
-                                      device=windows["temporal"].device)
-
-        for fi, i in enumerate(repeated_idxs):
+        for i in range(n_batches):
             # Create and normalize windows [Ws, L+H, C]
             w_idxs = np.arange(
                 i * windows_batch_size, min((i + 1) * windows_batch_size, n_windows)
             )
             windows = self._create_windows(batch, window_size=window_size, step="val", w_idxs=w_idxs)
             original_outsample_y = torch.clone(windows["temporal"][:, -self.h :, y_idx])
+            windows = self._normalization(windows=windows, output_len=self.h, y_idx=y_idx)
 
             (
                 insample_y,
                 insample_mask,
                 _,
-                _,
+                outsample_mask,
                 hist_exog,
                 futr_exog,
                 stat_exog,
             ) = self._parse_windows(batch, windows)
-
-            # Concatenate along dimension 1
-            pos = fi % n_repeats
-            if pos != 0:
-                prev_y_hat = previous_preds[:, : self.output_token_len*pos].clone()
-
-                horizon_filler = torch.zeros(insample_y.shape[0], self.h).to(windows['temporal'].device)
-                new_windows_temporal = torch.cat((insample_y, 
-                                        prev_y_hat, 
-                                        horizon_filler), 
-                                       dim=1)
-                
-                extend_mask = torch.ones(insample_y.shape[0],
-                                    self.output_token_len*pos
-                                    ).to(windows['temporal'].device)
-                insample_mask = torch.cat((insample_mask, 
-                                           extend_mask,
-                                           horizon_filler),
-                                          dim=1)
-
-                 # Shift insample_y by patches to include new appended predictions
-                #insample_y = insample_y[:, self.output_token_len*pos :]
-                #insample_mask = insample_mask[:, self.output_token_len*pos :]
-
-                wcat = torch.zeros(new_windows_temporal.shape[0],
-                                   new_windows_temporal.shape[1], 
-                                   2).to(windows['temporal'].device)
-                wcat[:, :, y_idx] = new_windows_temporal
-                wcat[:, :, mask_idx] = insample_mask
-                windows["temporal"] = wcat
-
-            else:
-                if (i == torch.max(repeated_idxs)) & (remainder_windows_count!=0):
-                    previous_preds = torch.zeros(remainder_windows_count, self.output_token_len*n_repeats, 
-                                                 device=windows["temporal"].device)
-                    previous_params = torch.zeros(remainder_windows_count, self.output_token_len*n_repeats, self.c_out,
-                                      device=windows["temporal"].device)
-                else:
-                    previous_preds = torch.zeros(windows_batch_size, self.output_token_len*n_repeats, 
-                                     device=windows["temporal"].device)
-                    previous_params = torch.zeros(windows_batch_size, self.output_token_len*n_repeats, self.c_out,
-                                      device=windows["temporal"].device)
-
-            windows = self._normalization(windows=windows, y_idx=y_idx)
-            keep_len = self.context_len+self.output_token_len*pos
-            
-            (
-                insample_y,
-                insample_mask,
-                outsample_y, # willa add
-                outsample_mask, # willa add
-                hist_exog,
-                futr_exog,
-                stat_exog,
-            ) = self._parse_windows(batch, windows, keep_len=keep_len)
 
             windows_batch = dict(
                 insample_y=insample_y,  # [Ws, L]
@@ -675,46 +598,25 @@ class BaseFlex(BaseModel):
                 stat_exog=stat_exog,
             )  # [Ws, S]
 
-            output = self.model_output(windows_batch)
-
-            y_hat = self._get_predictions(
-                        batch=batch,
-                        insample_y=insample_y,
-                        output_batch=output,
-                        y_idx=batch["y_idx"],
-                        )
-
-            if self.loss.is_distribution_output:
-                y_hat = y_hat[:, :, 0]
-                output_stack = torch.stack(output, dim=-1)
-                previous_params[:, self.output_token_len*pos : self.output_token_len*pos+self.output_token_len, :] = output_stack
-            previous_preds[:, self.output_token_len*pos : self.output_token_len*pos+self.output_token_len] = y_hat
-
-            if (fi+1) % n_repeats == 0:
-                if self.loss.is_distribution_output:
-                    output_horizon = previous_params[:, : self.h, :]
-                    output_horizon = torch.unbind(output_horizon, dim=-1)
-                else:
-                    output_horizon = previous_preds[:, : self.h]
-                
-                # binning creates classes
-                if self.tokenizer_type=='bins':
+            # Model Predictions
+            output_batch = self.model_output(windows_batch)
+            
+            # binning creates classes
+            if self.tokenizer_type=='bins':
                     original_outsample_y = outsample_y
                     original_outsample_y = original_outsample_y.unsqueeze(1)
                     original_outsample_y = self.tokenizer.output_transform(original_outsample_y)
                     original_outsample_y = original_outsample_y.squeeze(1).squeeze(-1)
 
-                valid_loss_batch = self._compute_valid_loss(
-                    outsample_y=original_outsample_y,
-                    output=output_horizon,
-                    outsample_mask=outsample_mask,
-                    temporal_cols=batch["temporal_cols"],
-                    y_idx=batch["y_idx"],
-                )
-                valid_losses.append(valid_loss_batch)
-                batch_sizes.append(len(output))
-            else:
-                continue
+            valid_loss_batch = self._compute_valid_loss(
+                outsample_y=original_outsample_y,
+                output=output_batch,
+                outsample_mask=outsample_mask,
+                temporal_cols=batch["temporal_cols"],
+                y_idx=batch["y_idx"],
+            )
+            valid_losses.append(valid_loss_batch)
+            batch_sizes.append(len(output_batch))
 
         valid_loss = torch.stack(valid_losses)
         batch_sizes = torch.tensor(batch_sizes, device=valid_loss.device)
@@ -734,7 +636,6 @@ class BaseFlex(BaseModel):
         self.validation_step_outputs.append(valid_loss)
         return valid_loss
 
-
     def predict_step(self, batch, batch_idx):
 
         window_size = self.context_len + self.h
@@ -743,93 +644,21 @@ class BaseFlex(BaseModel):
         windows = self._create_windows(batch, window_size=window_size, step="predict")
         n_windows = len(windows["temporal"])
         y_idx = batch["y_idx"]
-        mask_idx = batch["temporal_cols"].get_loc("available_mask")
 
         # Number of windows in batch
         windows_batch_size = self.inference_windows_batch_size
-
-        #Calculate how many times each window should be repeated
-        n_repeats = int(torch.ceil(torch.tensor([self.h/self.output_token_len])))
-        # Repeat each index in the range of n_windows, n_repeats times
+        if windows_batch_size < 0:
+            windows_batch_size = n_windows
         n_batches = int(np.ceil(n_windows / windows_batch_size))
-        repeated_idxs = torch.arange(n_batches).repeat_interleave(n_repeats)
-        
-        # if n_windows < windows_batch_size results will equal n_windows
-        remainder_windows_count = n_windows%windows_batch_size
-        
-        previous_preds = torch.zeros(windows_batch_size, 
-                                     self.output_token_len*n_repeats, 
-                                     device=windows["temporal"].device
-                                    )
-        
-        previous_params = torch.zeros(windows_batch_size, self.output_token_len*n_repeats, self.c_out, 
-                                      device=windows["temporal"].device)
 
         y_hats = []
-        for fi, i in enumerate(repeated_idxs):
+        for i in range(n_batches):
             # Create and normalize windows [Ws, L+H, C]
             w_idxs = np.arange(
                 i * windows_batch_size, min((i + 1) * windows_batch_size, n_windows)
             )
             windows = self._create_windows(batch, window_size=window_size, step="predict", w_idxs=w_idxs)
-
-            # parse_windows removes horizon from insample_y
-            (
-                insample_y,
-                insample_mask,
-                _,
-                _,
-                hist_exog,
-                futr_exog,
-                stat_exog,
-            ) = self._parse_windows(batch, windows) 
-
-            # Concatenate along dimension 1
-            pos = fi % n_repeats
-            if pos != 0:
-                prev_y_hat = previous_preds[:, : self.output_token_len*pos].clone()
-
-                horizon_filler = torch.zeros(insample_y.shape[0], self.h).to(windows['temporal'].device)
-                new_windows_temporal = torch.cat((insample_y, 
-                                        prev_y_hat, 
-                                        horizon_filler), 
-                                       dim=1)
-                
-                extend_mask = torch.ones(insample_y.shape[0],
-                                    self.output_token_len*pos
-                                    ).to(windows['temporal'].device)
-                insample_mask = torch.cat((insample_mask, 
-                                           extend_mask,
-                                           horizon_filler),
-                                          dim=1)
-
-                 # Shift insample_y by patches to include new appended predictions
-                #insample_y = insample_y[:, self.output_token_len*pos :]
-                #insample_mask = insample_mask[:, self.output_token_len*pos :]
-
-                wcat = torch.zeros(new_windows_temporal.shape[0],
-                                   new_windows_temporal.shape[1], 
-                                   2).to(windows['temporal'].device)
-                wcat[:, :, y_idx] = new_windows_temporal
-                wcat[:, :, mask_idx] = insample_mask
-                windows["temporal"] = wcat
-                
-            else:
-                if (i == torch.max(repeated_idxs)) & (remainder_windows_count!=0):
-                    previous_preds = torch.zeros(remainder_windows_count, self.output_token_len*n_repeats, 
-                                                 device=windows["temporal"].device
-                                                )
-                    previous_params = torch.zeros(remainder_windows_count, self.output_token_len*n_repeats, self.c_out, 
-                                      device=windows["temporal"].device)
-                else:
-                    previous_preds = torch.zeros(windows_batch_size, self.output_token_len*n_repeats, 
-                                                 device=windows["temporal"].device
-                                                )
-                    previous_params = torch.zeros(windows_batch_size, self.output_token_len*n_repeats, self.c_out, 
-                                      device=windows["temporal"].device)
-
-            windows = self._normalization(windows=windows, y_idx=y_idx)
-            keep_len = self.context_len+self.output_token_len*pos
+            windows = self._normalization(windows=windows, output_len=self.h, y_idx=y_idx)
 
             (
                 insample_y,
@@ -839,7 +668,7 @@ class BaseFlex(BaseModel):
                 hist_exog,
                 futr_exog,
                 stat_exog,
-            ) = self._parse_windows(batch, windows, keep_len=keep_len)
+            ) = self._parse_windows(batch, windows)
 
             windows_batch = dict(
                 insample_y=insample_y,  # [Ws, L]
@@ -849,37 +678,17 @@ class BaseFlex(BaseModel):
                 stat_exog=stat_exog,
             )  # [Ws, S]
 
-            output = self.model_output(windows_batch)
+            # Model Predictions
+            output_batch = self.model_output(windows_batch)
             
             y_hat = self._get_predictions(
                         batch=batch,
                         insample_y=insample_y,
-                        output_batch=output,
+                        output_batch=output_batch,
                         y_idx=batch["y_idx"],
                         )
-            if self.loss.is_distribution_output:
-                y_hat = y_hat[:, :, 0]
-                output_stack = torch.stack(output, dim=-1)
-                previous_params[:, self.output_token_len*pos : self.output_token_len*pos+self.output_token_len, :] = output_stack
-            previous_preds[:, self.output_token_len*pos : self.output_token_len*pos+self.output_token_len] = y_hat
-
-            if (fi+1) % n_repeats == 0:
-                if self.loss.is_distribution_output:
-                    output_horizon = previous_params[:, : self.h, :]
-                    output_horizon = torch.unbind(output_horizon, dim=-1)
-                else:
-                    output_horizon = previous_preds[:, : self.h]
-
-                y_hats.append(self._get_predictions(
-                    batch=batch,
-                    insample_y=insample_y,
-                    output_batch=output_horizon,
-                    y_idx=batch["y_idx"],
-                    )
-                )
-            else:
-                continue
-
+            y_hats.append(y_hat)
+            
         y_hat = torch.cat(y_hats, dim=0)
         if self.tokenizer_type=='bins':
             y_hat = self.tokenizer.unbin(y_hat)
@@ -887,7 +696,6 @@ class BaseFlex(BaseModel):
                     y_hat=y_hat,
                     y_idx=y_idx,
                     )
-
         return y_hat
 
 
@@ -896,11 +704,10 @@ class BaseFlex(BaseModel):
         if self.loss.is_distribution_output:
             _, y_loc, y_scale = self._inv_normalization(
                 y_hat=torch.empty(
-                    size=(insample_y.shape[0], self.h),
+                    size=(insample_y.shape[0], self.output_token_len),
                     dtype=output_batch[0].dtype,
                     device=output_batch[0].device,
                 ),
-               # temporal_cols=batch["temporal_cols"],
                 y_idx=y_idx,
             )
             distr_args = self.loss.scale_decouple(
@@ -912,16 +719,16 @@ class BaseFlex(BaseModel):
             if self.loss.return_params:
                 distr_args = torch.stack(distr_args, dim=-1)
                 distr_args = torch.reshape(
-                    distr_args, (len(windows["temporal"]), self.h, -1)
+                    distr_args, (len(windows["temporal"]), self.output_token_len, -1)
                 )
                 y_hat = torch.concat((y_hat, distr_args), axis=2)
         else:
             y_hat, _, _ = self._inv_normalization(
                 y_hat=output_batch,
-               # temporal_cols=batch["temporal_cols"],
                 y_idx=y_idx,
             )
-        return y_hat
+        return y_hat   
+
 
     def fit(
         self,
