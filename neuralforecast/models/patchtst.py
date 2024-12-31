@@ -15,6 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..common._base_windows import BaseWindows
+#from ..common._base_flex import BaseFlex
 
 from ..losses.pytorch import MAE
 
@@ -852,6 +853,7 @@ class _ScaledDotProductAttention(nn.Module):
 
 # %% ../../nbs/models.patchtst.ipynb 17
 class PatchTST(BaseWindows):
+#class PatchTST(BaseFlex):
     """PatchTST
 
     The PatchTST model is an efficient Transformer-based model for multivariate time series forecasting.
@@ -996,6 +998,45 @@ class PatchTST(BaseWindows):
             lr_scheduler_kwargs=lr_scheduler_kwargs,
             **trainer_kwargs
         )
+        # super(PatchTST, self).__init__(
+        #     h=h,
+        #     context_len=input_size,
+        #     input_token_len=patch_len, 
+        #     output_token_len=h,
+        #     stride=stride,
+        #     hist_exog_list=hist_exog_list,
+        #     stat_exog_list=stat_exog_list,
+        #     futr_exog_list=futr_exog_list,
+        #     exclude_insample_y=exclude_insample_y,
+        #     loss=loss,
+        #     valid_loss=valid_loss,
+        #     max_steps=max_steps,
+        #     learning_rate=learning_rate,
+        #     num_lr_decays=num_lr_decays,
+        #     early_stop_patience_steps=early_stop_patience_steps,
+        #     val_check_steps=val_check_steps,
+        #     batch_size=batch_size,
+        #     valid_batch_size=valid_batch_size,
+        #     windows_batch_size=windows_batch_size,
+        #     inference_windows_batch_size=inference_windows_batch_size,
+        #     start_padding_enabled=start_padding_enabled,
+        #     step_size=step_size,
+        #     scaler_type=scaler_type,
+        #     num_workers_loader=num_workers_loader,
+        #     drop_last_loader=drop_last_loader,
+        #     random_seed=random_seed,
+        #     optimizer=optimizer,
+        #     optimizer_kwargs=optimizer_kwargs,
+        #     lr_scheduler=lr_scheduler,
+        #     lr_scheduler_kwargs=lr_scheduler_kwargs,
+        #     #tokenizer_type='patch_fixed_len',
+        #     #lag=lag,
+        #     #padding_patch=padding_patch,
+        #     #decomposition_type=decomposition_type,
+        #     #top_k=top_k,
+        #     #moving_avg_window=moving_avg_window,
+        #     **trainer_kwargs
+        # )
 
         # Enforce correct patch_len, regardless of user input
         patch_len = min(input_size + stride, patch_len)

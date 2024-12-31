@@ -15,7 +15,6 @@ import torch.nn.functional as F
 
 from ..common._base_flex import BaseFlex
 from ..common._projections import ProjectionHead, ProjectionEmbd
-from ..common._tokenizers import Tokenizer
 from ..common._T5backbone import T5backbone
 from ..common._TTMbackbone import TTMbackbone
 from ..common.input_tests import check_input_validity
@@ -169,7 +168,7 @@ class T5Flex(BaseFlex):
         num_decoder_layers: int = 0,
         num_heads: int = 16,
         d_model: int = 128,
-        d_ff: int = 256,
+        d_ff: int = 128,
         dropout: float = 0.1,
         dropout_rate: float = 0.1, ##attn_dropout
         head_dropout: float = 0.0,
@@ -255,6 +254,7 @@ class T5Flex(BaseFlex):
 
         self.output_token_len = output_token_len
         c_out = self.loss.outputsize_multiplier
+        self.c_out = c_out
         c_in = 1  # Always univariate
         individual = False  # Separate heads for each time series
 
