@@ -54,8 +54,6 @@ from neuralforecast.models import (
     FEDformer,
     StemGNN,
     PatchTST,
-    PatchDecoder,
-    PatchEncoderDecoder,
     TimesNet,
     TimeLLM,
     TSMixer,
@@ -68,6 +66,7 @@ from neuralforecast.models import (
     SOFTS,
     TimeMixer,
     KAN,
+    T5Flex,
 )
 
 # %% ../nbs/core.ipynb 5
@@ -158,7 +157,6 @@ MODEL_FILENAME_DICT = {
     "autonhits": NHITS,
     "patchtst": PatchTST,
     "autopatchtst": PatchTST,
-    "patchdecoder": PatchDecoder,
     "rnn": RNN,
     "autornn": RNN,
     "stemgnn": StemGNN,
@@ -192,6 +190,7 @@ MODEL_FILENAME_DICT = {
     "autotimemixer": TimeMixer,
     "kan": KAN,
     "autokan": KAN,
+    "t5flex": T5Flex,
 }
 
 # %% ../nbs/core.ipynb 8
@@ -1424,6 +1423,28 @@ class NeuralForecast:
 
         with fsspec.open(f"{path}/configuration.pkl", "wb") as f:
             pickle.dump(config_dict, f)
+            
+    def save_configuration(
+        self,
+        path: str,
+        overwrite: bool = False,
+    ):    
+        
+     # Save configuration and parameters
+        config_dict = {
+            "h": self.h,
+            "freq": self.freq,
+            "sort_df": self.sort_df,
+            "_fitted": self._fitted,
+            "local_scaler_type": self.local_scaler_type,
+            "scalers_": self.scalers_,
+            "id_col": self.id_col,
+            "time_col": self.time_col,
+            "target_col": self.target_col,
+        }
+
+        with fsspec.open(f"{path}/configuration.pkl", "wb") as f:
+            pickle.dump(config_dict, f)
 
     @staticmethod
     def load(path, verbose=False, **kwargs):
@@ -1470,7 +1491,7 @@ class NeuralForecast:
             loaded_model = MODEL_FILENAME_DICT[model_class_name].load(
                 f"{path}/{model}", **kwargs
             )
-            loaded_model.alias = model_name
+            loaded_model.alias = model.replace('.ckpt', '') #model_name #Willa Changed this for grokked exps
             models.append(loaded_model)
             if verbose:
                 print(f"Model {model_name} loaded.")
