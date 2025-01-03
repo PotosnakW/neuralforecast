@@ -17,12 +17,10 @@ class ProjectionHead(nn.Module):
     """
 
     def __init__(
-        self, individual, n_vars, nf, h, c_out=1, head_dropout=0
+        self, individual, n_vars, nf, h, c_out=1, head_dropout=0, activation="GELU",
     ):
         super().__init__()
 
-        activation="ReLU"
-        
         self.individual = individual
         self.n_vars = n_vars
         self.nf = nf
@@ -91,7 +89,7 @@ class ProjectionEmbd(nn.Module):
     """
 
     def __init__(
-        self, individual, n_vars, nf, h, c_out=1, dropout=0
+        self, individual, n_vars, nf, h, c_out=1, dropout=0, activation="GELU",
     ):
         super().__init__()
 

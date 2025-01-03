@@ -7,7 +7,7 @@ class Tokenizer():
                  token_num, lag=None, padding_patch=None,
                  low_limit=-5.0, high_limit=5.0, 
                  #low_limit=-2, high_limit=2, 
-                 n_bins=10, n_special_tokens=0, #4094
+                 n_bins=20, n_special_tokens=0, #4094
                 ):
         # B = 4094 used in Chronos paper
         # bin centers c1 < . . . < cB on the real line where c1 = -15.0 and cB = 15.0

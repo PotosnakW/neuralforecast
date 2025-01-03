@@ -45,15 +45,22 @@ class MovingAvg(nn.Module):
     Moving average block to highlight the trend of time series
     """
 
-    def __init__(self, kernel_size, stride):
+    def __init__(self, kernel_size, stride, padding=0):
         super(MovingAvg, self).__init__()
         self.kernel_size = kernel_size
-        self.avg = nn.AvgPool1d(kernel_size=kernel_size, stride=stride, padding=0)
+        self.padding = 0
+        self.stride = stride
+        self.avg = nn.AvgPool1d(kernel_size=kernel_size, stride=stride, padding=self.padding)
 
     def forward(self, x):
         # padding on the both ends of time series
+        context_len = x.shape[-1]
+        pad = (self.kernel_size - 1) // 2
+        output_len = ((context_len+2*pad) + 2*self.padding - self.kernel_size) // self.stride + 1
         front = x[:, :, 0:1].repeat(1, 1, (self.kernel_size - 1) // 2)
-        end = x[:, :, -1:].repeat(1, 1, (self.kernel_size - 1) // 2)
+
+        diff = context_len - output_len
+        end = x[:, :, -1:].repeat(1, 1, (self.kernel_size - 1) // 2 + diff)
         x = torch.cat([front, x, end], dim=2)
         x = self.avg(x)
         return x

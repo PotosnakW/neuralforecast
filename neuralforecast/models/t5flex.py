@@ -44,6 +44,7 @@ class TSTbackbone(nn.Module):
         proj_embd_type="flatten",
         backbone_type="T5",
         head_dropout=0,
+        activation="GELU",
         individual=False,
     ):
 
@@ -71,6 +72,7 @@ class TSTbackbone(nn.Module):
             d_model,
             c_out, 
             head_dropout,
+            activation,
         )
 
         proj_hd = ProjectionHead(
@@ -80,6 +82,7 @@ class TSTbackbone(nn.Module):
             output_token_len,
             c_out,
             head_dropout,
+            activation,
         )
 
         self.W_P = proj_embd.projection_layer(proj_embd_type)
@@ -175,7 +178,7 @@ class T5Flex(BaseFlex):
         input_token_len: int = 16,
         output_token_len: int = 16,
         stride: int = 8,
-        activation: str = "gated-gelu",
+        activation: str = "GELU",
         learn_pos_embed: bool = True,
         loss=MAE(),
         valid_loss=None,
@@ -291,6 +294,7 @@ class T5Flex(BaseFlex):
             proj_embd_type=proj_embd_type,
             backbone_type=backbone_type,
             individual=individual,
+            activation=activation,
         )
 
     def forward(self, x):  # x: [batch, input_size]
