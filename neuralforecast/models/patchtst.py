@@ -938,6 +938,8 @@ class PatchTST(BaseWindows):
         attn_dropout: float = 0.0,
         patch_len: int = 16,
         stride: int = 8,
+        pe: str= 'zeros',
+        learn_pe: bool = False,
         revin: bool = True,
         revin_affine: bool = False,
         revin_subtract_last: bool = True,
@@ -1048,7 +1050,6 @@ class PatchTST(BaseWindows):
         padding_patch = "end"  # Padding at the end
         pretrain_head = False  # No pretrained head
         norm = "BatchNorm"  # Use BatchNorm (if batch_normalization is True)
-        pe = "zeros"  # Initial zeros for positional encoding
         d_k = None  # Key dimension
         d_v = None  # Value dimension
         store_attn = False  # Store attention weights
@@ -1084,7 +1085,7 @@ class PatchTST(BaseWindows):
             pre_norm=batch_normalization,
             store_attn=store_attn,
             pe=pe,
-            learn_pe=learn_pos_embed,
+            learn_pe=learn_pe,
             fc_dropout=fc_dropout,
             head_dropout=head_dropout,
             padding_patch=padding_patch,

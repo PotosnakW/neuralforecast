@@ -616,6 +616,7 @@ class BaseFlex(BaseModel):
                 previous_params = previous_params[:remainder_windows_count, :, :]
 
             windows = self._normalization(windows=windows, output_len=self.h, y_idx=y_idx)
+            #windows = self._normalization(windows=windows, output_len=self.h+self.output_token_len*pos, y_idx=y_idx)
             keep_len = self.context_len+self.output_token_len*pos
 
             (
@@ -756,9 +757,10 @@ class BaseFlex(BaseModel):
                 previous_preds = torch.zeros_like(previous_preds)
                 
             if (i == torch.max(repeated_idxs)) & (remainder_windows_count!=0):
-                previous_preds = previous_preds[:remainder_windows_count, :]
+                previous_preds = previous_preds[:remainder_windows_count, :, :]
 
             windows = self._normalization(windows=windows, output_len=self.h, y_idx=y_idx)
+            #windows = self._normalization(windows=windows, output_len=self.h+self.output_token_len*pos, y_idx=y_idx)
             keep_len = self.context_len+self.output_token_len*pos
 
             (
@@ -780,7 +782,9 @@ class BaseFlex(BaseModel):
             )  # [Ws, S]
 
             # Model Predictions
-            output_batch = self.model_output(windows_batch)
+            #output_batch = self.model_output(windows_batch) #uncommend for not embds
+            output_batch, embds = self.model_output(windows_batch)
+            return embds # commend out for not embds
             
             y_hat = self._get_predictions(
                         batch=batch,
@@ -981,7 +985,8 @@ class BaseFlex(BaseModel):
             x = self.tokenizer.output_transform(x) #x: [Batch, 1, num_tokens, input_token_len]
 
         # Model Predictions
-        output = self(x)
+        #output = self(x)
+        output, embds = self(x)
         
         # combine decomposed predictions
         if self.decomposition_type is not None:
@@ -990,7 +995,8 @@ class BaseFlex(BaseModel):
 
         output = self.loss.domain_map(output)
 
-        return output
+        #return output
+        return output, embds
 
     def decompose(self, dataset, step_size=1, random_seed=None, **data_module_kwargs):
         """Decompose Predictions.

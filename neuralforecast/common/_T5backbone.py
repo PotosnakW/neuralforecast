@@ -31,7 +31,7 @@ class T5backbone(nn.Module):  # i means channel-independent
                                                                 self.token_num_total, 
                                                                 config['d_model']
                                                                )
-        
+
         # Residual dropout
         self.dropout = nn.Dropout(config['dropout'])
 
@@ -99,8 +99,9 @@ class T5backbone(nn.Module):  # i means channel-independent
             ue = u.clone()
             ud = None
 
-        z = self.encoder(inputs_embeds=ue, attention_mask=attn_mask)
-        #print(z.last_hidden_state.shape)
+        #z = self.encoder(inputs_embeds=ue, attention_mask=attn_mask)
+        z = self.encoder(inputs_embeds=ue, attention_mask=attn_mask, output_hidden_states=True)
+        hidden_states = z.hidden_states
 
         #Decoder
         if self.decoder:
@@ -116,4 +117,4 @@ class T5backbone(nn.Module):  # i means channel-independent
             z, (-1, self.num_vars, z.shape[-2], z.shape[-1])
         )  # z: [bs x nvars x patch_num x hidden_size]
 
-        return z
+        return z, hidden_states

@@ -93,14 +93,14 @@ class TSTbackbone(nn.Module):
         u = self.W_P(x)  # x: [bs x nvars x patch_num x hidden_size]
         # model
 
-        z, emds = self.backbone(u)  # z: [bs x nvars x patch_num x hidden_size]
+        z = self.backbone(u)  # z: [bs x nvars x patch_num x hidden_size]
         # embeddings = z.clone() # WILLA ADDED THIS
 
         z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x hidden_size x patch_num]
         #print(z.shape)
         z = self.head(z)  # z: [bs x nvars x h]
 
-        return z, emds
+        return z
         #return z, embeddings # WILLA ADDED THIS
 
 # %% ../../nbs/models.patchtst.ipynb 17
@@ -303,9 +303,9 @@ class T5Flex(BaseFlex):
 
     def forward(self, x):  # x: [batch, input_size]
         
-        forecast, embs = self.model(x)
+        forecast = self.model(x)
         #x, embeddings = self.model(x) # Willa added 
         forecast = forecast.reshape(x.shape[0], self.output_token_len, self.c_out)  # x: [Batch, h, c_out]
         
-        return forecast, embs
+        return forecast
         #return forecast, embeddings # Willa added

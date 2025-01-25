@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
 
 class HierarchicalDecomposition:
     """
@@ -110,12 +112,16 @@ class FourierDecomp(nn.Module):
 
         bs = torch.exp(-2j * torch.pi * top_kvals * t)
         bs = torch.flip(bs, dims=(2,))
-        #basis_functions = (top_dft  * bs)/torch.sqrt(torch.tensor(seq_len))
-        basis_functions = bs/torch.sqrt(torch.tensor(seq_len)) # [bs, num_decomps, seq_len]
+        basis_functions = (top_dft  * bs)/torch.sqrt(torch.tensor(seq_len))
+        #basis_functions = bs/torch.sqrt(torch.tensor(seq_len)) # [bs, num_decomps, seq_len]
+
+        #correct for shift of 1
+        basis_functions = F.pad(basis_functions, (1, 0), mode='replicate', value=0)
+        basis_functions = basis_functions[:, :, :seq_len]
 
         basis_functions = basis_functions.unsqueeze(dim=-2) # [bs, num_decomps, 1, seq_len]
         residual = x - torch.sum(basis_functions, dim=1) # [bs, 1, seq_len]
         
-        basis_functions = list(torch.unbind(basis_functions, dim=1))
+        basis_functions = list(torch.unbind(basis_functions, dim=1))        
 
         return basis_functions, residual
