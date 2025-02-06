@@ -26,16 +26,14 @@ def main(args):
     if args.dataset_name == 'synthetic_sinusoid_composition':
         season_length = 48
 
-    if args.experiment_name = 'arima':
-
+    if args.experiment_name == 'arima':
         all_fcsts = pd.DataFrame()
         for id_ in train_df.unique_id.unique():
             print(id_)
             train_df_id = train_df[train_df.unique_id==id_].copy()
             test_df_id = test_df[test_df.unique_id==id_].copy()
     
-            sf = ARIMA(order=(0, 0, 2), season_length=season_length) # better model
-            #sf = ARIMA(order=(1, 0, 1), season_length=12)
+            sf = ARIMA(order=(0, 0, 2), season_length=season_length) 
             model = sf.fit(y=train_df_id.y.values)
     
             y_hat_dict = model.predict(h=args.h, level=None)
@@ -51,7 +49,7 @@ def main(args):
         sf = StatsForecast(models=[AutoETS(season_length=season_length, model='ZNA')], freq=args.freq)
         model = sf.fit(df=train_df)
         all_fcsts = model.predict(h=args.h)
-        all_fcsts['y'] = test_df['y'].values
+        all_fcsts['y'] = test_df.set_index('unique_id').loc[all_fcsts.unique_id.unique()].y.values
 
     os.makedirs(args.save_path, exist_ok=True)
     all_fcsts.to_csv(args.save_path+'/aggregate_model_aggregate_dataset_fcsts.csv', index=False)
