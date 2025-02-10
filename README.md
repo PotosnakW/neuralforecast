@@ -1,19 +1,17 @@
 ## Preprocess Data
-Preprocessing scripts are located in the `./data_preprocessing` folder. Preprocessed `simglucose` data from the open-source `simglucose` repository [1] is included in the `./data` folder.
+Data preprocessing scripts are located in the `./data_preprocessing` folder. Preprocessed `simglucose` data from the open-source `simglucose` repository [1] is included in the `./data` folder. Please see the `Data and Code Availability' section of our paper, which references the paper on the OhioT1DM 2018 and 2020 datasets containing directions for accessing these datasets, which require a Data Use Agreement (DUA).
 
 
 ## Train Models
 
 To train the models, follow these steps:
 
-1. Install the open-source Neuralforecast library [2]. We implemented our method using a copy of the Neuralforecast repository to leverage their model training framework. Also install the open-source Statsforecast library [3].
+1. Install the open-source Neuralforecast library [2]. We implemented our method by adopting the the Neuralforecast repository to leverage their model training framework. Also install the open-source Statsforecast library [3].
 
 ```bash
 pip install -e .
 pip install statsforecast
 ```
-
-
 
 2. Navigate to the `./train_models` folder and run the training script:
 
@@ -23,7 +21,7 @@ python run_training_scripts.py
 ```
 
 ## Evaluate Models
-To evaluate the models, open and run the `./evaluate_model.ipynb` notebook.
+The `./results_table.ipynb` notebook contains example code to get model MAE and RMSE results. 
 
 
 ## References:
