@@ -454,7 +454,6 @@ class Concentrator(nn.Module):
         assert type in [
             "log_normal",
             "sum_total",
-            "exponential",
         ], "treatment type not available."
 
         self.n_series = n_series
@@ -545,14 +544,6 @@ class Concentrator(nn.Module):
             treatment1 = self.log_normal(treatment_exog, treatment_var1, self.k_a1, idx)
             treatment2 = self.log_normal(treatment_exog, treatment_var2, self.k_a2, idx)
             treatment3 = self.log_normal(treatment_exog, treatment_var3, self.k_a3, idx)
-
-        elif self.type == "exponential":
-            treatment1 = self.exponential(
-                treatment_exog, treatment_var1, self.k_a1, idx
-            )
-            treatment2 = self.exponential(
-                treatment_exog, treatment_var2, self.k_a2, idx
-            )
 
         # Replace treatment variable with concentration
         treatment_exog_out = torch.zeros(treatment_exog.shape).to(treatment_exog.device)

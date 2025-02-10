@@ -2,8 +2,8 @@
 
 # %% auto 0
 __all__ = ['AutoRNN', 'AutoLSTM', 'AutoGRU', 'AutoTCN', 'AutoDeepAR', 'AutoDilatedRNN', 'AutoMLP', 'AutoNBEATS', 'AutoNBEATSx',
-           'AutoNHITS', 'AutoNHITS_TREAT', 'AutoTFT', 'AutoVanillaTransformer', 'AutoInformer', 'AutoAutoformer',
-           'AutoFEDformer', 'AutoPatchTST', 'AutoStemGNN', 'AutoHINT']
+           'AutoNHITS', 'AutoNHITS_TREAT', 'AutoDLinear', 'AutoTFT', 'AutoVanillaTransformer', 'AutoInformer', 'AutoAutoformer',
+           'AutoFEDformer', 'AutoPatchTST', 'AutoStemGNN', 'AutoHINT', 'AutoNBEATSx_TREAT']
 
 # %% ../nbs/models.ipynb 3
 from os import cpu_count
@@ -25,7 +25,9 @@ from .models.mlp import MLP
 from .models.nbeats import NBEATS
 from .models.nbeatsx import NBEATSx
 from .models.nhits import NHITS
+from .models.dlinear import DLinear
 from .models.nhits_treat import NHITS_TREAT
+from .models.nbeatsx_treat import NBEATSx_TREAT
 
 from .models.tft import TFT
 from .models.vanillatransformer import VanillaTransformer
@@ -461,6 +463,73 @@ class AutoMLP(BaseAuto):
             alias=alias,
         )
 
+# %% ../nbs/models.ipynb 58
+class AutoDLinear(BaseAuto):
+
+    default_config = {
+        "input_size_multiplier": [1, 2, 3, 4, 5],
+        "h": None,
+        "moving_avg_window": tune.choice([11, 25, 51]),
+        "learning_rate": tune.loguniform(1e-4, 1e-1),
+        "scaler_type": tune.choice([None, "robust", "standard"]),
+        "max_steps": tune.quniform(lower=500, upper=1500, q=100),
+        "batch_size": tune.choice([32, 64, 128, 256]),
+        "windows_batch_size": tune.choice([128, 256, 512, 1024]),
+        "loss": None,
+        "random_seed": tune.randint(lower=1, upper=20),
+    }
+
+    def __init__(
+        self,
+        h,
+        loss=MAE(),
+        valid_loss=None,
+        config=None,
+        search_alg=BasicVariantGenerator(random_state=1),
+        num_samples=10,
+        refit_with_val=False,
+        cpus=cpu_count(),
+        gpus=torch.cuda.device_count(),
+        verbose=False,
+        alias=None,
+        backend="ray",
+        callbacks=None,
+    ):
+
+        # Define search space, input/output sizes
+        if config is None:
+            config = self.get_default_config(h=h, backend=backend)
+
+        super(AutoDLinear, self).__init__(
+            cls_model=DLinear,
+            h=h,
+            loss=loss,
+            valid_loss=valid_loss,
+            config=config,
+            search_alg=search_alg,
+            num_samples=num_samples,
+            refit_with_val=refit_with_val,
+            cpus=cpus,
+            gpus=gpus,
+            verbose=verbose,
+            alias=alias,
+            #backend=backend,
+            #callbacks=callbacks,
+        )
+
+    @classmethod
+    def get_default_config(cls, h, backend, n_series=None):
+        config = cls.default_config.copy()
+        config["input_size"] = tune.choice(
+            [h * x for x in config["input_size_multiplier"]]
+        )
+        config["step_size"] = tune.choice([1, h])
+        del config["input_size_multiplier"]
+        if backend == "optuna":
+            config = cls._ray_config_to_optuna(config)
+
+        return config
+
 # %% ../nbs/models.ipynb 33
 class AutoNBEATS(BaseAuto):
     default_config = {
@@ -706,6 +775,65 @@ class AutoNHITS_TREAT(BaseAuto):
 
         super(AutoNHITS_TREAT, self).__init__(
             cls_model=NHITS_TREAT,
+            h=h,
+            loss=loss,
+            valid_loss=valid_loss,
+            config=config,
+            search_alg=search_alg,
+            num_samples=num_samples,
+            refit_with_val=refit_with_val,
+            cpus=cpus,
+            gpus=gpus,
+            verbose=verbose,
+            alias=alias,
+        )
+        
+# %% ../nbs/models.ipynb 36
+class AutoNBEATSx_TREAT(BaseAuto):
+    default_config = {
+        "input_size_multiplier": [1, 2, 3, 4, 5],
+        "h": None,
+        "learning_rate": tune.loguniform(1e-4, 1e-1),
+        "scaler_type": tune.choice([None, "robust", "standard"]),
+        "max_steps": tune.choice([500, 1000]),
+        "batch_size": tune.choice([32, 64, 128, 256]),
+        "windows_batch_size": tune.choice([128, 256, 512, 1024]),
+        "loss": None,
+        "random_seed": tune.randint(1, 20),
+    }
+
+    def __init__(
+        self,
+        h,
+        n_series,
+        loss=MAE(),
+        valid_loss=None,
+        config=None,
+        search_alg=BasicVariantGenerator(random_state=1),
+        num_samples=10,
+        refit_with_val=False,
+        cpus=cpu_count(),
+        gpus=torch.cuda.device_count(),
+        verbose=False,
+        alias=None,
+    ):
+        # Define search space, input/output sizes
+        if config is None:
+            config = self.default_config.copy()
+            config["input_size"] = tune.choice(
+                [h * x for x in self.default_config["input_size_multiplier"]]
+            )
+
+            # Rolling windows with step_size=1 or step_size=h
+            # See `BaseWindows` and `BaseRNN`'s create_windows
+            config["step_size"] = tune.choice([1, h])
+            del config["input_size_multiplier"]
+            
+        # Always use n_series from parameters
+        config["n_series"] = n_series
+
+        super(AutoNBEATSx_TREAT, self).__init__(
+            cls_model=NBEATSx_TREAT,
             h=h,
             loss=loss,
             valid_loss=valid_loss,

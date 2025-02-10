@@ -899,6 +899,7 @@ class PatchTST(BaseWindows):
         res_attention: bool = True,
         batch_normalization: bool = False,
         learn_pos_embed: bool = True,
+        pe = "zeros",
         loss=MAE(),
         valid_loss=None,
         max_steps: int = 5000,
@@ -961,7 +962,7 @@ class PatchTST(BaseWindows):
         padding_patch = "end"  # Padding at the end
         pretrain_head = False  # No pretrained head
         norm = "BatchNorm"  # Use BatchNorm (if batch_normalization is True)
-        pe = "zeros"  # Initial zeros for positional encoding
+       # pe = "zeros"  # Initial zeros for positional encoding
         d_k = None  # Key dimension
         d_v = None  # Value dimension
         store_attn = False  # Store attention weights

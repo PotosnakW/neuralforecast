@@ -2,6 +2,7 @@ from ray import tune
 import torch
 import re
 
+
 def get_nhits_experiment_space(args):
     space = {'max_steps': tune.choice([2000]),
                 'val_check_steps': 100,
@@ -113,3 +114,104 @@ def get_tcn_experiment_space(args):
 
     return space
 
+def get_dlinear_experiment_space(args):
+    space = {'input_size': args.input_size,
+            'max_steps': tune.choice([2000]),
+            'val_check_steps': 100,
+            'stat_exog_list': tune.choice([args.exog['stat_exog_list']]),
+            'hist_exog_list': tune.choice([args.exog['hist_exog_list']]),
+            'futr_exog_list': tune.choice([args.exog['futr_exog_list']]),
+            'moving_avg_window': tune.choice([5, 15, 25, 35]),
+            'learning_rate': tune.loguniform(1e-4, 1e-1),
+            'early_stop_patience_steps': 5,
+            'batch_size': 4,
+            'scaler_type': 'minmax_treatment',
+            'random_seed': tune.choice([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+            }
+
+    return space
+
+def get_tft_experiment_space(args):
+    space = {'input_size': args.input_size,
+            'max_steps': tune.choice([2000]),
+            'val_check_steps': 100,
+            'stat_exog_list': tune.choice([args.exog['stat_exog_list']]),
+            'hist_exog_list': tune.choice([args.exog['hist_exog_list']]),
+            'futr_exog_list': tune.choice([args.exog['futr_exog_list']]),
+            'hidden_size': tune.choice([128, 256, 512]),
+            'n_head': tune.choice([4, 8, 16]),
+            'dropout': tune.choice([0.0]),
+            'attn_dropout': tune.choice([0.0]),
+            'learning_rate': tune.loguniform(1e-4, 1e-1),
+            'early_stop_patience_steps': 5,
+            'batch_size': 4,
+            'scaler_type': 'minmax_treatment',
+            'random_seed': tune.choice([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+            }
+
+    return space
+
+def get_patchtst_experiment_space(args):
+    space = {'input_size': args.input_size,
+            'max_steps': tune.choice([2000]),
+            'val_check_steps': 100,
+            'stat_exog_list': tune.choice([args.exog['stat_exog_list']]),
+            'hist_exog_list': tune.choice([args.exog['hist_exog_list']]),
+            'futr_exog_list': tune.choice([args.exog['futr_exog_list']]),
+            'hidden_size': tune.choice([128, 256, 512]),
+            'patch_len': tune.choice([8, 16, 32, 64, 96, 128]),
+            'n_heads': tune.choice([4, 8, 16]),
+            'encoder_layers': tune.choice([3, 4]),
+            'dropout': tune.choice([0.0]),
+            'attn_dropout':tune.choice([0.0]),
+            'learn_pos_embed':False,
+            'pe': 'sincos',
+            'learning_rate': tune.loguniform(1e-4, 1e-1),
+            'early_stop_patience_steps': 5,
+            'batch_size': 4,
+            'scaler_type': 'minmax_treatment',
+            'random_seed': tune.choice([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+            }
+
+    return space
+
+def get_informer_experiment_space(args):
+    space = {'input_size': args.input_size,
+            'max_steps': tune.choice([2000]),
+            'val_check_steps': 100,
+            'stat_exog_list': tune.choice([args.exog['stat_exog_list']]),
+            'hist_exog_list': tune.choice([args.exog['hist_exog_list']]),
+            'futr_exog_list': tune.choice([args.exog['futr_exog_list']]),
+            'hidden_size': tune.choice([128, 256, 512]),
+            'n_head': tune.choice([4, 8, 16]),
+            'encoder_layers': tune.choice([3, 4]),
+            'decoder_layers': tune.choice([1, 2]),
+            'dropout': tune.choice([0.0]),
+            'learning_rate': tune.loguniform(1e-4, 1e-1),
+            'early_stop_patience_steps': 5,
+            'batch_size': 4,
+            'scaler_type': 'minmax_treatment',
+            'random_seed': tune.choice([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+            }
+
+    return space
+
+def get_nbeats_experiment_space(args):
+    space = {'input_size': args.input_size,
+            'max_steps': tune.choice([2000]),
+            'val_check_steps': 100,
+            'stat_exog_list': tune.choice([args.exog['stat_exog_list']]),
+            'hist_exog_list': tune.choice([args.exog['hist_exog_list']]),
+            'futr_exog_list': tune.choice([args.exog['futr_exog_list']]),
+            'stack_types': ['identity', 'trend', 'seasonality'],
+            'n_blocks': 3*[1],
+            'mlp_units': tune.choice([ 3*[[1024,1024]] ]),
+            'dropout_prob_theta': tune.choice([0.0]),
+            'learning_rate': tune.loguniform(1e-4, 1e-1),
+            'early_stop_patience_steps': 5,
+            'batch_size': 4,
+            'scaler_type': 'minmax_treatment',
+            'random_seed': tune.choice([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+            }
+
+    return space

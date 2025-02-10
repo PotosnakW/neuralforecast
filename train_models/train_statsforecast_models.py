@@ -106,7 +106,7 @@ if __name__ == '__main__':
     if args is None:
         exit()
 
-    datasets = [#'ohiot1dm', 
+    datasets = ['ohiot1dm', 
                 'simglucose'] 
 
     args.results_dir = '../results/ETS/'

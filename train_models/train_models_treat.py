@@ -11,9 +11,9 @@ from data_parameters import get_data_parameters
 
 from ray.tune.search.hyperopt import HyperOptSearch
 
-from neuralforecast.auto import AutoNHITS_TREAT, AutoNBEATS, AutoMLP, AutoTFT, AutoRNN, AutoLSTM, AutoTCN
+from neuralforecast.auto import AutoNHITS_TREAT, AutoNBEATSx_TREAT, AutoTFT
 from neuralforecast.core import NeuralForecast
-from neuralforecast.losses.pytorch import MSE, HuberLoss
+from neuralforecast.losses.pytorch import HuberLoss
 
 import logging
 logging.getLogger("pytorch_lightning").setLevel(logging.WARNING)
@@ -48,11 +48,27 @@ def main(args):
         os.makedirs(results_dir, exist_ok = True)
         
         nhits_treat_config = get_nhits_treat_experiment_space(args)
+        nbeatsx_treat_config1 = get_nbeatsx_treat_experiment_space1(args)
+        nbeatsx_treat_config2 = get_nbeatsx_treat_experiment_space2(args)
+        nbeatsx_treat_config3 = get_nbeatsx_treat_experiment_space3(args)
+        tft_treat_config = get_tft_treat_experiment_space(args)
             
         fcst = NeuralForecast(freq=freq,
                               models=[
                                   AutoNHITS_TREAT(h=args.horizon, 
                                                 config=nhits_treat_config,
+                                                n_series=args.n_series,
+                                                loss=HuberLoss(),
+                                                search_alg=HyperOptSearch(),
+                                                num_samples=args.num_samples),
+                                  AutoTFT(h=args.horizon, 
+                                                config=tft_treat_config,
+                                                n_series=args.n_series,
+                                                loss=HuberLoss(),
+                                                search_alg=HyperOptSearch(),
+                                                num_samples=args.num_samples),
+                                  AutoNBEATSx_TREAT(h=args.horizon, 
+                                                config=nbeatsx_treat_config3,
                                                 n_series=args.n_series,
                                                 loss=HuberLoss(),
                                                 search_alg=HyperOptSearch(),
@@ -89,7 +105,7 @@ if __name__ == '__main__':
     if args is None:
         exit()
 
-    datasets = [#'ohiot1dm_exog',
+    datasets = ['ohiot1dm_exog',
                 'simglucose_exog',
                ]
 

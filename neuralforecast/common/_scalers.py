@@ -162,13 +162,11 @@ def minmax_treatment_statistics(x, mask, eps=1e-6, dim=-1):
 
     return x_min, x_range
 
-
 def minmax_treatment_scaler(x, x_min, x_range):
     z = x.clone()
     if z.ndim == 3:
         z[:, :, 0] = (x[:, :, 0] - x_min[:, :, 0]) / x_range[:, :, 0]
     return z
-
 
 def inv_minmax_treatment_scaler(z, x_min, x_range):
     return z * x_range + x_min

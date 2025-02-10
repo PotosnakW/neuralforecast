@@ -11,9 +11,9 @@ from data_parameters import get_data_parameters
 
 from ray.tune.search.hyperopt import HyperOptSearch
 
-from neuralforecast.auto import AutoNHITS, AutoNBEATS, AutoMLP, AutoRNN, AutoLSTM, AutoTCN
+from neuralforecast.auto import AutoNHITS, AutoNBEATSx, AutoMLP, AutoRNN, AutoDLinear, AutoLSTM, AutoTCN, AutoTFT
 from neuralforecast.core import NeuralForecast
-from neuralforecast.losses.pytorch import MSE, HuberLoss
+from neuralforecast.losses.pytorch import HuberLoss
 
 import logging
 logging.getLogger("pytorch_lightning").setLevel(logging.WARNING)
@@ -44,7 +44,7 @@ def main(args):
         print(50*'-', horizon, 50*'-')
         start = time.time()
         
-        results_dir = +f'../results/{args.dataset}_{args.horizon}/baseline_models/trial_{args.experiment_id}'
+        results_dir = f'../results/{args.dataset}_{args.horizon}/baseline_models/trial_{args.experiment_id}'
         os.makedirs(results_dir, exist_ok = True)
 
         nhits_config = get_nhits_experiment_space(args)
@@ -52,6 +52,9 @@ def main(args):
         rnn_config = get_rnn_experiment_space(args)
         lstm_config = get_lstm_experiment_space(args)
         tcn_config = get_tcn_experiment_space(args)
+        dlinear_config = get_dlinear_experiment_space(args)
+        tft_config = get_tft_experiment_space(args)
+        nbeats_config = get_nbeats_experiment_space(args)
 
         fcst = NeuralForecast(freq=freq,
                               models=[
@@ -80,9 +83,19 @@ def main(args):
                                                loss=HuberLoss(),
                                                search_alg=HyperOptSearch(),
                                                num_samples=args.num_samples),
+                                       AutoDLinear(h=args.horizon, 
+                                               config=dlinear_config,
+                                               loss=HuberLoss(),
+                                               search_alg=HyperOptSearch(),
+                                               num_samples=args.num_samples),
                                        AutoTFT(h=args.horizon, 
                                                config=tft_config,
                                                n_series=args.n_series,
+                                               loss=HuberLoss(),
+                                               search_alg=HyperOptSearch(),
+                                               num_samples=args.num_samples),
+                                       AutoNBEATSx(h=args.horizon, 
+                                               config=nbeats_config,
                                                loss=HuberLoss(),
                                                search_alg=HyperOptSearch(),
                                                num_samples=args.num_samples),
@@ -118,8 +131,8 @@ if __name__ == '__main__':
     if args is None:
         exit()
 
-    datasets = [#'ohiot1dm',
-                #'ohiot1dm_exog',
+    datasets = ['ohiot1dm',
+                'ohiot1dm_exog',
                 'simglucose',
                 'simglucose_exog',
                ]

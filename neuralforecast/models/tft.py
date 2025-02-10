@@ -465,6 +465,7 @@ class TFT(BaseWindows):
         treatment_var_name: str = "treatment",
         init_ka1: float = 1.5,
         init_ka2: float = 1.5,
+        init_ka3: float = 1.5,
         freq: int = 1,
         **trainer_kwargs
     ):
@@ -502,6 +503,7 @@ class TFT(BaseWindows):
                 treatment_var_name=treatment_var_name,
                 init_ka1=init_ka1,
                 init_ka2=init_ka2,
+                init_ka3=init_ka3,
                 input_size=input_size,
                 h=h,
                 freq=freq,
@@ -572,6 +574,7 @@ class TFT(BaseWindows):
 
         if self.use_concentrator:
             hist_exog = self.concentrator(treatment_exog=hist_exog, idx=batch_idx)
+
         s_inp, k_inp, o_inp, t_observed_tgt = self.embedding(
             target_inp=y_insample,
             hist_exog=hist_exog,
