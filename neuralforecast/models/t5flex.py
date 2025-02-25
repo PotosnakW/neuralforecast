@@ -114,17 +114,29 @@ class T5Flex(BaseFlex):
     `hist_exog_list`: str list, historic exogenous columns.<br>
     `futr_exog_list`: str list, future exogenous columns.<br>
     `exclude_insample_y`: bool=False, the model skips the autoregressive features y[t-input_size:t] if True.<br>
-    `encoder_layers`: int, number of layers for encoder.<br>
-    `n_heads`: int=16, number of multi-head's attention.<br>
-    `hidden_size`: int=128, units of embeddings and encoders.<br>
-    `linear_hidden_size`: int=256, units of linear layer.<br>
+    `num_layers`: int, number of layers for encoder.<br>
+    `num_decoder_layers`: int, number of layers for decoder.<br>
+    `num_heads`: int=16, number of multi-head's attention.<br>
+    `d_model`: int=128, units of embeddings and encoders.<br>
+    `d_ff`: int=256, units of linear layer.<br>
     `dropout`: float=0.1, dropout rate for residual connection.<br>
     `head_dropout`: float=0.1, dropout rate for Flatten head layer.<br>
     `attn_dropout`: float=0.1, dropout rate for attention layer.<br>
-    `patch_len`: int=32, length of patch. Note: patch_len = min(patch_len, input_size + stride).<br>
+    `input_token_len`: int=32, length of input patch. Note: patch_len = min(patch_len, input_size + stride).<br>
+    `output_token_len`: int=32, length of output patch prediction. Note: patch_len = min(patch_len, input_size + stride).<br>
     `stride`: int=16, stride of patch.<br>
-    `activation`: str='ReLU', activation from ['gelu','relu'].<br>
-    `learn_pos_embedding`: bool=True, bool to learn positional embedding.<br>
+    `pe`: str="zeros", positional encoding type.<br>
+    `learn_pe`: bool=True, bool to learn positional embedding.<br>
+    `decomposition_type`: str=None, input decomposition method.<br>
+    `top_k`: int=5, top k basis functions for DFT-type decomposition.<br> 
+    `moving_avg_window`: int=25, moving average window for moving average decomposition.<br>
+    `tokenizer_type`: str='patch_fixed_length', method for input tokenization.<br>
+    `lag`: int=1, lag spacing for lag tokenization method.<br>
+    `attn_mask`: str="bidirectional", type of attention ['bidirectional' or 'causal'].<br>
+    `proj_embd_type`: str="linear", type of input embedding layer ['linear' or 'residual'].<br>
+    `proj_head_type`: str="linear", type of output projection layer ['linear' or residual'].<br>
+    `backbone_type`: str="T5", model backbone type ['T5', 'google/t5-efficient-{tiny, mini, small, base}'].<br>
+    `activation`: str='ReLU', activation function ['gelu','relu'].<br>
     `loss`: PyTorch module, instantiated train loss class from [losses collection](https://nixtla.github.io/neuralforecast/losses.pytorch.html).<br>
     `valid_loss`: PyTorch module=`loss`, instantiated valid loss class from [losses collection](https://nixtla.github.io/neuralforecast/losses.pytorch.html).<br>
     `max_steps`: int=1000, maximum number of training steps.<br>
