@@ -82,8 +82,8 @@ class BaseModel(pl.LightningModule):
         stat_exog_list,
         max_steps,
         early_stop_patience_steps,
-        ckpt_path, # Willa added
-        alias, # Willa added
+        ckpt_path, 
+        alias,
         **trainer_kwargs,
     ):
         super().__init__()
@@ -187,8 +187,7 @@ class BaseModel(pl.LightningModule):
             trainer_kwargs["enable_checkpointing"] = False
 
         self.trainer_kwargs = trainer_kwargs
-        
-        # Willa added   
+
         self.ckpt_path = ckpt_path
         if ckpt_path is not None:
             if not os.path.exists(ckpt_path):
@@ -439,8 +438,7 @@ class BaseModel(pl.LightningModule):
         )
         self.valid_trajectories.append((self.global_step, avg_loss))
         self.validation_step_outputs.clear()  # free memory (compute `avg_loss` per epoch)
-        
-        # Willa added for grokking experiments
+
         if (self.ckpt_path is not None) & (self.global_step % 100 == 0) & (self.global_step >= 1000):
             self.save(self.ckpt_path+f'/{self.alias}_step:{self.global_step}.ckpt')
 
@@ -449,8 +447,8 @@ class BaseModel(pl.LightningModule):
             torch.save(
                 {"hyper_parameters": self.hparams, 
                  "state_dict": self.state_dict(),
-                 "train_trajectories": self.train_trajectories, # Willa added this
-                 "valid_trajectories": self.valid_trajectories, # Willa added this
+                 "train_trajectories": self.train_trajectories,
+                 "valid_trajectories": self.valid_trajectories,
                 },
                 f,
             )
