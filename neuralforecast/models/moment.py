@@ -28,16 +28,16 @@ class ForecastingHead(nn.Module):
         super().__init__()
         self.flatten = nn.Flatten(start_dim=-2)
         self.dropout = nn.Dropout(head_dropout)
-        self.linear = nn.Linear(head_nf, forecast_horizon * c_out)
+        self.linear = nn.Linear(head_nf, forecast_horizon * c_out) # NEW: c_out for loss dimension (distribution parameters for probabilistic predictions)
     
     def forward(self, x, input_mask : torch.Tensor = None):
         """
         x: [batch_size x n_channels x n_patches x d_model]
         output: [batch_size x n_channels x forecast_horizon]
         """
-        x = self.flatten(x)   # x: batch_size x n_channels x n_patches x d_model
-        x = self.linear(x)    # x: batch_size x n_channels x n_patches*d_model
-        x = self.dropout(x)   # x: batch_size x n_channels x forecast_horizon*c_out
+        x = self.flatten(x)   # x: [batch_size, n_channels, n_patches, d_model]
+        x = self.linear(x)    # x: [batch_size, n_channels, n_patches*d_model]
+        x = self.dropout(x)   # x: [batch_size, n_channels, horizon*c_out]
         return x
 
 class Long_Forecaster(nn.Module): 
@@ -60,9 +60,9 @@ class Long_Forecaster(nn.Module):
         self.revin = config.revin
         if config.revin:
             self.revin_layer = RevINMultivariate(num_features=config.n_series, 
-                                                affine=config.revin_affine,
-                                                subtract_last=False,
-                                               )
+                                                 affine=config.revin_affine,
+                                                 subtract_last=False,
+                                                )
 
         self.tokenizer = Patching(
             patch_len=config.patch_len, 
@@ -82,14 +82,13 @@ class Long_Forecaster(nn.Module):
 
         # Transformer backbone
         self.encoder = self._get_huggingface_transformer(config)
-        
-        # Prediction Head
+
         num_patches = (
                 (max(config.input_size, config.patch_len) - config.patch_len) 
                 // config.stride + 1
         )
-
-        head_nf = config.d_model * num_patches
+        # Prediction Head
+        head_nf = num_patches * config.d_model
         self.head = ForecastingHead(
                 head_nf,
                 config.h, 
@@ -132,7 +131,7 @@ class Long_Forecaster(nn.Module):
         """
 
         batch_size, n_channels, seq_len = x_enc.shape
-        input_mask = torch.ones(batch_size, seq_len).to(x_enc.device) # [B, L]
+        input_mask = torch.ones(batch_size, seq_len).to(x_enc.device) # [batch_size, seq_len]
 
         # Normalization 
         if self.revin: #Used default neuralforecast RevIN to simplicity/reduce modules
@@ -143,35 +142,36 @@ class Long_Forecaster(nn.Module):
         # x_enc = torch.nan_to_num(x_enc, nan=0, posinf=0, neginf=0) 
         
         # Patching and embedding
-        x_enc = self.tokenizer(x=x_enc) # [batch_size x n_channels x num_patch x patch_len]
+        x_enc = self.tokenizer(x=x_enc) # [batch_size x n_channels x n_patch x patch_len]
         enc_in = self.patch_embedding(x_enc, mask=torch.ones_like(input_mask))
     
         n_patches = enc_in.shape[2]
         enc_in = enc_in.reshape(
-            (batch_size * n_channels, n_patches, self.d_model)) # [B*C, NP, D]
+            (batch_size * n_channels, n_patches, self.d_model)) # [batch_size*n_channels, n_patch, d_model]
         
         # Encoder
         attention_mask = Masking.convert_seq_to_patch_view(
             mask=input_mask, 
             patch_len=self.patch_len,
-            stride=self.stride).repeat_interleave(n_channels, dim=0) #[B*C, NT]
+            stride=self.stride).repeat_interleave(n_channels, dim=0) # [batch_size*n_channels, n_patch]
 
         outputs = self.encoder(inputs_embeds=enc_in, attention_mask=attention_mask) 
         enc_out = outputs.last_hidden_state
         
         enc_out = enc_out.reshape(
             (-1, n_channels, n_patches, self.d_model)) 
-        # [batch_size x n_channels x n_patches x d_model]
+        # [batch_size, n_channels, n_patch, d_model]
 
         # Decoder
-        dec_out = self.head(enc_out)  # z: [batch_size x n_channels x forecast_horizon]
+        dec_out = self.head(enc_out)  # [batch_size, n_channels, horizon*c_out]
         
         # De-Normalization
         #dec_out = self.normalizer(x=dec_out, mode='denorm') #Used default neuralforecast RevIN to simplicity/reduce modules
+        # [batch_size, n_channels, horizon*c_out]
         if self.revin:
             dec_out = dec_out.permute(0, 2, 1)
             dec_out = self.revin_layer(dec_out, "denorm")
-            dec_out = dec_out.permute(0, 2, 1)
+            dec_out = dec_out.permute(0, 2, 1) 
 
         return dec_out
 
