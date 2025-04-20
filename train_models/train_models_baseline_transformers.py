@@ -11,7 +11,7 @@ from data_parameters_transformers import get_data_parameters
 
 from ray.tune.search.hyperopt import HyperOptSearch
 
-from neuralforecast.auto import AutoPatchTST, AutoInformer, AutoAutoformer
+from neuralforecast.auto import AutoPatchTST, AutoInformer
 from neuralforecast.core import NeuralForecast
 from neuralforecast.losses.pytorch import HuberLoss
 
@@ -44,12 +44,11 @@ def main(args):
         print(50*'-', horizon, 50*'-')
         start = time.time()
         
-        results_dir = f'../univariate_results/{args.dataset}_{args.horizon}/baseline_models/trial_{args.experiment_id}'
+        results_dir = f'{args.results_dir}/{args.dataset}_{args.horizon}/baseline_models/trial_{args.experiment_id}'
         os.makedirs(results_dir, exist_ok = True)
 
         patchtst_config = get_patchtst_experiment_space(args)
         informer_config = get_informer_experiment_space(args)
-        autoformer_config = get_autoformer_experiment_space(args)
 
         fcst = NeuralForecast(freq=freq,
                               models=[
@@ -84,6 +83,9 @@ def main(args):
 def parse_args():
     desc = "Example of hyperparameter tuning"
     parser = argparse.ArgumentParser(description=desc)
+    parser.add_argument('--results_dir', type=str, help='results_dir')
+    parser.add_argument('--horizon', type=int, help='forecast horizon')
+    parser.add_argument('--input_size', type=int, help='input size')
     parser.add_argument('--num_samples', type=int, help='control of hyperopt sample')
     parser.add_argument('--experiment_id', default=None, required=False, type=str, help='string to identify experiment')
     

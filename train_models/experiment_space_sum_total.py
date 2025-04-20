@@ -29,7 +29,7 @@ def get_nhits_sumtotal_experiment_space(args):
             
     return space
 
-def get_nbeatsx_sumtotal_experiment_space3(args):
+def get_nbeatsx_sumtotal_experiment_space(args):
     space = {'input_size': args.input_size,
             'max_steps': tune.choice([2000]),
             'val_check_steps': 100,

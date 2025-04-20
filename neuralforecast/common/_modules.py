@@ -440,7 +440,6 @@ class Concentrator(nn.Module):
         self,
         n_series: int,
         type: str,
-        treatment_var_name: str,
         init_ka1: float,
         init_ka2: float,
         init_ka3: float,
@@ -458,7 +457,6 @@ class Concentrator(nn.Module):
 
         self.n_series = n_series
         self.type = type
-        self.treatment_var_name = treatment_var_name
         self.freq = freq
         self.mask_future = mask_future
 

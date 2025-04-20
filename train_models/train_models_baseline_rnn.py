@@ -6,12 +6,12 @@ import pandas as pd
 import numpy as np
 import sys
 
-from experiment_space_treat import *
+from experiment_space_baseline import *
 from data_parameters import get_data_parameters
 
 from ray.tune.search.hyperopt import HyperOptSearch
 
-from neuralforecast.auto import AutoNHITS_TREAT, AutoNBEATSx_TREAT, AutoTFT
+from neuralforecast.auto import AutoNHITS, AutoNBEATSx, AutoMLP, AutoRNN, AutoDLinear, AutoLSTM, AutoTCN, AutoTFT
 from neuralforecast.core import NeuralForecast
 from neuralforecast.losses.pytorch import HuberLoss
 
@@ -19,7 +19,7 @@ import logging
 logging.getLogger("pytorch_lightning").setLevel(logging.WARNING)
 
 import ray
-ray.init(_temp_dir="/home/scratch/wpotosna/ray")
+ray.init(_temp_dir="/home/extra_scratch/wpotosna/ray")
 
 
 def main(args):
@@ -45,33 +45,17 @@ def main(args):
     print(50*'-', args.input_size, 50*'-')
     start = time.time()
         
-    results_dir = f'{args.results_dir}/{args.dataset}_{args.horizon}/treat_models/trial_{args.experiment_id}'
+    results_dir = f'{args.results_dir}/{args.dataset}_{args.horizon}/baseline_models/trial_{args.experiment_id}'
     os.makedirs(results_dir, exist_ok = True)
-        
-    nhits_treat_config = get_nhits_treat_experiment_space(args)
-    nbeatsx_treat_config = get_nbeatsx_treat_experiment_space(args)
-    tft_treat_config = get_tft_treat_experiment_space(args)
-            
+
+    rnn_config = get_rnn_experiment_space(args)
+
     fcst = NeuralForecast(freq=freq,
-                              models=[
-                                  AutoNHITS_TREAT(h=args.horizon, 
-                                                config=nhits_treat_config,
-                                                n_series=args.n_series,
-                                                loss=HuberLoss(),
-                                                search_alg=HyperOptSearch(),
-                                                num_samples=args.num_samples),
-                                  AutoTFT(h=args.horizon, 
-                                                config=tft_treat_config,
-                                                n_series=args.n_series,
-                                                loss=HuberLoss(),
-                                                search_alg=HyperOptSearch(),
-                                                num_samples=args.num_samples),
-                                  AutoNBEATSx_TREAT(h=args.horizon, 
-                                                config=nbeatsx_treat_config,
-                                                n_series=args.n_series,
-                                                loss=HuberLoss(),
-                                                search_alg=HyperOptSearch(),
-                                                num_samples=args.num_samples),
+                          models=[AutoRNN(h=args.horizon,
+                                          config=rnn_config,
+                                          loss=HuberLoss(),
+                                          search_alg=HyperOptSearch(),
+                                          num_samples=args.num_samples),
                                     ],)
 
     fcst_df = fcst.cross_validation(df=Y_df, 
@@ -79,17 +63,17 @@ def main(args):
                                     val_size=val_size,
                                     test_size=test_size,
                                     step_size=1,
-                                    n_windows=None
+                                    n_windows=None,
                                     )
     fcst_df.to_csv(results_dir+f'/forecasts.csv', index=False)
-        
+
     fcst.save(path=results_dir,
                   model_index=None,
                   overwrite=True,
                   save_dataset=False)
-
+        
     print('Time: ', time.time() - start)
-
+        
 def parse_args():
     desc = "Example of hyperparameter tuning"
     parser = argparse.ArgumentParser(description=desc)
@@ -107,25 +91,13 @@ if __name__ == '__main__':
     if args is None:
         exit()
 
-    datasets = ['ohiot1dm_exog',
+    datasets = ['ohiot1dm',
+                'ohiot1dm_exog',
+                'simglucose',
                 'simglucose_exog',
                ]
-
-    # datasets = ['ohiot1dm_exog_#540',
-    #             'ohiot1dm_exog_#544',
-    #             'ohiot1dm_exog_#552',
-    #             'ohiot1dm_exog_#559',
-    #             'ohiot1dm_exog_#563',
-    #             'ohiot1dm_exog_#567',
-    #             'ohiot1dm_exog_#570',
-    #             'ohiot1dm_exog_#575',
-    #             'ohiot1dm_exog_#584',
-    #             'ohiot1dm_exog_#588',
-    #             'ohiot1dm_exog_#591',
-    #             'ohiot1dm_exog_#596'
-    #            ]
     
     for dataset in datasets:
         args.dataset = dataset
-
+    
         main(args)

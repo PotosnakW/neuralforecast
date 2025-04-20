@@ -44,13 +44,11 @@ def main(args):
         print(50*'-', horizon, 50*'-')
         start = time.time()
         
-        results_dir = f'../results/{args.dataset}_{args.horizon}/sum_total_models/trial_{args.experiment_id}'
+        results_dir = f'{args.results_dir}/{args.dataset}_{args.horizon}/treat_models/trial_{args.experiment_id}'
         os.makedirs(results_dir, exist_ok = True)
         
         nhits_sumtotal_config = get_nhits_sumtotal_experiment_space(args)
-        nbeatsx_sumtotal_config1 = get_nbeatsx_sumtotal_experiment_space1(args)
-        nbeatsx_sumtotal_config2 = get_nbeatsx_sumtotal_experiment_space2(args)
-        nbeatsx_sumtotal_config3 = get_nbeatsx_sumtotal_experiment_space3(args)
+        nbeatsx_sumtotal_config = get_nbeatsx_sumtotal_experiment_space(args)
         tft_sumtotal_config = get_tft_sumtotal_experiment_space(args)
             
         fcst = NeuralForecast(freq=freq,
@@ -68,12 +66,11 @@ def main(args):
                                                 search_alg=HyperOptSearch(),
                                                 num_samples=args.num_samples),
                                     AutoNBEATSx_TREAT(h=args.horizon, 
-                                                config=nbeatsx_sumtotal_config3,
+                                                config=nbeatsx_sumtotal_config,
                                                 n_series=args.n_series,
                                                 loss=HuberLoss(),
                                                 search_alg=HyperOptSearch(),
-                                                num_samples=args.num_samples,
-                                                alias='autonbeatsxtreat_cts'),
+                                                num_samples=args.num_samples),
                                     ],)
 
         fcst_df = fcst.cross_validation(df=Y_df, 
@@ -95,9 +92,11 @@ def main(args):
 def parse_args():
     desc = "Example of hyperparameter tuning"
     parser = argparse.ArgumentParser(description=desc)
+    parser.add_argument('--results_dir', type=str, help='results_dir')
+    parser.add_argument('--horizon', type=int, help='forecast horizon')
+    parser.add_argument('--input_size', type=int, help='input size')
     parser.add_argument('--num_samples', type=int, help='control of hyperopt sample')
-    parser.add_argument('--experiment_id', required=True, type=str, help='string to identify experiment')
-    
+    parser.add_argument('--experiment_id', default=None, required=False, type=str, help='string to identify experiment')
     return parser.parse_args()
 
 if __name__ == '__main__':

@@ -18,11 +18,14 @@ from neuralforecast.losses.pytorch import HuberLoss
 import logging
 logging.getLogger("pytorch_lightning").setLevel(logging.WARNING)
 
+import ray
+ray.init(_temp_dir="/home/extra_scratch/wpotosna/ray")
+
 
 def main(args):
 
     #----------------------------------------------- Load Data -----------------------------------------------#
-    data_dir, static_dir, val_size, test_size, freq, horizons, input_size, exog = get_data_parameters(args)
+    data_dir, static_dir, val_size, test_size, freq, exog = get_data_parameters(args)
 
     Y_df = pd.read_csv(data_dir)
     if Y_df.ds.dtype != '<M8[ns]':
@@ -34,29 +37,26 @@ def main(args):
     args.exog = exog
     args.n_series = len(Y_df.unique_id.unique())
     args.freq = freq
-    args.input_size = input_size
 
     #----------------------------------------------- Training -----------------------------------------------#
-    # Fit and predict
-    for horizon in horizons:
-        args.horizon = horizon
-        print(50*'-', dataset, 50*'-')
-        print(50*'-', horizon, 50*'-')
-        start = time.time()
+
+    print(50*'-', dataset, 50*'-')
+    print(50*'-', args.horizon, 50*'-')
+    print(50*'-', args.input_size, 50*'-')
+    start = time.time()
         
-        results_dir = f'../results/{args.dataset}_{args.horizon}/baseline_models/trial_{args.experiment_id}'
-        os.makedirs(results_dir, exist_ok = True)
+    results_dir = f'{args.results_dir}/{args.dataset}_{args.horizon}/baseline_models/trial_{args.experiment_id}'
+    os.makedirs(results_dir, exist_ok = True)
 
-        nhits_config = get_nhits_experiment_space(args)
-        mlp_config = get_mlp_experiment_space(args)
-        rnn_config = get_rnn_experiment_space(args)
-        lstm_config = get_lstm_experiment_space(args)
-        tcn_config = get_tcn_experiment_space(args)
-        dlinear_config = get_dlinear_experiment_space(args)
-        tft_config = get_tft_experiment_space(args)
-        nbeats_config = get_nbeats_experiment_space(args)
+    nhits_config = get_nhits_experiment_space(args)
+    mlp_config = get_mlp_experiment_space(args)
+    lstm_config = get_lstm_experiment_space(args)
+    tcn_config = get_tcn_experiment_space(args)
+    dlinear_config = get_dlinear_experiment_space(args)
+    tft_config = get_tft_experiment_space(args)
+    nbeats_config = get_nbeats_experiment_space(args)
 
-        fcst = NeuralForecast(freq=freq,
+    fcst = NeuralForecast(freq=freq,
                               models=[
                                       AutoNHITS(h=args.horizon, 
                                                 config=nhits_config,
@@ -68,58 +68,56 @@ def main(args):
                                               loss=HuberLoss(),
                                               search_alg=HyperOptSearch(),
                                               num_samples=args.num_samples),
-                                       AutoRNN(h=args.horizon,
-                                               config=rnn_config,
+                                      AutoLSTM(h=args.horizon, 
+                                               config=lstm_config,
                                                loss=HuberLoss(),
                                                search_alg=HyperOptSearch(),
                                                num_samples=args.num_samples),
-                                       AutoLSTM(h=args.horizon, 
-                                                config=lstm_config,
-                                                loss=HuberLoss(),
-                                                search_alg=HyperOptSearch(),
-                                                num_samples=args.num_samples),
-                                       AutoTCN(h=args.horizon, 
-                                               config=tcn_config,
-                                               loss=HuberLoss(),
-                                               search_alg=HyperOptSearch(),
-                                               num_samples=args.num_samples),
-                                       AutoDLinear(h=args.horizon, 
-                                               config=dlinear_config,
-                                               loss=HuberLoss(),
-                                               search_alg=HyperOptSearch(),
-                                               num_samples=args.num_samples),
-                                       AutoTFT(h=args.horizon, 
-                                               config=tft_config,
-                                               n_series=args.n_series,
-                                               loss=HuberLoss(),
-                                               search_alg=HyperOptSearch(),
-                                               num_samples=args.num_samples),
-                                       AutoNBEATSx(h=args.horizon, 
-                                               config=nbeats_config,
-                                               loss=HuberLoss(),
-                                               search_alg=HyperOptSearch(),
-                                               num_samples=args.num_samples),
+                                      AutoTCN(h=args.horizon, 
+                                              config=tcn_config,
+                                              loss=HuberLoss(),
+                                              search_alg=HyperOptSearch(),
+                                              num_samples=args.num_samples),
+                                      AutoDLinear(h=args.horizon, 
+                                                  config=dlinear_config,
+                                                  loss=HuberLoss(),
+                                                  search_alg=HyperOptSearch(),
+                                                  num_samples=args.num_samples),
+                                      AutoTFT(h=args.horizon, 
+                                              config=tft_config,
+                                              n_series=args.n_series,
+                                              loss=HuberLoss(),
+                                              search_alg=HyperOptSearch(),
+                                              num_samples=args.num_samples),
+                                      AutoNBEATSx(h=args.horizon, 
+                                                  config=nbeats_config,
+                                                  loss=HuberLoss(),
+                                                  search_alg=HyperOptSearch(),
+                                                  num_samples=args.num_samples),
                                     ],)
 
-        fcst_df = fcst.cross_validation(df=Y_df, 
-                                        static_df=static_df,
-                                        val_size=val_size,
-                                        test_size=test_size,
-                                        step_size=1,
-                                        n_windows=None,
-                                        )
-        fcst_df.to_csv(results_dir+f'/forecasts.csv', index=False)
+    fcst_df = fcst.cross_validation(df=Y_df, 
+                                    static_df=static_df,
+                                    val_size=val_size,
+                                    test_size=test_size,
+                                    step_size=1,
+                                    n_windows=None,
+                                    )
+    fcst_df.to_csv(results_dir+f'/forecasts.csv', index=False)
 
-        fcst.save(path=results_dir,
+    fcst.save(path=results_dir,
                   model_index=None,
                   overwrite=True,
                   save_dataset=False)
         
-        print('Time: ', time.time() - start)
+    print('Time: ', time.time() - start)
         
 def parse_args():
     desc = "Example of hyperparameter tuning"
     parser = argparse.ArgumentParser(description=desc)
+    parser.add_argument('--results_dir', type=str, help='results_dir')
+    parser.add_argument('--horizon', type=int, help='forecast horizon')
+    parser.add_argument('--input_size', type=int, help='input size')
     parser.add_argument('--num_samples', type=int, help='control of hyperopt sample')
     parser.add_argument('--experiment_id', default=None, required=False, type=str, help='string to identify experiment')
     

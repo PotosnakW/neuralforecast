@@ -462,7 +462,6 @@ class TFT(BaseWindows):
         use_concentrator: bool = False,
         concentrator_type: str = None,
         n_series: int = 1,
-        treatment_var_name: str = "treatment",
         init_ka1: float = 1.5,
         init_ka2: float = 1.5,
         init_ka3: float = 1.5,
@@ -500,7 +499,6 @@ class TFT(BaseWindows):
             self.concentrator = Concentrator(
                 n_series=n_series,
                 type=concentrator_type,
-                treatment_var_name=treatment_var_name,
                 init_ka1=init_ka1,
                 init_ka2=init_ka2,
                 init_ka3=init_ka3,

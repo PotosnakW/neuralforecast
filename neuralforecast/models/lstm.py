@@ -87,9 +87,9 @@ class LSTM(BaseRecurrent):
         use_concentrator: bool = False,
         concentrator_type: str = None,
         n_series: int = 1,
-        treatment_var_name: str = "treatment",
         init_ka1: float = 1.5,
         init_ka2: float = 1.5,
+        init_ka3: float = 1.5,
         freq: int = 1,
         **trainer_kwargs,
     ):
@@ -117,24 +117,15 @@ class LSTM(BaseRecurrent):
         )
 
         # ------------------ Concentrator ------------------
-        # Asserts
-        # if use_concentrator:
-        #     assert (
-        #         treatment_var_name in hist_exog_list
-        #     ), f"Variable {treatment_var_name} not found in hist_exog_list!"
-        #     assert (
-        #         hist_exog_list[-1] == treatment_var_name
-        #     ), f"Variable {treatment_var_name} must be the last element of hist_exog_list!"
-
         self.use_concentrator = use_concentrator
 
         if self.use_concentrator:
             self.concentrator = Concentrator(
                 n_series=n_series,
                 type=concentrator_type,
-                treatment_var_name=treatment_var_name,
                 init_ka1=init_ka1,
                 init_ka2=init_ka2,
+                init_ka3=init_ka3,
                 input_size=input_size,
                 h=h,
                 freq=freq,

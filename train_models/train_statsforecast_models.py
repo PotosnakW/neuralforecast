@@ -18,8 +18,6 @@ def get_data_parameters(args):
         val_size = 2691
         test_size = 2691
         freq = '5min'
-        horizons = [6]
-        input_sizes = [120] 
         exog['stat_exog_list'] = ['559', '563', '570', '575', '588', 
                                   '591', '540', '544', '552', '567',
                                   '584', 'insulin_type_novalog', 'female',
@@ -33,8 +31,6 @@ def get_data_parameters(args):
         val_size = 2592
         test_size = 2592
         freq = '5min'
-        horizons = [6] 
-        input_sizes = 120
         exog['stat_exog_list'] = ['adolescent#001', 'adolescent#002', 'adolescent#003', 'adolescent#004', 'adolescent#005',
                                   'adolescent#006', 'adolescent#007', 'adolescent#008', 'adolescent#009', 'adolescent#010', 
                                   'adult#001', 'adult#002', 'adult#003', 'adult#004', 'adult#005',
@@ -45,13 +41,13 @@ def get_data_parameters(args):
         exog['hist_exog_list'] = None
         exog['futr_exog_list'] = None
 
-    return data_dir, static_dir, val_size, test_size, freq, horizons, input_sizes, exog
+    return data_dir, static_dir, val_size, test_size, freq, exog
 
 
 def main(args):
 
     #----------------------------------------------- Load Data -----------------------------------------------#
-    data_dir, static_dir, val_size, test_size, freq, horizons, input_size, exog = get_data_parameters(args)
+    data_dir, static_dir, val_size, test_size, freq, exog = get_data_parameters(args)
     args.exog = exog
     
     Y_df = pd.read_csv(data_dir)
@@ -71,9 +67,9 @@ def main(args):
         print(50*'-', dataset, 50*'-')
         print(50*'-', horizon, 50*'-')
         start = time.time()
-        
-        output_dir = args.results_dir+f'/{args.dataset}_{args.horizon}/'
-        os.makedirs(output_dir, exist_ok = True)
+
+        results_dir = f'{args.results_dir}/{args.dataset}_{args.horizon}/baseline_models/trial_{args.experiment_id}'
+        os.makedirs(results_dir, exist_ok = True)
         
         fcst = StatsForecast(freq = freq,
                              models = [AutoETS(season_length = int(pd.Timedelta('1D')/pd.Timedelta(args.freq)),
@@ -87,15 +83,15 @@ def main(args):
                                         refit=False
                                        )
 
-        filename = output_dir+'/stats_model.pkl'
-        pickle.dump(fcst, open(filename, 'wb'))
-
-        fcst_df.to_csv(output_dir+f'/forecasts_{args.experiment_id}.csv', index=False)
+        fcst_df.to_csv(results_dir+f'/forecasts.csv', index=False)
         print('Time: ', time.time() - start)
 
 def parse_args():
     desc = "Example of hyperparameter tuning"
     parser = argparse.ArgumentParser(description=desc)
+    parser.add_argument('--results_dir', type=str, help='results_dir')
+    parser.add_argument('--horizon', type=int, help='forecast horizon')
+    parser.add_argument('--input_size', type=int, help='input size')
     parser.add_argument('--experiment_id', default=None, required=False, type=str, help='string to identify experiment')
     
     return parser.parse_args()
@@ -108,8 +104,6 @@ if __name__ == '__main__':
 
     datasets = ['ohiot1dm', 
                 'simglucose'] 
-
-    args.results_dir = '../results/ETS/'
     
     for dataset in datasets:
         args.dataset = dataset
