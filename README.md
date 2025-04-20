@@ -21,7 +21,8 @@ python run_training_scripts.py
 ```
 
 ## Evaluate Models
-The `./results_table.ipynb` notebook contains example code to get model MAE and RMSE results. 
+The `./results_table.ipynb` notebook in the `./scripts` folder contains example code to get model MAE and RMSE results. 
+Python notebooks to generate figures are also included in the `./scripts` folder. Plotting requires matplotlib==3.7.0.
 
 
 ## References:
