@@ -13,8 +13,8 @@ def get_data_parameters(args):
     exog = {}
     
     if args.dataset == 'ohiot1dm':
-        data_dir = './data/ohiot1dm_exog_9_day_test.csv'
-        static_dir = './data/ohiot1dm_static.csv'
+        data_dir = '../datasets/ohiot1dm_exog_9_day_test.csv'
+        static_dir = '../datasets/ohiot1dm_static.csv'
         val_size = 2691
         test_size = 2691
         freq = '5min'
@@ -26,8 +26,8 @@ def get_data_parameters(args):
         exog['futr_exog_list'] = None 
             
     if args.dataset == 'simglucose':
-        data_dir = './data/simglucose_exog_9_day_test.csv'
-        static_dir = './data/simglucose_static.csv'
+        data_dir = '../datasets/simglucose_exog_9_day_test.csv'
+        static_dir = './datasets/simglucose_static.csv'
         val_size = 2592
         test_size = 2592
         freq = '5min'
@@ -42,7 +42,6 @@ def get_data_parameters(args):
         exog['futr_exog_list'] = None
 
     return data_dir, static_dir, val_size, test_size, freq, exog
-
 
 def main(args):
 
@@ -62,29 +61,27 @@ def main(args):
 
     #----------------------------------------------- Training -----------------------------------------------#
     # Fit and predict
-    for horizon in horizons:
-        args.horizon = horizon
-        print(50*'-', dataset, 50*'-')
-        print(50*'-', horizon, 50*'-')
-        start = time.time()
+    print(50*'-', args.dataset, 50*'-')
+    print(50*'-', args.horizon, 50*'-')
+    print(50*'-', args.input_size, 50*'-')
+    start = time.time()
 
-        results_dir = f'{args.results_dir}/{args.dataset}_{args.horizon}/baseline_models/trial_{args.experiment_id}'
-        os.makedirs(results_dir, exist_ok = True)
+    results_dir = f'{args.results_dir}/{args.dataset}_{args.horizon}/baseline_models/trial_{args.experiment_id}'
+    os.makedirs(results_dir, exist_ok = True)
         
-        fcst = StatsForecast(freq = freq,
-                             models = [AutoETS(season_length = int(pd.Timedelta('1D')/pd.Timedelta(args.freq)),
-                                                )]
-                            )
+    fcst = StatsForecast(freq = freq,
+                         models = [AutoETS(season_length = int(pd.Timedelta('1D')/pd.Timedelta(args.freq)),)]
+                        )
 
-        fcst_df = fcst.cross_validation(h = args.horizon,
-                                        df=Y_df, 
-                                        step_size=1, 
-                                        n_windows=2685,
-                                        refit=False
-                                       )
+    fcst_df = fcst.cross_validation(h = args.horizon,
+                                    df=Y_df, 
+                                    step_size=1, 
+                                    n_windows=2685,
+                                    refit=False
+                                    )
 
-        fcst_df.to_csv(results_dir+f'/forecasts.csv', index=False)
-        print('Time: ', time.time() - start)
+    fcst_df.to_csv(results_dir+f'/forecasts.csv', index=False)
+    print('Time: ', time.time() - start)
 
 def parse_args():
     desc = "Example of hyperparameter tuning"

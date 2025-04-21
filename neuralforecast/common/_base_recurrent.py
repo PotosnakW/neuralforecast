@@ -374,89 +374,6 @@ class BaseRecurrent(pl.LightningModule):
         self.train_trajectories.append((self.global_step, float(loss)))
         return loss
 
-#     def validation_step(self, batch, batch_idx):
-#         if self.val_size == 0:
-#             return np.nan
-
-#         # Create and normalize windows [Ws, L+H, C]
-#         batch = self._normalization(
-#             batch, val_size=self.val_size, test_size=self.test_size
-#         )
-#         windows = self._create_windows(batch, step="val")
-
-#         # Parse windows
-#         (
-#             insample_y,
-#             insample_mask,
-#             outsample_y,
-#             outsample_mask,
-#             hist_exog,
-#             futr_exog,
-#             stat_exog,
-#             batch_idx,
-#         ) = self._parse_windows(batch, windows)
-
-#         windows_batch = dict(
-#             insample_y=insample_y,  # [B, seq_len, 1]
-#             insample_mask=insample_mask,  # [B, seq_len, 1]
-#             futr_exog=futr_exog,  # [B, F, seq_len, 1+H]
-#             hist_exog=hist_exog,  # [B, C, seq_len]
-#             stat_exog=stat_exog,  # [B, S]
-#             batch_idx=batch_idx,
-#         )  # [B, 1])
-
-#         # Remove train y_hat (+1 and -1 for padded last window with zeros)
-#         # tuple([B, seq_len, H, output]) -> tuple([B, validation_size, H, output])
-#         val_windows = (self.val_size) + 1
-#         outsample_y = outsample_y[:, -val_windows:-1, :]
-#         outsample_mask = outsample_mask[:, -val_windows:-1, :]
-
-#         # Model predictions
-#         output = self(windows_batch)  # tuple([B, seq_len, H, output])
-#         if self.loss.is_distribution_output:
-#             output = [arg[:, -val_windows:-1] for arg in output]
-#             outsample_y, y_loc, y_scale = self._inv_normalization(
-#                 y_hat=outsample_y, temporal_cols=batch["temporal_cols"]
-#             )
-#             B = output[0].size()[0]
-#             T = output[0].size()[1]
-#             H = output[0].size()[2]
-#             output = [arg.reshape(-1, *(arg.size()[2:])) for arg in output]
-#             outsample_y = outsample_y.reshape(B * T, H)
-#             outsample_mask = outsample_mask.reshape(B * T, H)
-#             y_loc = y_loc.repeat_interleave(repeats=T, dim=0).squeeze(-1)
-#             y_scale = y_scale.repeat_interleave(repeats=T, dim=0).squeeze(-1)
-#             distr_args = self.loss.scale_decouple(
-#                 output=output, loc=y_loc, scale=y_scale
-#             )
-
-#             if str(type(self.valid_loss)) in [
-#                 "<class 'neuralforecast.losses.pytorch.sCRPS'>",
-#                 "<class 'neuralforecast.losses.pytorch.MQLoss'>",
-#             ]:
-#                 _, y_hat = self.loss.sample(distr_args=distr_args, num_samples=500)
-#         else:
-#             y_hat = output[:, -val_windows:-1, :]
-
-#         # Validation Loss evaluation
-#         if self.valid_loss.is_distribution_output:
-#             valid_loss = self.valid_loss(
-#                 y=outsample_y, distr_args=distr_args, mask=outsample_mask
-#             )
-#         else:
-#             valid_loss = self.valid_loss(
-#                 y=outsample_y, y_hat=y_hat, mask=outsample_mask
-#             )
-
-#         self.log(
-#             "valid_loss",
-#             valid_loss,
-#             batch_size=self.batch_size,
-#             prog_bar=True,
-#             on_epoch=True,
-#         )
-#         return valid_loss
-
     def validation_step(self, batch, batch_idx):
         if self.val_size == 0:
             return np.nan
@@ -555,13 +472,6 @@ class BaseRecurrent(pl.LightningModule):
         )
         self.validation_step_outputs.append(valid_loss)
         return valid_loss
-
-    # def on_validation_epoch_end(self, outputs):
-    #     if self.val_size == 0:
-    #         return
-    #     avg_loss = torch.stack(outputs).mean()
-    #     self.log("ptl/val_loss", avg_loss, batch_size=self.batch_size)
-    #     self.valid_trajectories.append((self.global_step, float(avg_loss)))
 
     def on_validation_epoch_end(self):
         if self.val_size == 0:

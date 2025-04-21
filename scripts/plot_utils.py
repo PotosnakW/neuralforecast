@@ -42,7 +42,7 @@ def get_global_model_results(df_path, model_name, pat_ids, dataset_name, trials,
     for pat_id in pat_ids:
         result = []
         for trial in range(trials):
-            Y_hat_df = pd.read_csv(f'{df_path}/{dataset_name}_exog_6/{exp_name}_models/trial_{exp_name}_{trial}/forecasts.csv')
+            Y_hat_df = pd.read_csv(f'{df_path}/{dataset_name}_exog_6/{exp_name}_models/trial_{trial}/forecasts.csv')
             Y_hat_df = Y_hat_df[Y_hat_df.unique_id==pat_id]
 
             if dataset_name=='ohiot1dm':
@@ -63,7 +63,7 @@ def get_local_model_results(df_path, model_name, pat_ids, dataset_name, trials, 
     for pat_id in pat_ids:
         result = []
         for trial in range(trials):
-            Y_hat_df = pd.read_csv(f'{df_path}/{dataset_name}_exog_{pat_id}_6/{exp_name}_models/trial_{exp_name}_{trial}/forecasts.csv')
+            Y_hat_df = pd.read_csv(f'{df_path}/{dataset_name}_exog_{pat_id}_6/{exp_name}_models/trial_{trial}/forecasts.csv')
             Y_hat_df = Y_hat_df[Y_hat_df.unique_id==pat_id]
             
             if dataset_name=='ohiot1dm':

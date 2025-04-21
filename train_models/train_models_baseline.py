@@ -11,7 +11,7 @@ from data_parameters import get_data_parameters
 
 from ray.tune.search.hyperopt import HyperOptSearch
 
-from neuralforecast.auto import AutoNHITS, AutoNBEATSx, AutoMLP, AutoRNN, AutoDLinear, AutoLSTM, AutoTCN, AutoTFT
+from neuralforecast.auto import AutoNHITS, AutoNBEATSx, AutoMLP, AutoDLinear, AutoLSTM, AutoTCN, AutoTFT
 from neuralforecast.core import NeuralForecast
 from neuralforecast.losses.pytorch import HuberLoss
 
@@ -19,7 +19,7 @@ import logging
 logging.getLogger("pytorch_lightning").setLevel(logging.WARNING)
 
 import ray
-ray.init(_temp_dir="/home/extra_scratch/wpotosna/ray")
+#ray.init(_temp_dir="../ray")
 
 
 def main(args):
@@ -40,7 +40,7 @@ def main(args):
 
     #----------------------------------------------- Training -----------------------------------------------#
 
-    print(50*'-', dataset, 50*'-')
+    print(50*'-', args.dataset, 50*'-')
     print(50*'-', args.horizon, 50*'-')
     print(50*'-', args.input_size, 50*'-')
     start = time.time()
