@@ -181,7 +181,7 @@ class BaseAuto(pl.LightningModule):
             tune.with_resources(train_fn_with_parameters, device_dict),
             run_config=air.RunConfig(
                 verbose=verbose,
-                storage_path="/home/extra_scratch/wpotosna/ray_results",
+                # storage_path="../ray_results", directory to save ray_results
                 # checkpoint_config=air.CheckpointConfig(
                 # num_to_keep=0,
                 # keep_checkpoints_num=None

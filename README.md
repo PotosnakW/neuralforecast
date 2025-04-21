@@ -58,7 +58,10 @@ python preprocess_ohiot1dm_dataset.py
 ### Train Models
 ___
 
-1. Navigate to the `train_models` folder and run the training script.
+1. Navigate to the `train_models` folder.
+2. Run the training scripts.
+
+> **Note:** If you're not using the **OhioT1DM** dataset, remove or comment out 'ohiot1dm' and 'ohiot1dm_exog' from the `datasets` list in each `train_models_{...}.py` file.
 
 #### 🧠 Run Training Script:
 ```bash
