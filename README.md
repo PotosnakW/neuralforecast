@@ -173,6 +173,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-<img align="right" height="100px" width="100px" src="./auton_logo.png">
-<img align="right" height="70px" width="140px" src="./cmu-wordmark-stacked-r.png">
+<img align="right" width="100px" src="./auton_logo.png">
+<img align="right" width="140px" src="./cmu-wordmark-stacked-r.png">
 
