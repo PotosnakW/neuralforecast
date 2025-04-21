@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 import sys
 
-from experiment_space_sum_total import *
+from experiment_space_sumtotal import *
 from data_parameters import get_data_parameters
 
 from ray.tune.search.hyperopt import HyperOptSearch

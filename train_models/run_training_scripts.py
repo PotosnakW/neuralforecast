@@ -35,7 +35,7 @@ for trial in range(8):
         --experiment_id {trial} \
         ')
 
-    os.system(f'CUDA_VISIBLE_DEVICES={device} python -m train_models_treat \
+    os.system(f'CUDA_VISIBLE_DEVICES={device} python -m train_models_pk \
         --results_dir ../results/multivariate_models \
         --horizon 6 \
         --input_size 120 \

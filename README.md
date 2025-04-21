@@ -1,34 +1,29 @@
 # Global Deep Forecasting with Patient-Specific Pharmacokinetics
 ____
 
-<u><a href="https://arxiv.org/abs/2309.13135">Paper</a></u>
+#### 📄 **[Paper (arXiv)](https://arxiv.org/abs/2309.13135)**
 
 ![Model Plot](method.png)
 
-We propose a novel hybrid global-local architecture and a model-agnostic pharmacokinetic (PK) encoder that informs deep learning models of patient-specific treatment effects, achieving significant accuracy improvements on large-scale simulated and real-world blood glucose datasets.
+We propose a novel hybrid global-local architecture and a model-agnostic pharmacokinetic (PK) encoder that informs deep learning models of patient-specific treatment effects, achieving significant accuracy improvements on large-scale simulated and real-world blood glucose forecasting datasets.
 
+<h4><u>Sections:</u></h4>
 
-### Preprocess Data
-___
-
-Data preprocessing scripts are located in the `./data_preprocessing` folder. Preprocessed `simglucose` data from the open-source [simglucose repository](https://github.com/jxx123/simglucose) is included in the `./datasets` folder.
-
-Please refer to the **"Data and Code Availability"** section of our paper for information on accessing the OhioT1DM 2018 and 2020 datasets. Access to these datasets requires a **Data Use Agreement (DUA)**.
-
-#### 📦 Run preprocessing:
-```bash
-cd ./data_preprocessing
-python preprocess_ohiot1dm_dataset.py
-```
-> **Note:** Code to preprocess the OhioT1DM dataset assumes that the `Ohiot1dm` data folder is located in the `neuralforecast` repository.
+1. [Installation](#Installation)
+2. [Preprocess Data](#Preprocess-Data)
+3. [Train Models](#Train-Models)
+4. [Evaluate Models](#Evaluate-Models)
+5. [How to Cite](#How-to-Cite)
+6. [Contributing](#Contributing)
+7. [License](#License)
 
 ### Installation
 ___
 
-1. Clone the `neuralforecast` repository and switch to the `pk_paper_code` branch.  
+1. Clone the [`neuralforecast`](https://github.com/PotosnakW/neuralforecast) repository and switch to the `pk_paper_code` branch.  
 2. Create a conda environment.  
 3. Install the `neuralforecast` package.
-4. Install the `statsforecast` package.
+4. Install the [`statsforecast`](https://github.com/Nixtla/statsforecast) package.
 
 #### ⚙️ Setup Instructions:
 ```bash
@@ -46,6 +41,20 @@ pip install -e .
 pip install statsforecast
 ```
 
+### Preprocess Data
+___
+
+Data preprocessing scripts are located in the `./data_preprocessing` folder. Preprocessed `simglucose` data from the open-source [simglucose repository](https://github.com/jxx123/simglucose), used in our experiments, is included in the [datasets](https://github.com/PotosnakW/neuralforecast/tree/pk_paper_code/datasets) folder.
+
+Please refer to the **"Data and Code Availability"** section of our paper for information on accessing the OhioT1DM 2018 and 2020 datasets. Access to these datasets requires a **Data Use Agreement (DUA)**.
+
+#### 📦 Run preprocessing:
+```bash
+cd ./data_preprocessing
+python preprocess_ohiot1dm_dataset.py
+```
+> **Note:** The `preprocess_ohiot1dm_dataset.py` file assumes that the `Ohiot1dm` data folder is located in the parent directory, (i.e., '../OhioT1DM').
+
 ### Train Models
 ___
 
@@ -61,6 +70,8 @@ python run_training_scripts.py
 ___
 
 Python scripts to generate the table results and figures are included in the `scripts` folder.
+
+> **Note:** Plot formatting requires `matplotlib==3.7.0`
 
 Our study includes **several types of evaluation**:
 
@@ -86,14 +97,12 @@ Our study includes **several types of evaluation**:
    
 6. **Model Computational Complexity**  
    📄 [`computational_complexity_analysis.ipynb`](./scripts/computational_complexity_analysis.ipynb)  
-   This notebook contains code to calculate the floating-point operations (FLOPs), number of trainable parameters, inference time, and memory usage.
-
-> **Note:** Plotting requires `matplotlib==3.7.0`
+   This notebook contains code to calculate the floating-point operations per second (FLOPs), number of trainable parameters, inference time, and memory usage.
 
 ### How to Cite
 ___
 
-Implementations of models used in our work were obtained from the open-source **Neuralforecast** and **StatsForecast** libraries.
+Implementations of models used in our work were obtained from the open-source [**Neuralforecast**](https://github.com/Nixtla/neuralforecast) and [**StatsForecast**](https://github.com/Nixtla/statsforecast) libraries. In addition to citing our paper, please also include citations for the aforementioned libraries.
 
 #### 📚 Citations:
 
@@ -134,3 +143,36 @@ Implementations of models used in our work were obtained from the open-source **
     url={https://github.com/Nixtla/statsforecast}
 }
 ```
+
+### Contributing
+___
+Bug reports and pull requests are welcome.
+
+### License
+___
+
+MIT License
+
+Copyright (c) 2022 Carnegie Mellon University, [Auton Lab](http://autonlab.org)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+<img align="right" height="100px" width="100px" src="./auton_logo.png">
+<img align="right" height="70px" width="140px" src="./cmu-wordmark-stacked-r.png">
+

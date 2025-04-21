@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 import sys
 
-from experiment_space_treat import *
+from experiment_space_pk import *
 from data_parameters import get_data_parameters
 
 from ray.tune.search.hyperopt import HyperOptSearch
@@ -45,7 +45,7 @@ def main(args):
     print(50*'-', args.input_size, 50*'-')
     start = time.time()
         
-    results_dir = f'{args.results_dir}/{args.dataset}_{args.horizon}/treat_models/trial_{args.experiment_id}'
+    results_dir = f'{args.results_dir}/{args.dataset}_{args.horizon}/pk_models/trial_{args.experiment_id}'
     os.makedirs(results_dir, exist_ok = True)
         
     nhits_treat_config = get_nhits_treat_experiment_space(args)
