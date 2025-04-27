@@ -318,11 +318,17 @@ class BaseModel(pl.LightningModule):
         else:
             self.padder_train = nn.ConstantPad1d(padding=(0, self.h), value=0.0)
 
+        # # Batch sizes
+        # if self.MULTIVARIATE and n_series is not None:
+        #     self.batch_size = max(batch_size, n_series)
+        #     if valid_batch_size is not None:
+        #         valid_batch_size = max(valid_batch_size, n_series)
         # Batch sizes
+        # Willa updates so we can use univariate models with same batch size for consistency
         if self.MULTIVARIATE and n_series is not None:
-            self.batch_size = max(batch_size, n_series)
+            self.batch_size = batch_size
             if valid_batch_size is not None:
-                valid_batch_size = max(valid_batch_size, n_series)
+                valid_batch_size = valid_batch_size
         else:
             self.batch_size = batch_size
 

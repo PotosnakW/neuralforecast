@@ -280,11 +280,15 @@ class T5InfiniAttention(nn.Module):
         self.use_rope = config.use_rope
         self.elu = nn.ELU()
         self.n_channels = config.n_channels
+        
         # check on beta initialization --> people have used zeros and random, which one is best?
-        self.beta = nn.Parameter(torch.rand((1, 1, self.n_heads, 1, 1))*1e-2) # Ablation exps: make C=n_channels for channel specific beta, can implement lasso for spasifying beta parameters, beta(s) for n_channels
-        # Adjust the values to ensure they sum to 0 --> CHECK THIS: we shouldn't need to do this because torch.rand samples from a normal distribution
+        if config.channelwise_beta:
+            self.beta = nn.Parameter(torch.rand((1, self.n_channels, self.n_heads, 1, 1))*1e-2)
+        else:
+            self.beta = nn.Parameter(torch.rand((1, 1, self.n_heads, 1, 1))*1e-2)
+        # Adjust the values to ensure they sum to 0
         with torch.no_grad():
-            self.beta -= self.beta.mean()
+            self.beta -= self.beta.mean(dim=2, keepdim=True)  # dim=2 is the n_heads axis
 
     def prune_heads(self, heads):
         if len(heads) == 0:
@@ -525,7 +529,7 @@ class T5InfiniAttention(nn.Module):
 
         attn_output = attn_output.transpose(2, 3).contiguous() # [batch_size, n_channels, n_patch, n_heads, dim]
         attn_output = attn_output.view(batch_size, -1, self.inner_dim) # [batch_size*n_channels, n_patch, n_heads*dim]
-        attn_output =  self.o(attn_output) # [batch_size*n_channels, n_patch, n_heads*dim]
+        attn_output = self.o(attn_output) # [batch_size*n_channels, n_patch, n_heads*dim]
 
         outputs = (attn_output, past_key_value, position_bias)
 

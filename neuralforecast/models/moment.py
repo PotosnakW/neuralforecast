@@ -106,6 +106,7 @@ class Long_Forecaster(nn.Module):
             configs.transformer_backbone)
 
         setattr(model_config, 'infini_channel_mixing', configs.infini_channel_mixing)
+        setattr(model_config, 'channelwise_beta', configs.channelwise_beta)
         setattr(model_config, 'use_rope', configs.use_rope)
         setattr(model_config, 'max_sequence_length', configs.input_size / configs.patch_len)
         setattr(model_config, 'n_channels', configs.n_series)
@@ -259,6 +260,7 @@ class MOMENT(BaseModel):
         transformer_type = "encoder_only",
         randomly_initialize_backbone = True,
         infini_channel_mixing = False,
+        channelwise_beta = False,
         num_layers: int = 3,
         num_decoder_layers: int = 0,
         num_heads: int = 16,
@@ -350,7 +352,7 @@ class MOMENT(BaseModel):
         #stat_exog = windows_batch["stat_exog"]  #   [N, stat_exog_size (S)]
 
         batch_size = x.shape[0]
-        x_enc = x.permute(0, 2, 1) #  [batch_size (B), n_series (N), input_size (L)]
+        x_enc = x.permute(0, 2, 1) # [batch_size (B), n_series (N), input_size (L)]
         forecast = self.model(x_enc=x_enc) # [batch_size, n_series, horizon*c_out]
         
         forecast = forecast.view(batch_size, self.n_series, self.h, -1) # [batch_size, n_series, horizon, c_out]
