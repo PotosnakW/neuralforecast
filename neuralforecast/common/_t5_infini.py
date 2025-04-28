@@ -245,6 +245,7 @@ class T5InfiniAttention(nn.Module):
                  config: T5Config, 
                  has_relative_attention_bias=False,
                  layer_idx: Optional[int] = None,
+                 beta: Optional[torch.tensor] = None,
                  **kwargs
                 ):
         super().__init__()
@@ -280,15 +281,17 @@ class T5InfiniAttention(nn.Module):
         self.use_rope = config.use_rope
         self.elu = nn.ELU()
         self.n_channels = config.n_channels
-        
-        # check on beta initialization --> people have used zeros and random, which one is best?
-        if config.channelwise_beta:
-            self.beta = nn.Parameter(torch.rand((1, self.n_channels, self.n_heads, 1, 1))*1e-2)
+
+        if beta is not None:
+            self.beta = beta
         else:
-            self.beta = nn.Parameter(torch.rand((1, 1, self.n_heads, 1, 1))*1e-2)
-        # Adjust the values to ensure they sum to 0
-        with torch.no_grad():
-            self.beta -= self.beta.mean(dim=2, keepdim=True)  # dim=2 is the n_heads axis
+            if config.channelwise_beta:
+                self.beta = nn.Parameter(torch.rand((1, self.n_channels, self.n_heads, 1, 1))*1e-2)
+            else:
+                self.beta = nn.Parameter(torch.rand((1, 1, self.n_heads, 1, 1))*1e-2)
+            # Adjust the values to ensure they sum to 0
+            with torch.no_grad():
+                self.beta -= self.beta.mean(dim=2, keepdim=True)
 
     def prune_heads(self, heads):
         if len(heads) == 0:
@@ -538,12 +541,12 @@ class T5InfiniAttention(nn.Module):
         return outputs
 
 class T5LayerSelfInfiniAttention(nn.Module):
-    def __init__(self, config, has_relative_attention_bias=False, layer_idx: Optional[int] = None):
+    def __init__(self, config, has_relative_attention_bias=False, layer_idx: Optional[int] = None, beta: Optional[torch.tensor] = None):
         super().__init__()
 
         if config.infini_channel_mixing:
             self.SelfAttention = T5InfiniAttention(
-                config, has_relative_attention_bias=has_relative_attention_bias, layer_idx=layer_idx
+                config, has_relative_attention_bias=has_relative_attention_bias, layer_idx=layer_idx, beta=beta,
             )
         else:
             self.SelfAttention = T5Attention(
@@ -620,12 +623,12 @@ class T5LayerCrossInfiniAttention(nn.Module):
         return outputs
         
 class T5InfiniBlock(T5Block):
-    def __init__(self, config, has_relative_attention_bias=False, layer_idx: Optional[int] = None):
+    def __init__(self, config, has_relative_attention_bias=False, layer_idx: Optional[int] = None, beta: Optional[torch.tensor] = None):
         super().__init__(config)
         self.is_decoder = config.is_decoder
         self.layer = nn.ModuleList()
         self.layer.append(
-            T5LayerSelfInfiniAttention(config, has_relative_attention_bias=has_relative_attention_bias, layer_idx=layer_idx)
+            T5LayerSelfInfiniAttention(config, has_relative_attention_bias=has_relative_attention_bias, layer_idx=layer_idx, beta=beta)
         )
         if self.is_decoder:
             self.layer.append(T5LayerCrossInfiniAttention(config, layer_idx=layer_idx))
@@ -639,8 +642,23 @@ class T5InfiniStack(T5Stack):
         self.embed_tokens = embed_tokens
         self.is_decoder = config.is_decoder
 
+        # check on beta initialization --> people have used zeros and random, which one is best?
+        if config.layerwise_beta:
+            beta = None
+        else:
+            n_channels = config.n_channels
+            n_heads = config.num_heads
+            # Create a layer-specific beta
+            if config.channelwise_beta:
+                beta = nn.Parameter(torch.rand((1, n_channels, n_heads, 1, 1))*1e-2)
+            else:
+                beta = nn.Parameter(torch.rand((1, 1, n_heads, 1, 1))*1e-2)
+            # Adjust the values to ensure they sum to 0
+            with torch.no_grad():
+                beta -= beta.mean(dim=2, keepdim=True)
+
         self.block = nn.ModuleList(
-            [T5InfiniBlock(config, has_relative_attention_bias=bool(i == 0), layer_idx=i) for i in range(config.num_layers)]
+            [T5InfiniBlock(config, has_relative_attention_bias=bool(i == 0), layer_idx=i, beta=beta) for i in range(config.num_layers)]
         )
         self.final_layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)

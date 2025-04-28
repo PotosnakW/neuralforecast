@@ -106,6 +106,7 @@ class Long_Forecaster(nn.Module):
             configs.transformer_backbone)
 
         setattr(model_config, 'infini_channel_mixing', configs.infini_channel_mixing)
+        setattr(model_config, 'layerwise_beta', configs.layerwise_beta)
         setattr(model_config, 'channelwise_beta', configs.channelwise_beta)
         setattr(model_config, 'use_rope', configs.use_rope)
         setattr(model_config, 'max_sequence_length', configs.input_size / configs.patch_len)
@@ -260,7 +261,10 @@ class MOMENT(BaseModel):
         transformer_type = "encoder_only",
         randomly_initialize_backbone = True,
         infini_channel_mixing = False,
+        layerwise_beta = True,
         channelwise_beta = False,
+        #l1_penalty = False,
+        #l1_lambda = 0.5,
         num_layers: int = 3,
         num_decoder_layers: int = 0,
         num_heads: int = 16,
@@ -340,6 +344,8 @@ class MOMENT(BaseModel):
         self.h = h
         self.input_size = input_size
         self.n_series = n_series
+        #self.l1_penalty = l1_penalty
+        #self.l1_lambda = l1_lambda
         self.model = Long_Forecaster(config)
 
     def forward(self, windows_batch):

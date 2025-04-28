@@ -696,7 +696,7 @@ class BaseModel(pl.LightningModule):
                     sample_condition, axis=(1, -1)
                 )  # Sum over time & series dimension
                 final_condition = (sample_condition > 0) & (available_condition > 0)
-
+            print(windows.device, windows.shape)
             windows = windows[final_condition]
 
             # Parse Static data to match windows
@@ -1243,6 +1243,7 @@ class BaseModel(pl.LightningModule):
         )
         windows = self._normalization(windows=windows, y_idx=y_idx)
 
+
         # Parse windows
         (
             insample_y,
@@ -1277,6 +1278,11 @@ class BaseModel(pl.LightningModule):
             loss = self.loss(
                 y=outsample_y, y_hat=output, y_insample=insample_y, mask=outsample_mask
             )
+
+        # if self.l1_penalty: # Need to address layerwise beta
+        #     beta = F.sigmoid(self.beta) # squash into (0, 1)
+        #     l1_norm = beta.sum(dim=1).mean()  # sum across channels, mean across batch/heads
+        #     loss = loss + self.l1_lambda * l1_norm
 
         if torch.isnan(loss):
             print("Model Parameters", self.hparams)
@@ -1527,6 +1533,7 @@ class BaseModel(pl.LightningModule):
             torch.cuda.device_count() > 1
         ):
             pred_trainer_kwargs["devices"] = [0]
+
 
         trainer = pl.Trainer(**pred_trainer_kwargs)
         fcsts = trainer.predict(self, datamodule=datamodule)
