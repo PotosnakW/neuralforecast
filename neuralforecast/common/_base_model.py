@@ -672,7 +672,9 @@ class BaseModel(pl.LightningModule):
                 dimension=-1, size=window_size, step=self.step_size
             )
 
-            if self.MULTIVARIATE:
+            #print('nseries', self.n_series)
+            #print('windows shape before', windows.shape)
+            if (self.MULTIVARIATE) & (self.n_series>1):
                 # [n_series, C, Ws, L + h] -> [Ws, L + h, C, n_series]
                 windows = windows.permute(2, 3, 1, 0)
             else:
@@ -681,6 +683,7 @@ class BaseModel(pl.LightningModule):
                 windows = windows.permute(0, 2, 3, 1)
                 windows = windows.flatten(0, 1)
                 windows = windows.unsqueeze(-1)
+            #print('windows shape after', windows.shape)
 
             # Sample and Available conditions
             available_idx = temporal_cols.get_loc("available_mask")
@@ -696,7 +699,7 @@ class BaseModel(pl.LightningModule):
                     sample_condition, axis=(1, -1)
                 )  # Sum over time & series dimension
                 final_condition = (sample_condition > 0) & (available_condition > 0)
-            print(windows.device, windows.shape)
+
             windows = windows[final_condition]
 
             # Parse Static data to match windows
@@ -782,7 +785,8 @@ class BaseModel(pl.LightningModule):
             static = batch.get("static", None)
             static_cols = batch.get("static_cols", None)
 
-            if self.MULTIVARIATE:
+            print('window shape before', windows.shape)
+            if (self.MULTIVARIATE) & (self.n_series>1):
                 # [n_series, C, Ws, L + h] -> [Ws, L + h, C, n_series]
                 windows = windows.permute(2, 3, 1, 0)
             else:
@@ -795,6 +799,8 @@ class BaseModel(pl.LightningModule):
                     static = torch.repeat_interleave(
                         static, repeats=windows_per_serie, dim=0
                     )
+
+            print('window shape after', windows.shape)
 
             # Sample windows for batched prediction
             if w_idxs is not None:

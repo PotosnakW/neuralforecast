@@ -356,6 +356,7 @@ class MOMENT(BaseModel):
         #hist_exog = windows_batch["hist_exog"]  #   [B, hist_exog_size (X), L, N]
         #futr_exog = windows_batch["futr_exog"]  #   [B, futr_exog_size (F), L + h, N]
         #stat_exog = windows_batch["stat_exog"]  #   [N, stat_exog_size (S)]
+        #print('x shape', x.shape)
 
         batch_size = x.shape[0]
         x_enc = x.permute(0, 2, 1) # [batch_size (B), n_series (N), input_size (L)]
