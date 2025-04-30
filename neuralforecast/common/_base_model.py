@@ -672,7 +672,6 @@ class BaseModel(pl.LightningModule):
                 dimension=-1, size=window_size, step=self.step_size
             )
 
-            #print('nseries', self.n_series)
             #print('windows shape before', windows.shape)
             if (self.MULTIVARIATE) & (self.n_series>1):
                 # [n_series, C, Ws, L + h] -> [Ws, L + h, C, n_series]
@@ -785,7 +784,7 @@ class BaseModel(pl.LightningModule):
             static = batch.get("static", None)
             static_cols = batch.get("static_cols", None)
 
-            print('window shape before', windows.shape)
+            #print('window shape before', windows.shape)
             if (self.MULTIVARIATE) & (self.n_series>1):
                 # [n_series, C, Ws, L + h] -> [Ws, L + h, C, n_series]
                 windows = windows.permute(2, 3, 1, 0)
@@ -799,8 +798,7 @@ class BaseModel(pl.LightningModule):
                     static = torch.repeat_interleave(
                         static, repeats=windows_per_serie, dim=0
                     )
-
-            print('window shape after', windows.shape)
+            #print('window shape after', windows.shape)
 
             # Sample windows for batched prediction
             if w_idxs is not None:
@@ -1545,7 +1543,7 @@ class BaseModel(pl.LightningModule):
         fcsts = trainer.predict(self, datamodule=datamodule)
         fcsts = torch.vstack(fcsts)
 
-        if self.MULTIVARIATE:
+        if (self.MULTIVARIATE) & (self.n_series>1):
             # [B, h, n_series (, Q)] -> [n_series, B, h (, Q)]
             fcsts = fcsts.swapaxes(0, 2)
             fcsts = fcsts.swapaxes(1, 2)
