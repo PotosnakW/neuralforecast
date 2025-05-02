@@ -263,8 +263,8 @@ class MOMENT(BaseModel):
         infini_channel_mixing = False,
         layerwise_beta = True,
         channelwise_beta = False,
-        #l1_penalty = False,
-        #l1_lambda = 0.5,
+        l1_penalty = False,
+        l1_lambda = 0.5,
         num_layers: int = 3,
         num_decoder_layers: int = 0,
         num_heads: int = 16,
@@ -344,8 +344,8 @@ class MOMENT(BaseModel):
         self.h = h
         self.input_size = input_size
         self.n_series = n_series
-        #self.l1_penalty = l1_penalty
-        #self.l1_lambda = l1_lambda
+        self.l1_penalty = l1_penalty
+        self.l1_lambda = l1_lambda
         self.model = Long_Forecaster(config)
 
     def forward(self, windows_batch):
@@ -360,7 +360,7 @@ class MOMENT(BaseModel):
         batch_size = x.shape[0]
         x_enc = x.permute(0, 2, 1) # [batch_size (B), n_series (N), input_size (L)]
         forecast = self.model(x_enc=x_enc) # [batch_size, n_series, horizon*c_out]
-        
+
         forecast = forecast.view(batch_size, self.n_series, self.h, -1) # [batch_size, n_series, horizon, c_out]
         forecast = forecast.permute(0, 2, 3, 1).reshape(batch_size, self.h, -1) # [batch_size, horizon, c_out*n_series] 
         # output is expected in this shape. tsmixer and other neuralforecast multivariate models' decoder output is already in shape # [batch_size, horizon*c_out, n_series] so skipping to forecast.reshape(batch_size, self.h, -1) is valid for those models. 

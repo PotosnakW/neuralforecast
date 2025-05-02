@@ -1247,7 +1247,6 @@ class BaseModel(pl.LightningModule):
         )
         windows = self._normalization(windows=windows, y_idx=y_idx)
 
-
         # Parse windows
         (
             insample_y,
@@ -1283,10 +1282,21 @@ class BaseModel(pl.LightningModule):
                 y=outsample_y, y_hat=output, y_insample=insample_y, mask=outsample_mask
             )
 
-        # if self.l1_penalty: # Need to address layerwise beta
-        #     beta = F.sigmoid(self.beta) # squash into (0, 1)
-        #     l1_norm = beta.sum(dim=1).mean()  # sum across channels, mean across batch/heads
-        #     loss = loss + self.l1_lambda * l1_norm
+        if self.l1_penalty:
+            print('l1_penalty')
+            beta1 = self.model.encoder.block[0].layer[0].SelfAttention.beta
+            beta2 = self.model.encoder.block[1].layer[0].SelfAttention.beta
+            beta3 = self.model.encoder.block[2].layer[0].SelfAttention.beta
+            beta4 = self.model.encoder.block[3].layer[0].SelfAttention.beta
+
+            l1_norm = F.sigmoid(beta1).sum(dim=1).mean() \
+            + F.sigmoid(beta2).sum(dim=1).mean() \
+            + F.sigmoid(beta3).sum(dim=1).mean() \
+            + F.sigmoid(beta4).sum(dim=1).mean()
+
+            #print('before', loss)
+            loss += self.l1_lambda * l1_norm
+            #print('after', loss)
 
         if torch.isnan(loss):
             print("Model Parameters", self.hparams)
