@@ -69,6 +69,7 @@ from neuralforecast.models import (
     RMoK,
     TimeXer,
     MOMENT,
+    iTransformerT5,
 )
 from .common._base_auto import BaseAuto, MockTrial
 from neuralforecast.utils import (

@@ -182,7 +182,7 @@ class MLP(BaseModel):
             insample_y = torch.cat(
                 (insample_y, stat_exog.reshape(batch_size, -1)), dim=1
             )
-
+        
         y_pred = insample_y.clone()
         for layer in self.mlp:
             y_pred = torch.relu(layer(y_pred))
