@@ -1442,8 +1442,10 @@ class BaseModel(pl.LightningModule):
                 i * windows_batch_size, min((i + 1) * windows_batch_size, n_windows)
             )
             windows = self._create_windows(batch, step="predict", w_idxs=w_idxs)
+            #print('before', windows["temporal"].shape)
             if (self.MULTIVARIATE) & (self.n_series==1):
                 windows["temporal"] = windows["temporal"].permute(3, 0, 1, 2).flatten(0, 1).unsqueeze(-1)
+            #print('after', windows["temporal"].shape)
             windows = self._normalization(windows=windows, y_idx=y_idx)
 
             # Parse windows
