@@ -695,7 +695,7 @@ class T5InfiniModel(T5Model):
         # Model parallel
         self.model_parallel = False
         self.device_map = None
-        
+
 class T5InfiniEncoderModel(T5EncoderModel):
     _tied_weights_keys = ["encoder.embed_tokens.weight"]
 
