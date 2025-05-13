@@ -114,10 +114,11 @@ class T5Flex(BaseFlex):
     `hist_exog_list`: str list, historic exogenous columns.<br>
     `futr_exog_list`: str list, future exogenous columns.<br>
     `exclude_insample_y`: bool=False, the model skips the autoregressive features y[t-input_size:t] if True.<br>
-    `encoder_layers`: int, number of layers for encoder.<br>
-    `n_heads`: int=16, number of multi-head's attention.<br>
-    `hidden_size`: int=128, units of embeddings and encoders.<br>
-    `linear_hidden_size`: int=256, units of linear layer.<br>
+    `num_layers`: int, number of layers for encoder.<br>
+    `num_decoder_layers`: int, number of layers for decoder.<br>
+    `num_heads`: int=16, number of multi-head's attention.<br>
+    `d_model`: int=128, units of embeddings and encoders.<br>
+    `d_ff`: int=256, units of linear layer.<br>
     `dropout`: float=0.1, dropout rate for residual connection.<br>
     `head_dropout`: float=0.1, dropout rate for Flatten head layer.<br>
     `attn_dropout`: float=0.1, dropout rate for attention layer.<br>
