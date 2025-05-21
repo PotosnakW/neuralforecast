@@ -240,10 +240,10 @@ class MOMENT(BaseModel):
     """
 
     # Class attributes
-    EXOGENOUS_FUTR = True
-    EXOGENOUS_HIST = True
-    EXOGENOUS_STAT = True
-    MULTIVARIATE = True  # If the model produces multivariate forecasts (True) or univariate (False)
+    EXOGENOUS_FUTR = False
+    EXOGENOUS_HIST = False
+    EXOGENOUS_STAT = False
+    MULTIVARIATE = True # If the model produces multivariate forecasts (True) or univariate (False)
     RECURRENT = (
         False  # If the model produces forecasts recursively (True) or direct (False)
     )

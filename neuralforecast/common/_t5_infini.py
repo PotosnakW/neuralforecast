@@ -545,6 +545,7 @@ class T5LayerSelfInfiniAttention(nn.Module):
         super().__init__()
 
         if config.infini_channel_mixing:
+            print("using infini attention")
             self.SelfAttention = T5InfiniAttention(
                 config, has_relative_attention_bias=has_relative_attention_bias, layer_idx=layer_idx, beta=beta,
             )

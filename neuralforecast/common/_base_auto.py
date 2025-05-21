@@ -263,7 +263,7 @@ class BaseAuto(pl.LightningModule):
             tune.with_resources(train_fn_with_parameters, device_dict),
             run_config=air.RunConfig(callbacks=self.callbacks, 
                                      verbose=verbose,
-                                     storage_path="/home/wpotosna/Desktop/ray_results", #directory to save ray_results
+                                     storage_path="/home/wpotosna/ray_results", #directory to save ray_results
                                     ),
             tune_config=tune.TuneConfig(
                 metric="loss",

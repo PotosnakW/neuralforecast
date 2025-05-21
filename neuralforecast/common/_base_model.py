@@ -318,17 +318,11 @@ class BaseModel(pl.LightningModule):
         else:
             self.padder_train = nn.ConstantPad1d(padding=(0, self.h), value=0.0)
 
-        # # Batch sizes
-        # if self.MULTIVARIATE and n_series is not None:
-        #     self.batch_size = max(batch_size, n_series)
-        #     if valid_batch_size is not None:
-        #         valid_batch_size = max(valid_batch_size, n_series)
         # Batch sizes
-        # Willa updates so we can n_series==1 models with same batch size for consistency
         if self.MULTIVARIATE and n_series is not None:
-            self.batch_size = batch_size
+            self.batch_size = max(batch_size, n_series)
             if valid_batch_size is not None:
-                valid_batch_size = valid_batch_size
+                valid_batch_size = max(valid_batch_size, n_series)
         else:
             self.batch_size = batch_size
 
@@ -672,17 +666,15 @@ class BaseModel(pl.LightningModule):
                 dimension=-1, size=window_size, step=self.step_size
             )
 
-            #print('windows shape before', windows.shape)
             if self.MULTIVARIATE:
                 # [n_series, C, Ws, L + h] -> [Ws, L + h, C, n_series]
                 windows = windows.permute(2, 3, 1, 0)
             else:
-                # [n_series, C, Ws, L + h] -> [Ws * n_series, L + h, C, 1]
+                # [n_series, C, Ws, L + h] -> [n_series * Ws, L + h, C, 1]
                 windows_per_serie = windows.shape[2]
                 windows = windows.permute(0, 2, 3, 1)
                 windows = windows.flatten(0, 1)
                 windows = windows.unsqueeze(-1)
-            #print('windows shape after', windows.shape)
 
             # Sample and Available conditions
             available_idx = temporal_cols.get_loc("available_mask")
@@ -784,12 +776,11 @@ class BaseModel(pl.LightningModule):
             static = batch.get("static", None)
             static_cols = batch.get("static_cols", None)
 
-            #print('window shape before', windows.shape)
             if self.MULTIVARIATE:
                 # [n_series, C, Ws, L + h] -> [Ws, L + h, C, n_series]
                 windows = windows.permute(2, 3, 1, 0)
             else:
-                # [n_series, C, Ws, L + h] -> [Ws * n_series, L + h, C, 1]
+                # [n_series, C, Ws, L + h] -> [n_series * Ws, L + h, C, 1]
                 windows_per_serie = windows.shape[2]
                 windows = windows.permute(0, 2, 3, 1)
                 windows = windows.flatten(0, 1)
@@ -798,7 +789,6 @@ class BaseModel(pl.LightningModule):
                     static = torch.repeat_interleave(
                         static, repeats=windows_per_serie, dim=0
                     )
-            #print('window shape after', windows.shape)
 
             # Sample windows for batched prediction
             if w_idxs is not None:
@@ -1242,10 +1232,9 @@ class BaseModel(pl.LightningModule):
         y_idx = batch["y_idx"]
 
         windows = self._create_windows(batch, step="train")
-        #print('before', windows["temporal"].shape)
+
         if (self.MULTIVARIATE) & (self.n_series==1):
             windows["temporal"] = windows["temporal"].permute(3, 0, 1, 2).flatten(0, 1).unsqueeze(-1)
-        #print('after', windows["temporal"].shape)
         
         original_outsample_y = torch.clone(
             windows["temporal"][:, self.input_size :, y_idx]
@@ -1300,9 +1289,7 @@ class BaseModel(pl.LightningModule):
                 + F.sigmoid(beta3).sum(dim=1).mean() \
                 + F.sigmoid(beta4).sum(dim=1).mean()
 
-                #print('before', loss)
                 loss += self.l1_lambda * l1_norm
-                #print('after', loss)
 
         if torch.isnan(loss):
             print("Model Parameters", self.hparams)
@@ -1347,11 +1334,8 @@ class BaseModel(pl.LightningModule):
                 i * windows_batch_size, min((i + 1) * windows_batch_size, n_windows)
             )
             windows = self._create_windows(batch, step="val", w_idxs=w_idxs)
-            #print('before', windows["temporal"].shape)
             if (self.MULTIVARIATE) & (self.n_series==1):
                 windows["temporal"] = windows["temporal"].permute(3, 0, 1, 2).flatten(0, 1).unsqueeze(-1)
-                #print('after', len(windows["temporal"]))
-            #print('after', windows["temporal"].shape)
         
             original_outsample_y = torch.clone(
                 windows["temporal"][:, self.input_size :, y_idx]
@@ -1437,15 +1421,15 @@ class BaseModel(pl.LightningModule):
         n_batches = int(np.ceil(n_windows / windows_batch_size))
         y_hats = []
         for i in range(n_batches):
-            # Create and normalize windows [Ws, L+H, C]
+            # Create and normalize windows [Ws, L+H, C, n_series]
             w_idxs = np.arange(
                 i * windows_batch_size, min((i + 1) * windows_batch_size, n_windows)
             )
             windows = self._create_windows(batch, step="predict", w_idxs=w_idxs)
-            #print('before', windows["temporal"].shape)
+            windows_size = windows["temporal"].shape[0]
             if (self.MULTIVARIATE) & (self.n_series==1):
                 windows["temporal"] = windows["temporal"].permute(3, 0, 1, 2).flatten(0, 1).unsqueeze(-1)
-            #print('after', windows["temporal"].shape)
+
             windows = self._normalization(windows=windows, y_idx=y_idx)
 
             # Parse windows
@@ -1472,7 +1456,13 @@ class BaseModel(pl.LightningModule):
                     y_idx=y_idx,
                 )
 
+            if (self.MULTIVARIATE) & (self.n_series==1):
+                y_hat = y_hat.view(-1, windows_size, self.h, 1)
+                y_hat = y_hat.squeeze(-1)
+                y_hat = y_hat.permute(1, 2, 0)
+
             y_hats.append(y_hat)
+
         y_hat = torch.cat(y_hats, dim=0)
         self.input_size = self.input_size_backup
 
@@ -1569,7 +1559,6 @@ class BaseModel(pl.LightningModule):
         fcsts = torch.vstack(fcsts)
 
         if self.MULTIVARIATE:
-            # [B, h, n_series (, Q)] -> [n_series, B, h (, Q)]
             fcsts = fcsts.swapaxes(0, 2)
             fcsts = fcsts.swapaxes(1, 2)
 
