@@ -670,7 +670,7 @@ class BaseModel(pl.LightningModule):
                 # [n_series, C, Ws, L + h] -> [Ws, L + h, C, n_series]
                 windows = windows.permute(2, 3, 1, 0)
             else:
-                # [n_series, C, Ws, L + h] -> [n_series * Ws, L + h, C, 1]
+                # [n_series, C, Ws, L + h] -> [Ws * n_series, L + h, C, 1]
                 windows_per_serie = windows.shape[2]
                 windows = windows.permute(0, 2, 3, 1)
                 windows = windows.flatten(0, 1)
@@ -780,7 +780,7 @@ class BaseModel(pl.LightningModule):
                 # [n_series, C, Ws, L + h] -> [Ws, L + h, C, n_series]
                 windows = windows.permute(2, 3, 1, 0)
             else:
-                # [n_series, C, Ws, L + h] -> [n_series * Ws, L + h, C, 1]
+                # [n_series, C, Ws, L + h] -> [Ws * n_series, L + h, C, 1]
                 windows_per_serie = windows.shape[2]
                 windows = windows.permute(0, 2, 3, 1)
                 windows = windows.flatten(0, 1)
@@ -1233,9 +1233,9 @@ class BaseModel(pl.LightningModule):
 
         windows = self._create_windows(batch, step="train")
 
-        if (self.MULTIVARIATE) & (self.n_series==1):
+        if self.MULTIVARIATE and self.n_series == 1:
             windows["temporal"] = windows["temporal"].permute(3, 0, 1, 2).flatten(0, 1).unsqueeze(-1)
-        
+                    
         original_outsample_y = torch.clone(
             windows["temporal"][:, self.input_size :, y_idx]
         )
@@ -1275,21 +1275,6 @@ class BaseModel(pl.LightningModule):
             loss = self.loss(
                 y=outsample_y, y_hat=output, y_insample=insample_y, mask=outsample_mask
             )
-
-        if 'MOMENT' in self.__class__.__name__:
-            if self.l1_penalty:
-                print('l1_penalty')
-                beta1 = self.model.encoder.block[0].layer[0].SelfAttention.beta
-                beta2 = self.model.encoder.block[1].layer[0].SelfAttention.beta
-                beta3 = self.model.encoder.block[2].layer[0].SelfAttention.beta
-                beta4 = self.model.encoder.block[3].layer[0].SelfAttention.beta
-
-                l1_norm = F.sigmoid(beta1).sum(dim=1).mean() \
-                + F.sigmoid(beta2).sum(dim=1).mean() \
-                + F.sigmoid(beta3).sum(dim=1).mean() \
-                + F.sigmoid(beta4).sum(dim=1).mean()
-
-                loss += self.l1_lambda * l1_norm
 
         if torch.isnan(loss):
             print("Model Parameters", self.hparams)
@@ -1334,9 +1319,10 @@ class BaseModel(pl.LightningModule):
                 i * windows_batch_size, min((i + 1) * windows_batch_size, n_windows)
             )
             windows = self._create_windows(batch, step="val", w_idxs=w_idxs)
-            if (self.MULTIVARIATE) & (self.n_series==1):
+
+            if self.MULTIVARIATE and self.n_series == 1:
                 windows["temporal"] = windows["temporal"].permute(3, 0, 1, 2).flatten(0, 1).unsqueeze(-1)
-        
+
             original_outsample_y = torch.clone(
                 windows["temporal"][:, self.input_size :, y_idx]
             )
@@ -1421,13 +1407,13 @@ class BaseModel(pl.LightningModule):
         n_batches = int(np.ceil(n_windows / windows_batch_size))
         y_hats = []
         for i in range(n_batches):
-            # Create and normalize windows [Ws, L+H, C, n_series]
+            # Create and normalize windows [Ws, L+H, C]
             w_idxs = np.arange(
                 i * windows_batch_size, min((i + 1) * windows_batch_size, n_windows)
             )
             windows = self._create_windows(batch, step="predict", w_idxs=w_idxs)
             windows_size = windows["temporal"].shape[0]
-            if (self.MULTIVARIATE) & (self.n_series==1):
+            if self.MULTIVARIATE and self.n_series == 1:
                 windows["temporal"] = windows["temporal"].permute(3, 0, 1, 2).flatten(0, 1).unsqueeze(-1)
 
             windows = self._normalization(windows=windows, y_idx=y_idx)
@@ -1456,13 +1442,16 @@ class BaseModel(pl.LightningModule):
                     y_idx=y_idx,
                 )
 
-            if (self.MULTIVARIATE) & (self.n_series==1):
-                y_hat = y_hat.view(-1, windows_size, self.h, 1)
+            if self.MULTIVARIATE and self.n_series == 1:
+                #[n_series*Ws, h, 1, (Q,)]-->[Ws, h, n_series, (Q,)]
+                c_out = self.loss.outputsize_multiplier
+                y_hat = y_hat.view(-1, windows_size, self.h, 1, c_out)
+                y_hat = y_hat.permute(1, 2, 0, 4, 3)
                 y_hat = y_hat.squeeze(-1)
-                y_hat = y_hat.permute(1, 2, 0)
+                if c_out==1:
+                    y_hat = y_hat.squeeze(-1)
 
             y_hats.append(y_hat)
-
         y_hat = torch.cat(y_hats, dim=0)
         self.input_size = self.input_size_backup
 
@@ -1559,6 +1548,7 @@ class BaseModel(pl.LightningModule):
         fcsts = torch.vstack(fcsts)
 
         if self.MULTIVARIATE:
+            # [B, h, n_series (, Q)] -> [n_series, B, h (, Q)]
             fcsts = fcsts.swapaxes(0, 2)
             fcsts = fcsts.swapaxes(1, 2)
 

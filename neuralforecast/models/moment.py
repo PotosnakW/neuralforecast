@@ -8,9 +8,9 @@ from torch import nn
 
 from ..common._base_model import BaseModel
 from ..common._modules import RevINMultivariate
-from ..common._moment_utils import PatchEmbedding, Patching, Masking, NamespaceWithDefaults, _update_inputs, _validate_inputs
+from ..common._moment_utils import PatchEmbedding, Patching, Masking, NamespaceWithDefaults, _update_inputs, _validate_inputs, torch_pca
 
-from ..common._t5_infini import T5InfiniModel, T5InfiniEncoderModel
+from ..common._t5_infini import T5Model, T5EncoderModel
 #from transformers.models.t5.modeling_t5 import T5Model, T5EncoderModel
 
 from transformers import T5Config
@@ -64,6 +64,9 @@ class Long_Forecaster(nn.Module):
                                                  subtract_last=False,
                                                 )
 
+        self.n_series = config.n_series
+        self.use_pca_adapter = config.use_pca_adapter
+
         self.tokenizer = Patching(
             patch_len=config.patch_len, 
             stride=config.stride,
@@ -97,15 +100,14 @@ class Long_Forecaster(nn.Module):
             )
 
     def _get_huggingface_transformer(self, configs):
-        #ModelClass, EncoderModelClass = T5Model, T5EncoderModel
-        ModelClass, EncoderModelClass = T5InfiniModel, T5InfiniEncoderModel  # infini
+        ModelClass, EncoderModelClass = T5Model, T5EncoderModel
         
         logger.info(f" ModelClass: {ModelClass.__name__}, EncoderModelClass: {EncoderModelClass.__name__}.")
             
         model_config = T5Config.from_pretrained(
             configs.transformer_backbone)
 
-        setattr(model_config, 'infini_channel_mixing', configs.infini_channel_mixing)
+        setattr(model_config, 'channel_mixing_method', configs.channel_mixing_method)
         setattr(model_config, 'layerwise_beta', configs.layerwise_beta)
         setattr(model_config, 'channelwise_beta', configs.channelwise_beta)
         setattr(model_config, 'use_rope', configs.use_rope)
@@ -142,6 +144,12 @@ class Long_Forecaster(nn.Module):
             x_enc = x_enc.permute(0, 2, 1) #[bs x nvars x seq_len]
         # x_enc = self.normalizer(x=x_enc, mask=input_mask, mode='norm')
         # x_enc = torch.nan_to_num(x_enc, nan=0, posinf=0, neginf=0) 
+
+        if self.use_pca_adapter:
+            x_reshaped = x_enc.permute(0, 2, 1) #[bs x seq_len x n_channels]
+            x_flat = x_reshaped.reshape(batch_size * seq_len, n_channels) #[bs*seq_len x n_channels]
+            x_pca = torch_pca(x_flat, n_components=n_channels, whiten=True) #[bs*seq_len x n_channels]
+            x_enc = x_pca.reshape(batch_size, seq_len, n_channels).permute(0, 2, 1)  #[bs x n_channels x seq_len]
         
         # Patching and embedding
         x_enc = self.tokenizer(x=x_enc) # [batch_size x n_channels x n_patch x patch_len]
@@ -260,11 +268,10 @@ class MOMENT(BaseModel):
         transformer_backbone = "google/t5-efficient-tiny",
         transformer_type = "encoder_only",
         randomly_initialize_backbone = True,
-        infini_channel_mixing = False,
+        channel_mixing_method = 'none',
         layerwise_beta = True,
         channelwise_beta = False,
-        l1_penalty = False,
-        l1_lambda = 0.5,
+        use_pca_adapter = False,
         num_layers: int = 3,
         num_decoder_layers: int = 0,
         num_heads: int = 16,
@@ -344,8 +351,6 @@ class MOMENT(BaseModel):
         self.h = h
         self.input_size = input_size
         self.n_series = n_series
-        self.l1_penalty = l1_penalty
-        self.l1_lambda = l1_lambda
         self.model = Long_Forecaster(config)
 
     def forward(self, windows_batch):

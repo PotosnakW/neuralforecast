@@ -473,3 +473,45 @@ class Patching(nn.Module):
                      step=self.stride)
         # x : [batch_size x n_channels x num_patch x patch_len]
         return x 
+
+
+def torch_pca(x: torch.Tensor, n_components: int, whiten: bool = True, center: bool = True):
+    """
+    Perform PCA (optionally whitened) in pure PyTorch.
+    
+    Args:
+        x (torch.Tensor): Input tensor of shape [N, D] (samples × features).
+        n_components (int): Number of principal components to keep.
+        whiten (bool): If True, divide components by sqrt(eigenvalues).
+        center (bool): If True, mean-center the input before PCA.
+    
+    Returns:
+        x_pca (torch.Tensor): Transformed data, shape [N, n_components].
+        components (torch.Tensor): Principal component vectors [D, n_components].
+        explained_variance (torch.Tensor): Eigenvalues of the selected components [n_components].
+        mean (torch.Tensor): Mean vector used for centering [D].
+    """
+
+    x = x.float()
+    # Center
+    mean = x.mean(dim=0, keepdim=True) if center else torch.zeros_like(x[:1])
+    x_centered = x - mean if center else x
+    # Covariance matrix
+    cov = torch.cov(x_centered.T)
+    # Eigen decomposition
+    eigvals, eigvecs = torch.linalg.eigh(cov)
+    # Sort by descending eigenvalue
+    idx = torch.argsort(eigvals, descending=True)
+    eigvals = eigvals[idx]
+    eigvecs = eigvecs[:, idx]
+    # Select top components
+    eigvals = eigvals[:n_components]
+    components = eigvecs[:, :n_components]
+    # Whitening
+    if whiten:
+        components = components / torch.sqrt(eigvals + 1e-8)
+
+    # Project data
+    x_pca = x_centered @ components
+
+    return x_pca
