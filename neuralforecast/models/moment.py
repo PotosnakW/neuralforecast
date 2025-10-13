@@ -64,8 +64,8 @@ class Long_Forecaster(nn.Module):
                                                  subtract_last=False,
                                                 )
 
-        self.n_series = config.n_series
         self.use_pca_adapter = config.use_pca_adapter
+        self.pca_n_series = config.pca_n_series
 
         self.tokenizer = Patching(
             patch_len=config.patch_len, 
@@ -146,10 +146,12 @@ class Long_Forecaster(nn.Module):
         # x_enc = torch.nan_to_num(x_enc, nan=0, posinf=0, neginf=0) 
 
         if self.use_pca_adapter:
-            x_reshaped = x_enc.permute(0, 2, 1) #[bs x seq_len x n_channels]
-            x_flat = x_reshaped.reshape(batch_size * seq_len, n_channels) #[bs*seq_len x n_channels]
-            x_pca = torch_pca(x_flat, n_components=n_channels, whiten=True) #[bs*seq_len x n_channels]
-            x_enc = x_pca.reshape(batch_size, seq_len, n_channels).permute(0, 2, 1)  #[bs x n_channels x seq_len]
+            x_enc = x_enc.reshape(-1, self.pca_n_series, n_channels, seq_len) #[Ws * n_series, C==1, L]
+            x_reshaped = x_enc.permute(0, 2, 3, 1)
+            x_flat = x_reshaped.reshape(-1, self.pca_n_series)
+            x_pca = torch_pca(x_flat, n_components=self.pca_n_series, whiten=True)
+            x_enc_pca = x_pca.view(-1, n_channels, seq_len, self.pca_n_series).permute(0, 3, 1, 2)
+            x_enc = x_enc_pca.reshape(-1, n_channels, seq_len)
         
         # Patching and embedding
         x_enc = self.tokenizer(x=x_enc) # [batch_size x n_channels x n_patch x patch_len]
@@ -272,6 +274,7 @@ class MOMENT(BaseModel):
         layerwise_beta = True,
         channelwise_beta = False,
         use_pca_adapter = False,
+        pca_n_series = 2,
         num_layers: int = 3,
         num_decoder_layers: int = 0,
         num_heads: int = 16,
