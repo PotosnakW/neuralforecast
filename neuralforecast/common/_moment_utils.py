@@ -475,9 +475,14 @@ class Patching(nn.Module):
         return x 
 
 
-def torch_pca(x: torch.Tensor, n_components: int, whiten: bool = True, center: bool = True):
+def torch_pca(
+    x: torch.Tensor, 
+    n_components: int, 
+    whiten: bool = True, 
+    center: bool = True
+):
     """
-    Perform PCA (optionally whitened) in pure PyTorch.
+    Perform PCA (optionally whitened) in PyTorch.
     
     Args:
         x (torch.Tensor): Input tensor of shape [N, D] (samples × features).
@@ -489,29 +494,34 @@ def torch_pca(x: torch.Tensor, n_components: int, whiten: bool = True, center: b
         x_pca (torch.Tensor): Transformed data, shape [N, n_components].
         components (torch.Tensor): Principal component vectors [D, n_components].
         explained_variance (torch.Tensor): Eigenvalues of the selected components [n_components].
-        mean (torch.Tensor): Mean vector used for centering [D].
+        mean (torch.Tensor): Mean vector used for centering [1, D].
     """
-
+    
     x = x.float()
-    # Center
     mean = x.mean(dim=0, keepdim=True) if center else torch.zeros_like(x[:1])
     x_centered = x - mean if center else x
-    # Covariance matrix
     cov = torch.cov(x_centered.T)
-    # Eigen decomposition
     eigvals, eigvecs = torch.linalg.eigh(cov)
-    # Sort by descending eigenvalue
     idx = torch.argsort(eigvals, descending=True)
     eigvals = eigvals[idx]
     eigvecs = eigvecs[:, idx]
-    # Select top components
     eigvals = eigvals[:n_components]
     components = eigvecs[:, :n_components]
-    # Whitening
+
     if whiten:
         components = components / torch.sqrt(eigvals + 1e-8)
 
-    # Project data
     x_pca = x_centered @ components
 
-    return x_pca
+    return x_pca, components, eigvals, mean
+
+def torch_inverse_pca(x_pca, components, eigvals, mean, whiten=True, center=True):
+    if whiten:
+        # When whitening was applied, we need to unscale before reconstruction
+        scaling = torch.sqrt(eigvals + 1e-8)
+        x_recon = x_pca @ (components * scaling).T
+    else:
+        x_recon = x_pca @ components.T
+    if center:
+        x_recon = x_recon + mean
+    return x_recon

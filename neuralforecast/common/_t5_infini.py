@@ -208,8 +208,11 @@ class T5Attention(nn.Module): # Default T5Attention copied from HuggingFace for 
                 position_bias = position_bias[:, :, -seq_length:, :]
 
             if mask is not None:
-                causal_mask = mask[:, :, :, : key_states.shape[-2]]
-                position_bias = position_bias + causal_mask
+                #causal_mask = mask[:, :, :, :, : key_states.shape[-2]]
+                #position_bias = position_bias + causal_mask
+                mask = mask.view(batch_size//self.n_channels, self.n_channels, 1, 1, key_states.shape[-2])
+                mask = (1.0 - mask.float()) * -1e9
+                position_bias = position_bias + mask
 
         if self.pruned_heads:
             mask = torch.ones(position_bias.shape[1])
