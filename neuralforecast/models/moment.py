@@ -8,7 +8,7 @@ from torch import nn
 
 from ..common._base_model import BaseModel
 from ..common._modules import RevINMultivariate
-from ..common._moment_utils import PatchEmbedding, Patching, Masking, NamespaceWithDefaults, _update_inputs, _validate_inputs, torch_pca
+from ..common._moment_utils import PatchEmbedding, Patching, Masking, NamespaceWithDefaults, _update_inputs, _validate_inputs, torch_pca, torch_inverse_pca
 
 from ..common._t5_infini import T5Model, T5EncoderModel
 #from transformers.models.t5.modeling_t5 import T5Model, T5EncoderModel
@@ -181,8 +181,8 @@ class Long_Forecaster(nn.Module):
 
         if self.use_pca_adapter:
             dec_out = dec_out.reshape(-1, self.pca_n_series, n_channels, seq_len)
-            dec_reshaped = dec_out.permute(0, 2, 3, 1)  # CHANGE: rename from x_reshaped
-            dec_flat = dec_reshaped.reshape(-1, self.pca_n_series)  # CHANGE: rename from x_flat
+            dec_reshaped = dec_out.permute(0, 2, 3, 1)
+            dec_flat = dec_reshaped.reshape(-1, self.pca_n_series)
             dec_reconstructed = torch_inverse_pca(
                 dec_flat, pca_components, pca_eigvals, pca_mean, 
                 whiten=True, center=True
