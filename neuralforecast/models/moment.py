@@ -56,6 +56,8 @@ class Long_Forecaster(nn.Module):
         self.patch_len = config.patch_len
         self.stride = config.stride
         self.transformer_type = config.transformer_type
+        self.h = config.h
+        self.c_out = config.c_out
 
         self.revin = config.revin
         if config.revin:
@@ -180,15 +182,15 @@ class Long_Forecaster(nn.Module):
         dec_out = self.head(enc_out)  # [batch_size, n_channels, horizon*c_out]
 
         if self.use_pca_adapter:
-            dec_out = dec_out.reshape(-1, self.pca_n_series, n_channels, seq_len)
+            dec_out = dec_out.reshape(-1, self.pca_n_series, n_channels, self.h*self.c_out)
             dec_reshaped = dec_out.permute(0, 2, 3, 1)
             dec_flat = dec_reshaped.reshape(-1, self.pca_n_series)
             dec_reconstructed = torch_inverse_pca(
                 dec_flat, pca_components, pca_eigvals, pca_mean, 
                 whiten=True, center=True
             )
-            dec_out = dec_reconstructed.view(-1, n_channels, seq_len, self.pca_n_series).permute(0, 3, 1, 2)
-            dec_out = dec_out.reshape(-1, n_channels, seq_len)
+            dec_out = dec_reconstructed.view(-1, n_channels, self.h*self.c_out, self.pca_n_series).permute(0, 3, 1, 2)
+            dec_out = dec_out.reshape(-1, n_channels, self.h*self.c_out)
         
         # De-Normalization
         #dec_out = self.normalizer(x=dec_out, mode='denorm') #Used default neuralforecast RevIN to simplicity/reduce modules
