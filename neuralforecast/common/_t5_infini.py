@@ -510,7 +510,7 @@ class T5LayerSelfAttention(nn.Module):
                 out_features=config.d_kv,
                 activation='ReLU',
                 hidden_size=config.mlpmixer_hidden_size,
-                num_layers=config.mlpmixer_num_layers,
+                num_layers=config.mlpmixer_n_layers,
                 dropout=config.mlpmixer_dropout,
             )
         elif config.infini_mixer_type.lower() == 'none':
@@ -602,7 +602,7 @@ class T5LayerCrossAttention(nn.Module):
                 out_features=config.d_kv,
                 activation='ReLU',
                 hidden_size=config.mlpmixer_hidden_size,
-                num_layers=config.mlpmixer_num_layers,
+                num_layers=config.mlpmixer_n_layers,
                 dropout=config.mlpmixer_dropout,
             )
         elif config.infini_mixer_type.lower() == 'none':

@@ -19,14 +19,13 @@ from ..losses.pytorch import MAE
 logger = logging.getLogger(__name__)
 
 
-
 class Long_Forecaster(nn.Module): 
 
     def __init__(self, config):
 
         super().__init__()
 
-        self.d_model = config.d_model
+        self.hidden_size = config.hidden_size
         self.patch_len = config.patch_len
         self.stride = config.stride
         self.transformer_type = config.transformer_type
@@ -58,13 +57,13 @@ class Long_Forecaster(nn.Module):
         self.mask_generator = Masking(mask_ratio=0.0) # no masking for forecasting task
 
         self.W_P = nn.Linear(
-            config.patch_len, config.d_model
+            config.patch_len, config.hidden_size
         )  # Eq 1: projection of feature vectors onto a d-dim vector space
 
         # Positional encoding
         self.W_pos = PositionalEncoding(
             pe_type=config.pe_type,
-            hidden_size=config.d_model,
+            hidden_size=config.hidden_size,
             learn_pe=config.learn_pe,
         )
         # Residual dropout
@@ -74,7 +73,7 @@ class Long_Forecaster(nn.Module):
         self.encoder = self._get_huggingface_transformer(config)
 
         # Prediction Head
-        head_nf = config.d_model * patch_num
+        head_nf = config.hidden_size * patch_num
         self.head = Flatten_Head(
                 multivariate_head=config.multivariate_head,
                 n_vars=config.n_series,
@@ -97,7 +96,7 @@ class Long_Forecaster(nn.Module):
         setattr(model_config, 'max_sequence_length', configs.input_size / configs.patch_len)
         setattr(model_config, 'n_channels', configs.n_series)
         setattr(model_config, 'mlpmixer_hidden_size', configs.mlpmixer_hidden_size)
-        setattr(model_config, 'mlpmixer_num_layers', configs.mlpmixer_num_layers)
+        setattr(model_config, 'mlpmixer_n_layers', configs.mlpmixer_n_layers)
         setattr(model_config, 'mlpmixer_dropout', configs.mlpmixer_dropout)
       
         transformer_backbone = T5Model(model_config)
@@ -149,14 +148,14 @@ class Long_Forecaster(nn.Module):
         x_enc = self.W_P(x_enc) # [batch_size x n_channels x n_patch x d_model]
         
         x_enc = x_enc.reshape(
-            (batch_size * n_channels, self.patch_num, self.d_model)) # [batch_size*n_channels, n_patch, d_model]
+            (batch_size * n_channels, self.patch_num, self.hidden_size)) # [batch_size*n_channels, n_patch, d_model]
         x_enc = self.dropout(x_enc + self.W_pos(x_enc)) # [batch_size*n_channels, n_patch, d_model]
 
         outputs = self.encoder(inputs_embeds=x_enc, attention_mask=attention_mask, n_channels=n_channels) 
         enc_out = outputs.last_hidden_state
 
         enc_out = enc_out.reshape(
-            (-1, n_channels, self.patch_num, self.d_model)) 
+            (-1, n_channels, self.patch_num, self.hidden_size)) 
         # [batch_size, n_channels, n_patch, d_model]
 
         # Decoder
@@ -196,9 +195,9 @@ class MOMENT(BaseModel):
     `exclude_insample_y`: bool=False, the model skips the autoregressive features y[t-input_size:t] if True.<br>
     `num_layers`: int, number of layers for encoder.<br>
     `num_decoder_layers`: int, number of layers for decoder.<br>
-    `num_heads`: int=16, number of multi-head's attention.<br>
-    `d_model`: int=128, units of embeddings and encoders.<br>
-    `d_ff`: int=256, units of linear layer.<br>
+    `n_heads`: int=16, number of multi-head's attention.<br>
+    `hidden_size`: int=128, units of embeddings and encoders.<br>
+    `linear_hidden_size`: int=256, units of linear layer.<br>
     `dropout`: float=0.1, dropout rate for residual connection.<br>
     `head_dropout`: float=0.1, dropout rate for Flatten head layer.<br>
     `attn_dropout`: float=0.1, dropout rate for attention layer.<br>
@@ -271,18 +270,20 @@ class MOMENT(BaseModel):
         transformer_backbone: str = "google/t5-efficient-tiny",
         transformer_type: str = "encoder_only",
         randomly_initialize_backbone: bool = True,
-        num_layers: int = 3,
+        n_layers: int = 4,
         num_decoder_layers: int = 0,
-        num_heads: int = 16,
-        d_model: int = 128,
-        d_ff: int = 128,
+        n_heads: int = 16,
+        hidden_size: int = 128,
+        linear_hidden_size: int = 128,
+        d_k: int = 32,
+        d_v: int = 32,
         dropout: float = 0.1,
         head_dropout: float = 0.0,
         patch_len: int = 16,
         stride: int = 8,
         use_rope: bool = False,
         mlpmixer_hidden_size: int = 128,
-        mlpmixer_num_layers: int = 3,
+        mlpmixer_n_layers: int = 3,
         mlpmixer_dropout: float = 0.1,
         multivariate_head: bool = False,
         pe_type: str = "sincos",

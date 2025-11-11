@@ -41,11 +41,6 @@ class NamespaceWithDefaults(Namespace):
     def getattr(self, key, default=None):
         return getattr(self, key, default)
 
-def get_huggingface_model_dimensions(model_name : str = "flan-t5-base"):
-    from transformers import T5Config
-    config = T5Config.from_pretrained(model_name)
-    return config.d_model
-
 def _update_inputs(configs: Namespace | dict, **kwargs) -> NamespaceWithDefaults:
     if isinstance(configs, dict) and 'model_kwargs' in kwargs:
         return NamespaceWithDefaults(**{**configs, **kwargs['model_kwargs']})
@@ -59,10 +54,10 @@ def _validate_inputs(configs: NamespaceWithDefaults) -> NamespaceWithDefaults:
     if configs.transformer_backbone != "PatchTST" and configs.transformer_backbone not in SUPPORTED_HUGGINGFACE_MODELS:
         raise NotImplementedError(f"Transformer backbone {configs.transformer_backbone} not supported."
                                     f"Please choose from {SUPPORTED_HUGGINGFACE_MODELS} or PatchTST.")
-    if configs.d_model is None and configs.transformer_backbone in SUPPORTED_HUGGINGFACE_MODELS: 
-        configs.d_model = get_huggingface_model_dimensions(configs.transformer_backbone)
-        logging.info("Setting d_model to {}".format(configs.d_model))
-    elif configs.d_model is None:
+    if configs.hidden_size is None and configs.transformer_backbone in SUPPORTED_HUGGINGFACE_MODELS: 
+        configs.hidden_size = get_huggingface_model_dimensions(configs.transformer_backbone)
+        logging.info("Setting hidden_size to {}".format(configs.d_model))
+    elif configs.hidden_size is None:
         raise ValueError("d_model must be specified if transformer backbone \
                             unless transformer backbone is a Huggingface model.")
         

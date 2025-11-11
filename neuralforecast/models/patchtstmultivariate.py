@@ -79,7 +79,6 @@ class PatchTST_backbone(nn.Module):
         store_attn: bool = False,
         pe_type: str = "sincos",
         learn_pe: bool = True,
-        fc_dropout: float = 0.0,
         head_dropout=0,
         padding_patch='end',
         multivariate_head=False,
@@ -88,7 +87,7 @@ class PatchTST_backbone(nn.Module):
         channelwise_beta: bool = False,
         layerwise_beta: bool = True,
         mlpmixer_hidden_size: int = 128,
-        mlpmixer_num_layers: int = 3,
+        mlpmixer_n_layers: int = 3,
         mlpmixer_dropout: float = 0.1,
         revin=True,
         affine=True,
@@ -148,7 +147,7 @@ class PatchTST_backbone(nn.Module):
             channelwise_beta=channelwise_beta,
             layerwise_beta=layerwise_beta,
             mlpmixer_hidden_size=mlpmixer_hidden_size,
-            mlpmixer_num_layers=mlpmixer_num_layers,
+            mlpmixer_n_layers=mlpmixer_n_layers,
             mlpmixer_dropout=mlpmixer_dropout,
         )
 
@@ -189,9 +188,6 @@ class PatchTST_backbone(nn.Module):
             z = z.permute(0, 2, 1)
         return z
 
-    def create_pretrain_head(self, head_nf, vars, dropout):
-        return nn.Sequential(nn.Dropout(dropout), nn.Conv1d(head_nf, vars, 1))
-
 class TSTiEncoder(nn.Module):  # i means channel-independent
     """
     TSTiEncoder
@@ -226,7 +222,7 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
         layerwise_beta=True,
         channelwise_beta=False,
         mlpmixer_hidden_size=128,
-        mlpmixer_num_layers=3,
+        mlpmixer_n_layers=3,
         mlpmixer_dropout=0.1,
     ):
 
@@ -273,7 +269,7 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
             channelwise_beta=channelwise_beta,
             layerwise_beta=layerwise_beta,
             mlpmixer_hidden_size=mlpmixer_hidden_size,
-            mlpmixer_num_layers=mlpmixer_num_layers,
+            mlpmixer_n_layers=mlpmixer_n_layers,
             mlpmixer_dropout=mlpmixer_dropout,
         )
 
@@ -321,7 +317,7 @@ class TSTEncoder(nn.Module):
         layerwise_beta=True,
         channelwise_beta=False,
         mlpmixer_hidden_size=128,
-        mlpmixer_num_layers=3,
+        mlpmixer_n_layers=3,
         mlpmixer_dropout=0.1,
     ):
         super().__init__()
@@ -348,7 +344,7 @@ class TSTEncoder(nn.Module):
                     channelwise_beta=channelwise_beta,
                     layerwise_beta=layerwise_beta,
                     mlpmixer_hidden_size=mlpmixer_hidden_size,
-                    mlpmixer_num_layers=mlpmixer_num_layers,
+                    mlpmixer_n_layers=mlpmixer_n_layers,
                     mlpmixer_dropout=mlpmixer_dropout,
                 )
                 for i in range(n_layers)
@@ -410,7 +406,7 @@ class TSTEncoderLayer(nn.Module):
         layerwise_beta=True,
         channelwise_beta=False,
         mlpmixer_hidden_size=128,
-        mlpmixer_num_layers=3,
+        mlpmixer_n_layers=3,
         mlpmixer_dropout=0.1,
 
     ):
@@ -449,7 +445,7 @@ class TSTEncoderLayer(nn.Module):
             infini_channel_exclusion=infini_channel_exclusion,
             channelwise_beta=channelwise_beta,
             mlpmixer_hidden_size=mlpmixer_hidden_size,
-            mlpmixer_num_layers=mlpmixer_num_layers,
+            mlpmixer_n_layers=mlpmixer_n_layers,
             mlpmixer_dropout=mlpmixer_dropout,
         )
 
@@ -562,7 +558,6 @@ class PatchTSTMultivariate(BaseModel):
     `hidden_size`: int=128, units of embeddings and encoders.<br>
     `linear_hidden_size`: int=256, units of linear layer.<br>
     `dropout`: float=0.1, dropout rate for residual connection.<br>
-    `fc_dropout`: float=0.1, dropout rate for linear layer.<br>
     `head_dropout`: float=0.1, dropout rate for Flatten head layer.<br>
     `attn_dropout`: float=0.1, dropout rate for attention layer.<br>
     `patch_len`: int=32, length of patch. Note: patch_len = min(patch_len, input_size + stride).<br>
@@ -573,7 +568,6 @@ class PatchTSTMultivariate(BaseModel):
     `activation`: str='ReLU', activation from ['gelu','relu'].<br>
     `res_attention`: bool=False, bool to use residual attention.<br>
     `batch_normalization`: bool=False, bool to use batch normalization.<br>
-    `learn_pos_embed`: bool=True, bool to learn positional embedding.<br>
     `loss`: PyTorch module, instantiated train loss class from [losses collection](https://nixtla.github.io/neuralforecast/losses.pytorch.html).<br>
     `valid_loss`: PyTorch module=`loss`, instantiated valid loss class from [losses collection](https://nixtla.github.io/neuralforecast/losses.pytorch.html).<br>
     `max_steps`: int=1000, maximum number of training steps.<br>
@@ -625,10 +619,12 @@ class PatchTSTMultivariate(BaseModel):
         infini_channel_exclusion: bool = False,
         layerwise_beta: bool = True,
         channelwise_beta: bool = False,
-        encoder_layers: int = 3,
+        n_layers: int = 3,
         n_heads: int = 16,
         hidden_size: int = 128,
         linear_hidden_size: int = 256,
+        d_k: int = 32, 
+        d_v: int = 32,
         dropout: float = 0.2,
         head_dropout: float = 0.0,
         patch_len: int = 16,
@@ -637,15 +633,14 @@ class PatchTSTMultivariate(BaseModel):
         revin_affine: bool = False,
         revin_subtract_last: bool = True,
         mlpmixer_hidden_size: int = 128,
-        mlpmixer_num_layers: int = 3,
+        mlpmixer_n_layers: int = 3,
         mlpmixer_dropout: float = 0.1,
         multivariate_head: bool = False,
         pe_type: str = "sincos",
-        learn_pos_embed: bool = False,
+        learn_pe: bool = False,
         activation: str = "gelu",
         res_attention: bool = True,
         batch_normalization: bool = False,
-        fc_dropout: float = 0.2,
         attn_dropout: float = 0.0,
         padding_patch = "end",
         start_padding_enabled=False,
@@ -713,8 +708,6 @@ class PatchTSTMultivariate(BaseModel):
 
         # Fixed hyperparameters
         norm = "BatchNorm"  # Use BatchNorm (if batch_normalization is True)
-        d_k = None  # Key dimension
-        d_v = None  # Value dimension
         store_attn = False  # Store attention weights
         max_seq_len = 1024  # Not used
         key_padding_mask = "auto"  # Not used
@@ -729,7 +722,7 @@ class PatchTSTMultivariate(BaseModel):
             patch_len=patch_len,
             stride=stride,
             max_seq_len=max_seq_len,
-            n_layers=encoder_layers,
+            n_layers=n_layers,
             hidden_size=hidden_size,
             n_heads=n_heads,
             d_k=d_k,
@@ -746,8 +739,7 @@ class PatchTSTMultivariate(BaseModel):
             pre_norm=batch_normalization,
             store_attn=store_attn,
             pe_type=pe_type,
-            learn_pe=learn_pos_embed,
-            fc_dropout=fc_dropout,
+            learn_pe=learn_pe,
             head_dropout=head_dropout,
             padding_patch=padding_patch,
             multivariate_head=multivariate_head,
@@ -756,7 +748,7 @@ class PatchTSTMultivariate(BaseModel):
             channelwise_beta=channelwise_beta,
             layerwise_beta=layerwise_beta,
             mlpmixer_hidden_size=mlpmixer_hidden_size,
-            mlpmixer_num_layers=mlpmixer_num_layers,
+            mlpmixer_n_layers=mlpmixer_n_layers,
             mlpmixer_dropout=mlpmixer_dropout,
             revin=revin,
             affine=revin_affine,

@@ -256,7 +256,7 @@ class _MultiheadAttention(nn.Module):
         beta: Optional[torch.tensor] = None,
         channelwise_beta: bool = False,
         mlpmixer_hidden_size: int = 128,
-        mlpmixer_num_layers: int = 3,
+        mlpmixer_n_layers: int = 3,
         mlpmixer_dropout: float = 0.1,
     ):
         """
@@ -313,7 +313,7 @@ class _MultiheadAttention(nn.Module):
                     out_features=d_v,
                     activation='ReLU',
                     hidden_size=mlpmixer_hidden_size,
-                    num_layers=mlpmixer_num_layers,
+                    num_layers=mlpmixer_n_layers,
                     dropout=mlpmixer_dropout,
                 )
                 
