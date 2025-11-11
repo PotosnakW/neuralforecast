@@ -7,8 +7,8 @@ import torch
 from torch import nn
 
 from ..common._base_model import BaseModel
-from ..common._modules import RevINMultivariate
-from ..common._moment_utils import PatchEmbedding, Patching, Masking, NamespaceWithDefaults, _update_inputs, _validate_inputs, torch_pca, torch_inverse_pca
+from ..common._modules import RevINMultivariate, Flatten_Head, Patching, PositionalEncoding
+from ..common._moment_utils import Masking, _update_inputs, _validate_inputs, torch_pca, torch_inverse_pca
 
 from ..common._t5_infini import T5Model, T5EncoderModel
 #from transformers.models.t5.modeling_t5 import T5Model, T5EncoderModel
@@ -19,38 +19,12 @@ from ..losses.pytorch import MAE
 logger = logging.getLogger(__name__)
 
 
-class ForecastingHead(nn.Module):
-    def __init__(self, 
-                 head_nf: int = 768*64,
-                 forecast_horizon: int = 96, 
-                 c_out: int = 1,
-                 head_dropout: int = 0):
-        super().__init__()
-        self.flatten = nn.Flatten(start_dim=-2)
-        self.dropout = nn.Dropout(head_dropout)
-        self.linear = nn.Linear(head_nf, forecast_horizon * c_out) # NEW: c_out for loss dimension (distribution parameters for probabilistic predictions)
-    
-    def forward(self, x, input_mask : torch.Tensor = None):
-        """
-        x: [batch_size x n_channels x n_patches x d_model]
-        output: [batch_size x n_channels x forecast_horizon]
-        """
-        x = self.flatten(x)   # x: [batch_size, n_channels, n_patches, d_model]
-        x = self.linear(x)    # x: [batch_size, n_channels, n_patches*d_model]
-        x = self.dropout(x)   # x: [batch_size, n_channels, horizon*c_out]
-        return x
 
 class Long_Forecaster(nn.Module): 
 
     def __init__(self, config):
 
         super().__init__()
-
-        # Normalization, patching and embedding
-        # self.normalizer = RevIN(
-        #     num_features=1, # WILLA CHECK THIS!!!
-        #     affine=revin_affine
-        # )
 
         self.d_model = config.d_model
         self.patch_len = config.patch_len
@@ -73,17 +47,21 @@ class Long_Forecaster(nn.Module):
             patch_len=config.patch_len, 
             stride=config.stride,
         )
-        self.patch_embedding = PatchEmbedding(
-            d_model=config.d_model, 
-            seq_len=config.input_size,
-            patch_len=config.patch_len, 
-            stride=config.stride, 
-            dropout=config.dropout, 
-            add_positional_embedding=True,
-            value_embedding_bias=False, 
-            orth_gain=1.41,
-        )
+
         self.mask_generator = Masking(mask_ratio=0.0) # no masking for forecasting task
+
+        self.W_P = nn.Linear(
+            config.patch_len, config.d_model
+        )  # Eq 1: projection of feature vectors onto a d-dim vector space
+
+        # Positional encoding
+        self.W_pos = PositionalEncoding(
+            pe_type=config.pe_type,
+            hidden_size=config.d_model,
+            learn_pe=config.learn_pe,
+        )
+        # Residual dropout
+        self.dropout = nn.Dropout(config.dropout)
 
         # Transformer backbone
         self.encoder = self._get_huggingface_transformer(config)
@@ -93,32 +71,35 @@ class Long_Forecaster(nn.Module):
                 // config.stride + 1
         )
         # Prediction Head
-        head_nf = num_patches * config.d_model
-        self.head = ForecastingHead(
-                head_nf,
-                config.h, 
-                config.c_out,
-                config.head_dropout,
+        head_nf = config.d_model * num_patches
+        self.head = Flatten_Head(
+                multivariate_head=config.multivariate_head,
+                n_vars=config.n_series,
+                nf=head_nf,
+                h=config.h,
+                c_out=config.c_out,
+                head_dropout=config.head_dropout,
             )
 
     def _get_huggingface_transformer(self, configs):
-        ModelClass, EncoderModelClass = T5Model, T5EncoderModel
-        
-        logger.info(f" ModelClass: {ModelClass.__name__}, EncoderModelClass: {EncoderModelClass.__name__}.")
             
         model_config = T5Config.from_pretrained(
             configs.transformer_backbone)
 
-        setattr(model_config, 'channel_mixing_method', configs.channel_mixing_method)
+        setattr(model_config, 'infini_mixer_type', configs.infini_mixer_type)
+        setattr(model_config, 'infini_channel_exclusion', configs.infini_channel_exclusion)
         setattr(model_config, 'layerwise_beta', configs.layerwise_beta)
         setattr(model_config, 'channelwise_beta', configs.channelwise_beta)
         setattr(model_config, 'use_rope', configs.use_rope)
         setattr(model_config, 'max_sequence_length', configs.input_size / configs.patch_len)
         setattr(model_config, 'n_channels', configs.n_series)
+        setattr(model_config, 'mlpmixer_hidden_size', configs.mlpmixer_hidden_size)
+        setattr(model_config, 'mlpmixer_num_layers', configs.mlpmixer_num_layers)
+        setattr(model_config, 'mlpmixer_dropout', configs.mlpmixer_dropout)
       
-        transformer_backbone = ModelClass(model_config)
+        transformer_backbone = T5Model(model_config)
         logging.info(f"Initializing randomly initialized\
-                       transformer from {configs.transformer_backbone}.  ModelClass: {ModelClass.__name__}.")
+                       transformer from {configs.transformer_backbone}.  ModelClass: {T5Model.__name__}.")
         
         transformer_backbone = transformer_backbone.get_encoder() #check valid inputs to raise error if not encoder-only
         
@@ -144,8 +125,6 @@ class Long_Forecaster(nn.Module):
             x_enc = x_enc.permute(0, 2, 1) #[bs x seq_len x nvars]
             x_enc = self.revin_layer(x_enc, "norm")
             x_enc = x_enc.permute(0, 2, 1) #[bs x nvars x seq_len]
-        # x_enc = self.normalizer(x=x_enc, mask=input_mask, mode='norm')
-        # x_enc = torch.nan_to_num(x_enc, nan=0, posinf=0, neginf=0) 
 
         if self.use_pca_adapter:
             x_enc = x_enc.reshape(-1, self.pca_n_series, n_channels, seq_len) #[Ws * n_series, C==1, L]
@@ -157,23 +136,26 @@ class Long_Forecaster(nn.Module):
             x_enc_pca = x_pca.view(-1, n_channels, seq_len, self.pca_n_series).permute(0, 3, 1, 2)
             x_enc = x_enc_pca.reshape(-1, n_channels, seq_len)
         
-        # Patching and embedding
+        # Patching
         x_enc = self.tokenizer(x=x_enc) # [batch_size x n_channels x n_patch x patch_len]
-        enc_in = self.patch_embedding(x_enc, mask=torch.ones_like(input_mask))
-    
-        n_patches = enc_in.shape[2]
-        enc_in = enc_in.reshape(
-            (batch_size * n_channels, n_patches, self.d_model)) # [batch_size*n_channels, n_patch, d_model]
+        n_patches = x_enc.shape[2]
+
+        # Embeddings
+        x_enc = self.W_P(x_enc) # [batch_size x n_channels x n_patch x d_model]
         
+        x_enc = x_enc.reshape(
+            (batch_size * n_channels, n_patches, self.d_model)) # [batch_size*n_channels, n_patch, d_model]
+        x_enc = self.dropout(x_enc + self.W_pos(x_enc)) # [batch_size*n_channels, n_patch, d_model]
+    
         # Encoder
         attention_mask = Masking.convert_seq_to_patch_view(
             mask=input_mask, 
             patch_len=self.patch_len,
             stride=self.stride).repeat_interleave(n_channels, dim=0) # [batch_size*n_channels, n_patch]
 
-        outputs = self.encoder(inputs_embeds=enc_in, attention_mask=attention_mask) 
+        outputs = self.encoder(inputs_embeds=x_enc, attention_mask=attention_mask, n_channels=n_channels) 
         enc_out = outputs.last_hidden_state
-        
+
         enc_out = enc_out.reshape(
             (-1, n_channels, n_patches, self.d_model)) 
         # [batch_size, n_channels, n_patch, d_model]
@@ -282,14 +264,15 @@ class MOMENT(BaseModel):
         hist_exog_list=None,
         futr_exog_list=None,
         exclude_insample_y=False,
-        transformer_backbone = "google/t5-efficient-tiny",
-        transformer_type = "encoder_only",
-        randomly_initialize_backbone = True,
-        channel_mixing_method = 'none',
-        layerwise_beta = True,
-        channelwise_beta = False,
-        use_pca_adapter = False,
-        pca_n_series = 2,
+        transformer_backbone: str = "google/t5-efficient-tiny",
+        transformer_type: str = "encoder_only",
+        randomly_initialize_backbone: bool = True,
+        infini_mixer_type: str = 'none',
+        infini_channel_exclusion: bool = False,
+        layerwise_beta: bool = True,
+        channelwise_beta: bool = False,
+        use_pca_adapter: bool = False,
+        pca_n_series: int = 2,
         num_layers: int = 3,
         num_decoder_layers: int = 0,
         num_heads: int = 16,
@@ -300,6 +283,12 @@ class MOMENT(BaseModel):
         patch_len: int = 16,
         stride: int = 8,
         use_rope: bool = False,
+        mlpmixer_hidden_size: int = 128,
+        mlpmixer_num_layers: int = 3, 
+        mlpmixer_dropout: float = 0.1,
+        multivariate_head: bool = False,
+        pe_type: str = 'sincos',
+        learn_pe: bool = False,
         loss=MAE(),
         valid_loss=None,
         max_steps: int = 5000,

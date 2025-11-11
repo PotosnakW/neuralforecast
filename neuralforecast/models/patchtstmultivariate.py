@@ -162,7 +162,7 @@ class PatchTST_backbone(nn.Module):
         self.head = Flatten_Head(
             multivariate_head=multivariate_head,
             n_vars=n_series,
-            head_nf=self.head_nf,
+            nf=self.head_nf,
             h=h,
             c_out=c_out,
             head_dropout=head_dropout,
@@ -288,7 +288,7 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
         u = torch.reshape(
             x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3])
         )  # u: [bs * nvars x patch_num x hidden_size]
-        u = self.dropout(u + self.W_pos)  # u: [bs * nvars x patch_num x hidden_size]
+        u = self.dropout(u + self.W_pos(u))  # u: [bs * nvars x patch_num x hidden_size]
 
         # Encoder
         z = self.encoder(u)  # z: [bs * nvars x patch_num x hidden_size]
@@ -361,6 +361,7 @@ class TSTEncoder(nn.Module):
             ]
         )
         self.res_attention = res_attention
+        self.n_series=n_series
 
     def forward(
         self,
@@ -373,7 +374,7 @@ class TSTEncoder(nn.Module):
         if self.res_attention:
             for mod in self.layers:
                 output, scores = mod(
-                    output,
+                    src=output,
                     prev=scores,
                     key_padding_mask=key_padding_mask,
                     attn_mask=attn_mask,
@@ -382,7 +383,9 @@ class TSTEncoder(nn.Module):
         else:
             for mod in self.layers:
                 output = mod(
-                    output, key_padding_mask=key_padding_mask, attn_mask=attn_mask
+                    src=output, 
+                    key_padding_mask=key_padding_mask, 
+                    attn_mask=attn_mask
                 )
             return output
 
@@ -485,6 +488,7 @@ class TSTEncoderLayer(nn.Module):
 
         self.pre_norm = pre_norm
         self.store_attn = store_attn
+        self.n_series = n_series
 
     def forward(
         self,
@@ -500,16 +504,22 @@ class TSTEncoderLayer(nn.Module):
         ## Multi-Head attention
         if self.res_attention:
             src2, attn, scores = self.self_attn(
-                src,
-                src,
-                src,
-                prev,
+                n_channels=self.n_series,
+                Q=src,
+                K=src,
+                V=src,
+                prev=prev,
                 key_padding_mask=key_padding_mask,
                 attn_mask=attn_mask,
             )
         else:
             src2, attn = self.self_attn(
-                src, src, src, key_padding_mask=key_padding_mask, attn_mask=attn_mask
+                n_channels=self.n_series,
+                Q=src,
+                K=src,
+                V=src,
+                key_padding_mask=key_padding_mask,
+                attn_mask=attn_mask,
             )
         if self.store_attn:
             self.attn = attn
@@ -633,7 +643,14 @@ class PatchTSTMultivariate(BaseModel):
         activation: str = "gelu",
         res_attention: bool = True,
         batch_normalization: bool = False,
-        multivariate_head: bool = False,
+        multivariate_head=False,
+        infini_mixer_type: str = 'betas', 
+        infini_channel_exclusion: bool = False,
+        channelwise_beta: bool = False,
+        layerwise_beta: bool = True,
+        mlpmixer_hidden_size: int = 128,
+        mlpmixer_num_layers: int = 3,
+        mlpmixer_dropout: float = 0.1,
         pe_type: str = 'sincos',
         learn_pos_embed: bool = False,
         loss=MAE(),
@@ -739,6 +756,13 @@ class PatchTSTMultivariate(BaseModel):
             head_dropout=head_dropout,
             padding_patch=padding_patch,
             multivariate_head=multivariate_head,
+            infini_mixer_type=infini_mixer_type, 
+            infini_channel_exclusion=infini_channel_exclusion,
+            channelwise_beta=channelwise_beta,
+            layerwise_beta=layerwise_beta,
+            mlpmixer_hidden_size=mlpmixer_hidden_size,
+            mlpmixer_num_layers=mlpmixer_num_layers,
+            mlpmixer_dropout=mlpmixer_dropout,
             revin=revin,
             affine=revin_affine,
             subtract_last=revin_subtract_last,

@@ -174,8 +174,8 @@ class _InfiniScaledDotProductAttention(nn.Module):
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
-        prev: Optional[torch.Tensor] = None,
         n_channels: int,
+        prev: Optional[torch.Tensor] = None,
         attn_mask: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
     ):
@@ -283,6 +283,7 @@ class _MultiheadAttention(nn.Module):
         self.d_k = d_k
         self.d_v = d_v
         self.infini_mixer_type = infini_mixer_type.lower()
+        self.res_attention = res_attention
         
         # Q, K, V projections
         self.W_Q = nn.Linear(hidden_size, d_k * n_heads, bias=qkv_bias)
@@ -339,11 +340,11 @@ class _MultiheadAttention(nn.Module):
     
     def forward(
         self,
+        n_channels: int,
         Q: torch.Tensor,
         K: Optional[torch.Tensor] = None,
         V: Optional[torch.Tensor] = None,
         prev: Optional[torch.Tensor] = None,
-        n_channels: int = 1,
         attn_mask: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
     ):
@@ -372,6 +373,8 @@ class _MultiheadAttention(nn.Module):
             V = Q
         
         use_channels = n_channels > 1
+        print(f"{use_channels}")
+        print(f"{n_channels}")
         
         # Linear projections and split into multiple heads
         q_s = self.W_Q(Q).view(bs, -1, self.n_heads, self.d_k)  # [bs x seq_len x n_heads x d_k]
@@ -379,6 +382,7 @@ class _MultiheadAttention(nn.Module):
         v_s = self.W_V(V).view(bs, -1, self.n_heads, self.d_v)  # [bs x seq_len x n_heads x d_v]
         
         if use_channels and self.infini_mixer_type != 'none':
+            print('using infini')
             # Reshape for multi-channel processing (Infini-attention)
             seq_len = q_s.size(1)
             bs_orig = bs // n_channels
@@ -395,19 +399,19 @@ class _MultiheadAttention(nn.Module):
             # Apply Scaled Dot-Product Attention (multiple heads)
             if self.res_attention:
                 output, A_mem, attn_weights, attn_scores = self.sdp_attn(
-                    q_s,
-                    k_s,
-                    v_s,
-                    prev=prev,
+                    q=q_s,
+                    k=k_s,
+                    v=v_s,
                     n_channels=n_channels,
+                    prev=prev,
                     key_padding_mask=key_padding_mask,
                     attn_mask=attn_mask,
                 )
             else:
                 output, A_mem, attn_weights = self.sdp_attn(
-                    q_s, 
-                    k_s, 
-                    v_s, 
+                    q=q_s, 
+                    k=k_s, 
+                    v=v_s, 
                     n_channels=n_channels,
                     key_padding_mask=key_padding_mask, 
                     attn_mask=attn_mask
@@ -426,6 +430,7 @@ class _MultiheadAttention(nn.Module):
             output = output.view(bs, -1, self.n_heads * self.d_v)  # [bs*n_channels x seq_len x n_heads*d_v]
             
         else:
+            print('using none')
             # Standard transformer format (vanilla attention or no channels)
             q_s = q_s.transpose(1, 2)  # [bs x n_heads x seq_len x d_k]
             k_s = k_s.permute(0, 2, 3, 1)  # [bs x n_heads x d_k x seq_len]
@@ -434,16 +439,20 @@ class _MultiheadAttention(nn.Module):
             # Apply Scaled Dot-Product Attention (multiple heads)
             if self.res_attention:
                 output, attn_weights, attn_scores = self.sdp_attn(
-                    q_s,
-                    k_s,
-                    v_s,
+                    q=q_s,
+                    k=k_s,
+                    v=v_s,
                     prev=prev,
                     key_padding_mask=key_padding_mask,
                     attn_mask=attn_mask,
                 )
             else:
                 output, attn_weights = self.sdp_attn(
-                    q_s, k_s, v_s, key_padding_mask=key_padding_mask, attn_mask=attn_mask
+                    q=q_s, 
+                    k=k_s, 
+                    v=v_s, 
+                    key_padding_mask=key_padding_mask, 
+                    attn_mask=attn_mask
                 )
             
             # Reshape back

@@ -56,6 +56,7 @@ from .models.softs import SOFTS
 from .models.timemixer import TimeMixer
 from .models.moment import MOMENT
 from .models.itransformert5 import iTransformerT5
+from .models.patchtstmultivariate import PatchTSTMultivariate
 
 from .losses.pytorch import MAE, MQLoss, DistributionLoss
 
@@ -2665,6 +2666,85 @@ class AutoiTransformerT5(BaseAuto):
         del config["input_size_multiplier"]
         if backend == "optuna":
             # Always use n_series from parameters
+            config["n_series"] = n_series
+            config = cls._ray_config_to_optuna(config)
+
+        return config
+
+
+class AutoPatchTSTMultivariate(BaseAuto):
+
+    default_config = {
+        "input_size_multiplier": [1, 2, 3],
+        "h": None,
+        "hidden_size": tune.choice([16, 128, 256]),
+        "n_heads": tune.choice([4, 16]),
+        "patch_len": tune.choice([16, 24]),
+        "learning_rate": tune.loguniform(1e-4, 1e-1),
+        "scaler_type": tune.choice([None, "robust", "standard"]),
+        "revin": tune.choice([False, True]),
+        "max_steps": tune.choice([500, 1000, 5000]),
+        "batch_size": tune.choice([32, 64, 128, 256]),
+        "windows_batch_size": tune.choice([128, 256, 512, 1024]),
+        "loss": None,
+        "random_seed": tune.randint(1, 20),
+    }
+
+    def __init__(
+        self,
+        h,
+        n_series,
+        loss=MAE(),
+        valid_loss=None,
+        config=None,
+        search_alg=BasicVariantGenerator(random_state=1),
+        num_samples=10,
+        refit_with_val=False,
+        cpus=cpu_count(),
+        gpus=torch.cuda.device_count(),
+        verbose=False,
+        alias=None,
+        backend="ray",
+        callbacks=None,
+    ):
+
+        # Always use n_series from parameters, raise exception with Optuna because we can't enforce it
+        if backend == "ray":
+            config["n_series"] = n_series
+        elif backend == "optuna":
+            mock_trial = MockTrial()
+            if (
+                "n_series" in config(mock_trial)
+                and config(mock_trial)["n_series"] != n_series
+            ) or ("n_series" not in config(mock_trial)):
+                raise Exception(f"config needs 'n_series': {n_series}")
+
+        super(AutoPatchTSTMultivariate, self).__init__(
+            cls_model=PatchTSTMultivariate,
+            h=h,
+            loss=loss,
+            valid_loss=valid_loss,
+            config=config,
+            search_alg=search_alg,
+            num_samples=num_samples,
+            refit_with_val=refit_with_val,
+            cpus=cpus,
+            gpus=gpus,
+            verbose=verbose,
+            alias=alias,
+            backend=backend,
+            callbacks=callbacks,
+        )
+
+    @classmethod
+    def get_default_config(cls, h, backend, n_series=None):
+        config = cls.default_config.copy()
+        config["input_size"] = tune.choice(
+            [h * x for x in config["input_size_multiplier"]]
+        )
+        config["step_size"] = tune.choice([1, h])
+        del config["input_size_multiplier"]
+        if backend == "optuna":
             config["n_series"] = n_series
             config = cls._ray_config_to_optuna(config)
 
