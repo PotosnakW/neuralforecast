@@ -43,6 +43,13 @@ class Long_Forecaster(nn.Module):
         self.use_pca_adapter = config.use_pca_adapter
         self.pca_n_series = config.pca_n_series
 
+        self.padding_patch = config.padding_patch
+        patch_num = int((config.input_size - config.patch_len) / config.stride + 1)
+        if config.padding_patch == "end":  # can be modified to general case
+            self.padding_patch_layer = nn.ReplicationPad1d((0, config.stride))
+            patch_num += 1
+        self.patch_num = patch_num
+
         self.tokenizer = Patching(
             patch_len=config.patch_len, 
             stride=config.stride,
@@ -66,12 +73,8 @@ class Long_Forecaster(nn.Module):
         # Transformer backbone
         self.encoder = self._get_huggingface_transformer(config)
 
-        num_patches = (
-                (max(config.input_size, config.patch_len) - config.patch_len) 
-                // config.stride + 1
-        )
         # Prediction Head
-        head_nf = config.d_model * num_patches
+        head_nf = config.d_model * patch_num
         self.head = Flatten_Head(
                 multivariate_head=config.multivariate_head,
                 n_vars=config.n_series,
@@ -118,7 +121,7 @@ class Long_Forecaster(nn.Module):
         """
 
         batch_size, n_channels, seq_len = x_enc.shape
-        input_mask = torch.ones(batch_size, seq_len).to(x_enc.device) # [batch_size, seq_len]
+        attention_mask = torch.ones(batch_size*n_channels, self.patch_num, device=x_enc.device)
 
         # Normalization 
         if self.revin: #Used default neuralforecast RevIN to simplicity/reduce modules
@@ -137,27 +140,23 @@ class Long_Forecaster(nn.Module):
             x_enc = x_enc_pca.reshape(-1, n_channels, seq_len)
         
         # Patching
+        # do patching
+        if self.padding_patch == "end":
+            x_enc = self.padding_patch_layer(x_enc)
         x_enc = self.tokenizer(x=x_enc) # [batch_size x n_channels x n_patch x patch_len]
-        n_patches = x_enc.shape[2]
 
         # Embeddings
         x_enc = self.W_P(x_enc) # [batch_size x n_channels x n_patch x d_model]
         
         x_enc = x_enc.reshape(
-            (batch_size * n_channels, n_patches, self.d_model)) # [batch_size*n_channels, n_patch, d_model]
+            (batch_size * n_channels, self.patch_num, self.d_model)) # [batch_size*n_channels, n_patch, d_model]
         x_enc = self.dropout(x_enc + self.W_pos(x_enc)) # [batch_size*n_channels, n_patch, d_model]
-    
-        # Encoder
-        attention_mask = Masking.convert_seq_to_patch_view(
-            mask=input_mask, 
-            patch_len=self.patch_len,
-            stride=self.stride).repeat_interleave(n_channels, dim=0) # [batch_size*n_channels, n_patch]
 
         outputs = self.encoder(inputs_embeds=x_enc, attention_mask=attention_mask, n_channels=n_channels) 
         enc_out = outputs.last_hidden_state
 
         enc_out = enc_out.reshape(
-            (-1, n_channels, n_patches, self.d_model)) 
+            (-1, n_channels, self.patch_num, self.d_model)) 
         # [batch_size, n_channels, n_patch, d_model]
 
         # Decoder
@@ -264,15 +263,14 @@ class MOMENT(BaseModel):
         hist_exog_list=None,
         futr_exog_list=None,
         exclude_insample_y=False,
-        transformer_backbone: str = "google/t5-efficient-tiny",
-        transformer_type: str = "encoder_only",
-        randomly_initialize_backbone: bool = True,
-        infini_mixer_type: str = 'none',
+        # Transformer / Mixer config
+        infini_mixer_type: str = "none",
         infini_channel_exclusion: bool = False,
         layerwise_beta: bool = True,
         channelwise_beta: bool = False,
-        use_pca_adapter: bool = False,
-        pca_n_series: int = 2,
+        transformer_backbone: str = "google/t5-efficient-tiny",
+        transformer_type: str = "encoder_only",
+        randomly_initialize_backbone: bool = True,
         num_layers: int = 3,
         num_decoder_layers: int = 0,
         num_heads: int = 16,
@@ -284,11 +282,23 @@ class MOMENT(BaseModel):
         stride: int = 8,
         use_rope: bool = False,
         mlpmixer_hidden_size: int = 128,
-        mlpmixer_num_layers: int = 3, 
+        mlpmixer_num_layers: int = 3,
         mlpmixer_dropout: float = 0.1,
         multivariate_head: bool = False,
-        pe_type: str = 'sincos',
+        pe_type: str = "sincos",
         learn_pe: bool = False,
+        use_pca_adapter: bool = False,
+        pca_n_series: int = 2,
+        padding_patch="end",
+        start_padding_enabled=False,
+        step_size: int = 1,
+        scaler_type: str = "identity",
+        revin: str = True,
+        revin_affine: str = False,
+        random_seed: int = 1,
+        drop_last_loader: bool = False,
+        alias: Optional[str] = None,
+        # Optimization and training
         loss=MAE(),
         valid_loss=None,
         max_steps: int = 5000,
@@ -300,14 +310,6 @@ class MOMENT(BaseModel):
         valid_batch_size: Optional[int] = None,
         windows_batch_size=1024,
         inference_windows_batch_size: int = 1024,
-        start_padding_enabled=False,
-        step_size: int = 1,
-        scaler_type: str = "identity",
-        revin: str = True,
-        revin_affine: str = False,
-        random_seed: int = 1,
-        drop_last_loader: bool = False,
-        alias: Optional[str] = None,
         optimizer=None,
         optimizer_kwargs=None,
         lr_scheduler=None,

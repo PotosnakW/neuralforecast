@@ -36,7 +36,6 @@ class Transpose(nn.Module):
         else:
             return x.transpose(*self.dims)
 
-
 def get_activation_fn(activation):
     if callable(activation):
         return activation()
@@ -47,7 +46,6 @@ def get_activation_fn(activation):
     raise ValueError(
         f'{activation} is not available. You can use "relu", "gelu", or a callable'
     )
-
 
 # %% ../../nbs/models.patchtst.ipynb 13
 class PatchTST_backbone(nn.Module):
@@ -83,9 +81,9 @@ class PatchTST_backbone(nn.Module):
         learn_pe: bool = True,
         fc_dropout: float = 0.0,
         head_dropout=0,
-        padding_patch=None,
+        padding_patch='end',
         multivariate_head=False,
-        infini_mixer_type: str = 'betas', 
+        infini_mixer_type: str = 'none', 
         infini_channel_exclusion: bool = False,
         channelwise_beta: bool = False,
         layerwise_beta: bool = True,
@@ -194,7 +192,6 @@ class PatchTST_backbone(nn.Module):
     def create_pretrain_head(self, head_nf, vars, dropout):
         return nn.Sequential(nn.Dropout(dropout), nn.Conv1d(head_nf, vars, 1))
 
-
 class TSTiEncoder(nn.Module):  # i means channel-independent
     """
     TSTiEncoder
@@ -224,7 +221,7 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
         pre_norm=False,
         pe_type="sincos",
         learn_pe=True,
-        infini_mixer_type='betas',
+        infini_mixer_type='none',
         infini_channel_exclusion=False,
         layerwise_beta=True,
         channelwise_beta=False,
@@ -281,7 +278,6 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
         )
 
     def forward(self, x) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
-
         n_vars = x.shape[1]
         x = self.W_P(x)  # x: [bs x nvars x patch_num x hidden_size]
 
@@ -299,12 +295,10 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
 
         return z
 
-
 class TSTEncoder(nn.Module):
     """
     TSTEncoder
     """
-
     def __init__(
         self,
         n_series,
@@ -322,7 +316,7 @@ class TSTEncoder(nn.Module):
         n_layers=1,
         pre_norm=False,
         store_attn=False,
-        infini_mixer_type='betas',
+        infini_mixer_type='none',
         infini_channel_exclusion=False,
         layerwise_beta=True,
         channelwise_beta=False,
@@ -394,7 +388,6 @@ class TSTEncoderLayer(nn.Module):
     """
     TSTEncoderLayer
     """
-
     def __init__(
         self,
         n_series,
@@ -412,7 +405,7 @@ class TSTEncoderLayer(nn.Module):
         activation="gelu",
         res_attention=False,
         pre_norm=False,
-        infini_mixer_type='betas',
+        infini_mixer_type='none',
         infini_channel_exclusion=False,
         layerwise_beta=True,
         channelwise_beta=False,
@@ -627,32 +620,41 @@ class PatchTSTMultivariate(BaseModel):
         hist_exog_list=None,
         futr_exog_list=None,
         exclude_insample_y=False,
+        # Transformer / Mixer config
+        infini_mixer_type: str = "none",
+        infini_channel_exclusion: bool = False,
+        layerwise_beta: bool = True,
+        channelwise_beta: bool = False,
         encoder_layers: int = 3,
         n_heads: int = 16,
         hidden_size: int = 128,
         linear_hidden_size: int = 256,
         dropout: float = 0.2,
-        fc_dropout: float = 0.2,
         head_dropout: float = 0.0,
-        attn_dropout: float = 0.0,
         patch_len: int = 16,
         stride: int = 8,
         revin: bool = True,
         revin_affine: bool = False,
         revin_subtract_last: bool = True,
-        activation: str = "gelu",
-        res_attention: bool = True,
-        batch_normalization: bool = False,
-        multivariate_head=False,
-        infini_mixer_type: str = 'betas', 
-        infini_channel_exclusion: bool = False,
-        channelwise_beta: bool = False,
-        layerwise_beta: bool = True,
         mlpmixer_hidden_size: int = 128,
         mlpmixer_num_layers: int = 3,
         mlpmixer_dropout: float = 0.1,
-        pe_type: str = 'sincos',
+        multivariate_head: bool = False,
+        pe_type: str = "sincos",
         learn_pos_embed: bool = False,
+        activation: str = "gelu",
+        res_attention: bool = True,
+        batch_normalization: bool = False,
+        fc_dropout: float = 0.2,
+        attn_dropout: float = 0.0,
+        padding_patch = "end",
+        start_padding_enabled=False,
+        step_size: int = 1,
+        scaler_type: str = "identity",
+        random_seed: int = 1,
+        drop_last_loader: bool = False,
+        alias: Optional[str] = None,
+        # Optimization and training
         loss=MAE(),
         valid_loss=None,
         max_steps: int = 5000,
@@ -664,12 +666,6 @@ class PatchTSTMultivariate(BaseModel):
         valid_batch_size: Optional[int] = None,
         windows_batch_size=1024,
         inference_windows_batch_size: int = 1024,
-        start_padding_enabled=False,
-        step_size: int = 1,
-        scaler_type: str = "identity",
-        random_seed: int = 1,
-        drop_last_loader: bool = False,
-        alias: Optional[str] = None,
         optimizer=None,
         optimizer_kwargs=None,
         lr_scheduler=None,
@@ -716,7 +712,6 @@ class PatchTSTMultivariate(BaseModel):
         c_out = self.loss.outputsize_multiplier
 
         # Fixed hyperparameters
-        padding_patch = "end"  # Padding at the end
         norm = "BatchNorm"  # Use BatchNorm (if batch_normalization is True)
         d_k = None  # Key dimension
         d_v = None  # Value dimension

@@ -116,7 +116,7 @@ class _InfiniScaledDotProductAttention(nn.Module):
             self._update_memory_matrix = self._update_memory_matrix_allchannels
             self._retrieve_from_memory = self._retrieve_from_memory_allchannels
     
-    def _update_memory_matrix_allchannels(self, key_states, value_states):
+    def _update_memory_matrix_allchannels(self, key_states, value_states, n_channels):
         sigma_k = self.elu(key_states) + 1.0  # [batch_size, n_channels, n_heads, n_patch, dim]
         sigma_k_transposed = sigma_k.transpose(-2, -1) # [batch_size, n_channels, n_heads, dim, n_patch]
 
@@ -168,7 +168,7 @@ class _InfiniScaledDotProductAttention(nn.Module):
         A_mem = numerator / denominator             # [B, C, H, P, D]
     
         return A_mem
-    
+
     def forward(
         self,
         q: torch.Tensor,
@@ -226,7 +226,7 @@ class _InfiniScaledDotProductAttention(nn.Module):
         # Infini-attention: retrieve from memory
         # k_for_memory should be [B, C, H, P, D] (not transposed)
         k_for_memory = k.transpose(-2, -1)
-        memory_matrix, z = self._update_memory_matrix(k_for_memory, v)
+        memory_matrix, z = self._update_memory_matrix(k_for_memory, v, n_channels)
         A_mem = self._retrieve_from_memory(q, memory_matrix, z)
 
         if self.res_attention:
@@ -371,10 +371,8 @@ class _MultiheadAttention(nn.Module):
             K = Q
         if V is None:
             V = Q
-        
+    
         use_channels = n_channels > 1
-        print(f"{use_channels}")
-        print(f"{n_channels}")
         
         # Linear projections and split into multiple heads
         q_s = self.W_Q(Q).view(bs, -1, self.n_heads, self.d_k)  # [bs x seq_len x n_heads x d_k]
@@ -382,7 +380,6 @@ class _MultiheadAttention(nn.Module):
         v_s = self.W_V(V).view(bs, -1, self.n_heads, self.d_v)  # [bs x seq_len x n_heads x d_v]
         
         if use_channels and self.infini_mixer_type != 'none':
-            print('using infini')
             # Reshape for multi-channel processing (Infini-attention)
             seq_len = q_s.size(1)
             bs_orig = bs // n_channels
@@ -430,7 +427,6 @@ class _MultiheadAttention(nn.Module):
             output = output.view(bs, -1, self.n_heads * self.d_v)  # [bs*n_channels x seq_len x n_heads*d_v]
             
         else:
-            print('using none')
             # Standard transformer format (vanilla attention or no channels)
             q_s = q_s.transpose(1, 2)  # [bs x n_heads x seq_len x d_k]
             k_s = k_s.permute(0, 2, 3, 1)  # [bs x n_heads x d_k x seq_len]
