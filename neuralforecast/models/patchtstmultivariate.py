@@ -275,12 +275,13 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
 
     def forward(self, x) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
         n_vars = x.shape[1]
-        x = self.W_P(x)  # x: [bs x nvars x patch_num x hidden_size]
+        x = self.W_P(x) # x: [bs x nvars x patch_num x hidden_size]
+        x += self.W_pos(x) # x: [bs x nvars x patch_num x hidden_size]
 
         u = torch.reshape(
             x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3])
         )  # u: [bs * nvars x patch_num x hidden_size]
-        u = self.dropout(u + self.W_pos(u))  # u: [bs * nvars x patch_num x hidden_size]
+        u = self.dropout(u)  # u: [bs * nvars x patch_num x hidden_size]
 
         # Encoder
         z = self.encoder(u)  # z: [bs * nvars x patch_num x hidden_size]

@@ -114,7 +114,8 @@ class timerxl_backbone(nn.Module):
         N = x.shape[2]
 
         embed_out = self.W_P(x) # [B, C, N, D]
-        embed_out = self.dropout(embed_out + self.W_pos(embed_out)) # [B, C, N, D]
+        embed_out += self.W_pos(embed_out) # [B, C, N, D]
+        embed_out = self.dropout(embed_out) # [B, C, N, D]
 
         # Encoder
         embed_out = embed_out.reshape(B, C * N, -1) # [B, C * N, D]

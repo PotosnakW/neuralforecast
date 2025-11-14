@@ -898,9 +898,9 @@ class PositionalEncoding(nn.Module):
         Accepts:
           - [batch_size, n_channels, seq_len, d_model]
         """
-        seq_len = x.size(1)
+        seq_len = x.size(2)
         pe = self.W_pos[:seq_len]
-        return pe.unsqueeze(0)
+        return pe.unsqueeze(0).unsqueeze(0) #[batch_size, n_channels, seq_len, d_model]
 
 class Patching(nn.Module):
     def __init__(self, 

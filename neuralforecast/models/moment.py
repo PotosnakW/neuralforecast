@@ -145,10 +145,11 @@ class Long_Forecaster(nn.Module):
 
         # Embeddings
         x_enc = self.W_P(x_enc) # [batch_size x n_channels x n_patch x d_model]
+        x_enc += self.W_pos(x_enc) # [batch_size x n_channels x n_patch x d_model]
         
         x_enc = x_enc.reshape(
             (batch_size * n_channels, self.patch_num, self.hidden_size)) # [batch_size*n_channels, n_patch, d_model]
-        x_enc = self.dropout(x_enc + self.W_pos(x_enc)) # [batch_size*n_channels, n_patch, d_model]
+        x_enc = self.dropout(x_enc) # [batch_size*n_channels, n_patch, d_model]
 
         outputs = self.encoder(inputs_embeds=x_enc, attention_mask=attention_mask, n_channels=n_channels) 
         enc_out = outputs.last_hidden_state
