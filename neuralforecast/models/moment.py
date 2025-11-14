@@ -139,7 +139,6 @@ class Long_Forecaster(nn.Module):
             x_enc = x_enc_pca.reshape(-1, n_channels, seq_len)
         
         # Patching
-        # do patching
         if self.padding_patch == "end":
             x_enc = self.padding_patch_layer(x_enc)
         x_enc = self.tokenizer(x=x_enc) # [batch_size x n_channels x n_patch x patch_len]

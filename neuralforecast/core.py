@@ -71,6 +71,7 @@ from neuralforecast.models import (
     MOMENT,
     iTransformerT5,
     PatchTSTMultivariate,
+    TimerXL,
 )
 from .common._base_auto import BaseAuto, MockTrial
 from neuralforecast.utils import (
@@ -209,6 +210,8 @@ MODEL_FILENAME_DICT = {
     "automoment": MOMENT,
     "patchtstmultivariate": PatchTSTMultivariate,
     "autopatchtstmultivariate": PatchTSTMultivariate,
+    "timerxl": TimerXL,
+    "autotimerxl": TimerXL,
 }
 
 # %% ../nbs/core.ipynb 8
