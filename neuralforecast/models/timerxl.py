@@ -27,19 +27,31 @@ class timerxl_backbone(nn.Module):
     """
     def __init__(self, config):
         super().__init__()
-    
+
+        self.hidden_size = config.hidden_size
+
         self.blocks = TimerBlock(
             [
                 TimerLayer(
                     AttentionLayer(
-                        TimeAttention(True, attention_dropout=config.dropout,
-                                    output_attention=False, # output_attention option returns the same thing (not implemented yet?)
-                                    d_model=config.hidden_size, num_heads=config.n_heads,
-                                    covariate=False, # config.covariate, todo: future work
-                                    flash_attention=False), #config.flash_attention),
-                                    config.hidden_size, config.n_heads),
-                    config.hidden_size,
-                    config.linear_hidden_size,
+                        TimeAttention(
+                            True, 
+                            attention_dropout=config.dropout,
+                            output_attention=False, # output_attention option returns the same thing (not implemented yet?)
+                            d_model=config.hidden_size, 
+                            num_heads=config.n_heads,
+                            covariate=False, # config.covariate, todo: future work
+                            flash_attention=False, #config.flash_attention),
+                            d_keys=config.d_k,
+                            use_rope=config.pe_type == 'rope', # rm for now to match other multivariate transformers w/o rope
+                        ), 
+                        d_model=config.hidden_size, 
+                        n_heads=config.n_heads,
+                        d_keys=config.d_k,
+                        d_values=config.d_v,
+                    ),
+                    d_model=config.hidden_size,
+                    d_ff=config.linear_hidden_size,
                     dropout=config.dropout,
                     activation=config.activation
                 ) for l in range(config.n_layers)
@@ -104,30 +116,30 @@ class timerxl_backbone(nn.Module):
             x = self.revin_layer(x, "norm")
             x = x.permute(0, 2, 1) #[bs x nvars x seq_len]
     
+        # Patching
         # x = x.unfold(
         #     dimension=-1, size=self.input_token_len, step=self.input_token_len) # [B, C, N, P]
-
-        # Patching
         if self.padding_patch == "end":
             x = self.padding_patch_layer(x)
         x = self.tokenizer(x=x) # [batch_size x n_channels x n_patch x patch_len]
-        N = x.shape[2]
 
         embed_out = self.W_P(x) # [B, C, N, D]
         embed_out += self.W_pos(embed_out) # [B, C, N, D]
         embed_out = self.dropout(embed_out) # [B, C, N, D]
 
         # Encoder
-        embed_out = embed_out.reshape(B, C * N, -1) # [B, C * N, D]
-        embed_out, attns = self.blocks(embed_out, n_vars=C, n_tokens=N)
+        embed_out = embed_out.reshape(B, C * self.patch_num, -1) # [B, C * N, D]
+        embed_out, attns = self.blocks(embed_out, n_vars=C, n_tokens=self.patch_num)
 
         # Decoder
-        dec_out = self.head(embed_out)  # [B, C * N, P]
-        dec_out = dec_out.reshape(B, C, N, -1).reshape(B, C, -1)  # [B, C, N * P * c_out]
+        # dec_out = self.head(embed_out)  # [B, C * N, P]
+        # dec_out = dec_out.reshape(B, C, N, -1).reshape(B, C, -1)  # [B, C, N * P * c_out]
+        embed_out = embed_out.reshape(
+            (-1, C, self.patch_num, self.hidden_size)) # [batch_size, n_channels, n_patch, d_model]
+        dec_out = self.head(embed_out) # [batch_size, n_channels, h * c_out]
 
         # if self.use_norm:
         #     dec_out = dec_out * stdev + means
-
         if self.revin:
             dec_out = dec_out.permute(0, 2, 1)
             dec_out = self.revin_layer(dec_out, "denorm")
@@ -271,4 +283,4 @@ class TimerXL(BaseModel):
         forecast = forecast.permute(0, 2, 3, 1).reshape(batch_size, self.h, -1) # [batch_size, horizon, c_out*n_series] 
         # output is expected in this shape. tsmixer and other neuralforecast multivariate models' decoder output is already in shape # [batch_size, horizon*c_out, n_series] so skipping to forecast.reshape(batch_size, self.h, -1) is valid for those models. 
 
-        return self.forecast(x)
+        return forecast

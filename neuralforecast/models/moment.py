@@ -359,7 +359,6 @@ class MOMENT(BaseModel):
         config = _update_inputs(config)
         config = _validate_inputs(config)
         self.h = h
-        self.input_size = input_size
         self.n_series = n_series
         self.model = Long_Forecaster(config)
 

@@ -42,7 +42,7 @@ class TimerBlock(nn.Module):
         return x, attns
 
 class TimerLayer(nn.Module):
-    def __init__(self, attention, d_model, d_ff=None, dropout=0.1, activation="relu"):
+    def __init__(self, attention, d_model, d_ff=None, dropout=0.1, activation="gelu"):
         super(TimerLayer, self).__init__()
         d_ff = d_ff or 4 * d_model
         self.attention = attention
@@ -72,7 +72,7 @@ class TimerLayer(nn.Module):
         return self.norm2(x + y), attn
 
 class TimeAttention(nn.Module):
-    def __init__(self, mask_flag=True, scale=None, attention_dropout=0.1, output_attention=False, d_model=512, num_heads=8, max_len=100, covariate=False, flash_attention=False):
+    def __init__(self, mask_flag=True, scale=None, attention_dropout=0.1, output_attention=False, d_model=512, num_heads=8, max_len=100, covariate=False, flash_attention=False, d_keys=None, use_rope=False):
         super(TimeAttention, self).__init__()
         self.scale = scale
         self.mask_flag = mask_flag
@@ -80,8 +80,19 @@ class TimeAttention(nn.Module):
         self.dropout = nn.Dropout(attention_dropout)
         self.covariate = covariate
         self.flash_attention = flash_attention
-        self.qk_proj = QueryKeyProjection(dim=d_model, num_heads=num_heads, proj_layer=RotaryProjection, kwargs=dict(max_len=max_len),
-                                          partial_factor=(0.0, 0.5),)
+        self.use_rope = use_rope
+    
+        # Only create RoPE projection if needed
+        if use_rope:
+            d_keys_total = (d_keys * num_heads) if d_keys is not None else d_model
+            self.qk_proj = QueryKeyProjection(
+                dim=d_keys_total,
+                num_heads=num_heads,
+                proj_layer=RotaryProjection,
+                kwargs=dict(max_len=max_len),
+                partial_factor=(0.0, 0.5),
+            )
+
         self.attn_bias = BinaryAttentionBias(dim=d_model, num_heads=num_heads)
 
     def forward(self, queries, keys, values, attn_mask, n_vars, n_tokens, tau=None, delta=None):
@@ -94,11 +105,10 @@ class TimeAttention(nn.Module):
         if self.flash_attention:
             values = values.permute(0, 2, 1, 3)
 
-        seq_id = torch.arange(n_tokens * n_vars)
-        seq_id = repeat(seq_id, 'n -> b h n', b=B, h=H)
-
-        queries, keys = self.qk_proj(
-            queries, keys, query_id=seq_id, kv_id=seq_id)
+        if self.use_rope:
+            seq_id = torch.arange(n_tokens * n_vars, device=queries.device)
+            seq_id = repeat(seq_id, 'n -> b h n', b=B, h=H)
+            queries, keys = self.qk_proj(queries, keys, query_id=seq_id, kv_id=seq_id)
 
         scale = self.scale or 1. / sqrt(E)
 
@@ -172,7 +182,6 @@ class AttentionLayer(nn.Module):
 
         return self.out_projection(out), attn
 
-
 class Projection(nn.Module, abc.ABC):
     def __init__(self, proj_width: int, num_heads: int, **kwargs):
         super().__init__()
@@ -224,7 +233,6 @@ class RotaryProjection(Projection):
         rot_sin = self.sin[seq_id]
         return rot_cos * x + rot_sin * self._rotate(x)
 
-
 class QueryKeyProjection(nn.Module):
     def __init__(self, dim: int, num_heads: int, proj_layer, kwargs=None, partial_factor=None):
         super().__init__()
@@ -236,20 +244,27 @@ class QueryKeyProjection(nn.Module):
 
         self.head_dim = dim // num_heads
         self.partial_factor = partial_factor
+
+        # Calculate proj_width immediately, don't use cached_property during init
+        if self.partial_factor is None:
+            proj_width = self.head_dim
+        else:
+            proj_width = int(self.head_dim * (self.partial_factor[1] - self.partial_factor[0]))
+
         self.query_proj = proj_layer(
-            proj_width=self.proj_width,
+            proj_width=proj_width,
             num_heads=num_heads,
             **(kwargs or {}),
         )
         self.key_proj = self.query_proj
 
-    @cached_property
+    @property
     def proj_width(self) -> int:
         if self.partial_factor is None:
             return self.head_dim
         return int(self.head_dim * (self.partial_factor[1] - self.partial_factor[0]))
 
-    @cached_property
+    @property
     def split_sizes(self):
         if self.partial_factor is None:
             return 0, self.head_dim, 0
@@ -260,6 +275,7 @@ class QueryKeyProjection(nn.Module):
         )
 
     def forward(self, query, key, query_id, kv_id):
+        print(f"query shape: {query.shape}, split_sizes: {self.split_sizes}")
         if self.partial_factor is not None:
             queries = list(query.split(self.split_sizes, dim=-1))
             keys = list(key.split(self.split_sizes, dim=-1))

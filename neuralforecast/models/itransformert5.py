@@ -7,34 +7,138 @@ __all__ = ['iTransformerT5']
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from types import SimpleNamespace
 
 from typing import Optional
 from ..losses.pytorch import MAE
 from ..common._base_model import BaseModel
-from neuralforecast.common._modules import DataEmbedding_inverted
+from neuralforecast.common._modules import DataEmbedding_inverted, RevINMultivariate, Flatten_Head
 from transformers.models.t5.modeling_t5 import T5Model
 from transformers import T5Config
 
+
+class itransformer_backbone(nn.Module):
+    """iTransformer Forecaster Module"""
+    
+    def __init__(self, config):
+        super().__init__()
+        
+        self.hidden_size = config.hidden_size
+        self.h = config.h
+        self.c_out = config.c_out
+        self.n_series = config.n_series
+        self.input_size = config.input_size
+        
+        # RevIN normalization
+        self.revin = config.revin
+        if config.revin:
+            self.revin_layer = RevINMultivariate(
+                num_features=config.n_series,
+                affine=config.revin_affine,
+                subtract_last=False,
+            )
+        
+        # Embedding layer (inverted - operates on variate dimension)
+        self.enc_embedding = DataEmbedding_inverted(
+            config.input_size, self.hidden_size, config.dropout
+        )
+        
+        # Transformer backbone
+        self.encoder = self._get_huggingface_transformer(config)
+        
+        # # Prediction head
+        # self.projector = nn.Linear(
+        #     self.hidden_size, config.h * config.c_out, bias=True
+        # )
+        head_nf = self.hidden_size
+        self.head = Flatten_Head(
+            multivariate_head=config.multivariate_head,
+            n_vars=config.n_series,
+            nf=head_nf,
+            h=config.h,
+            c_out=config.c_out,
+            head_dropout=config.head_dropout,
+        )
+    
+    def _get_huggingface_transformer(self, config):
+        """Initialize transformer encoder"""
+        model_config = T5Config.from_pretrained(config.transformer_backbone)
+        
+        # Optional: Add custom config attributes if needed
+        if hasattr(config, 'use_rope'):
+            setattr(model_config, 'use_rope', config.use_rope)
+        
+        transformer_backbone = T5Model(model_config)
+        encoder = transformer_backbone.get_encoder()
+        
+        if config.enable_gradient_checkpointing:
+            encoder.gradient_checkpointing_enable()
+        
+        return encoder
+    
+    def forward(self, x_enc: torch.Tensor, **kwargs):
+        """
+        x_enc: [batch_size x n_series x seq_len]
+        """
+        batch_size, n_series, seq_len = x_enc.shape
+        
+        # Normalization with RevIN
+        if self.revin:
+            x_enc = x_enc.permute(0, 2, 1)  # [B, L, N]
+            x_enc = self.revin_layer(x_enc, "norm")
+            x_enc = x_enc.permute(0, 2, 1)  # [B, N, L]
+        
+        # Embedding
+        x_enc = x_enc.permute(0, 2, 1) # x_enc: [B, L, N]
+        # B L N -> B N E                (B L N -> B L E in the vanilla Transformer)
+        enc_in = self.enc_embedding(x_enc, None)
+        
+        # Transformer encoding
+        # B N E -> B N E
+        outputs = self.encoder(inputs_embeds=enc_in)
+        enc_out = outputs.last_hidden_state # [B, N, E]
+        
+        # Projection to forecast horizon
+        # B N E -> B N (H*C) -> B (H*C) N
+        #dec_out = self.projector(enc_out).permute(0, 2, 1)[:, :, :n_series]
+        enc_out = enc_out.unsqueeze(2)  # [B, N, 1, E]
+        dec_out = self.head(enc_out) # [B, N, 1, E] -> [B, N, H*C]
+    
+        if self.revin:
+            dec_out = dec_out.permute(0, 2, 1)  # [B, H*C, N]
+            dec_out = self.revin_layer(dec_out, "denorm")
+            dec_out = dec_out.permute(0, 2, 1)  # [B, N, H*C]
+        
+        return dec_out
+
 # %% ../../nbs/models.itransformer.ipynb 8
 class iTransformerT5(BaseModel):
-    """iTransformer
+    """iTransformer with T5 backbone
 
     **Parameters:**<br>
     `h`: int, Forecast horizon. <br>
     `input_size`: int, autorregresive inputs size, y=[1,2,3,4] input_size=2 -> y_[t-2:t]=[1,2].<br>
     `n_series`: int, number of time-series.<br>
-    `futr_exog_list`: str list, future exogenous columns.<br>
-    `hist_exog_list`: str list, historic exogenous columns.<br>
     `stat_exog_list`: str list, static exogenous columns.<br>
+    `hist_exog_list`: str list, historic exogenous columns.<br>
+    `futr_exog_list`: str list, future exogenous columns.<br>
     `exclude_insample_y`: bool=False, the model skips the autoregressive features y[t-input_size:t] if True.<br>
-    `hidden_size`: int, dimension of the model.<br>
-    `n_heads`: int, number of heads.<br>
-    `e_layers`: int, number of encoder layers.<br>
-    `d_layers`: int, number of decoder layers.<br>
-    `d_ff`: int, dimension of fully-connected layer.<br>
-    `factor`: int, attention factor.<br>
-    `dropout`: float, dropout rate.<br>
-    `use_norm`: bool, whether to normalize or not.<br>
+    `transformer_backbone`: str, HuggingFace transformer model name.<br>
+    `transformer_type`: str="encoder_only", transformer architecture type.<br>
+    `randomly_initialize_backbone`: bool=True, whether to randomly initialize the backbone.<br>
+    `n_layers`: int=2, number of encoder layers.<br>
+    `num_decoder_layers`: int=0, number of decoder layers (not used for encoder-only).<br>
+    `n_heads`: int=8, number of attention heads.<br>
+    `hidden_size`: int=512, dimension of the model.<br>
+    `linear_hidden_size`: int=512, dimension of feedforward layers.<br>
+    `d_k`: int=None, dimension of keys (if None, uses hidden_size/n_heads).<br>
+    `d_v`: int=None, dimension of values (if None, uses hidden_size/n_heads).<br>
+    `dropout`: float=0.1, dropout rate.<br>
+    `head_dropout`: float=0.0, dropout rate for projection head.<br>
+    `use_rope`: bool=False, whether to use rotary position embeddings.<br>
+    `enable_gradient_checkpointing`: bool=True, whether to enable gradient checkpointing.<br>
+    `revin`: bool=True, whether to use RevIN normalization.<br>
+    `revin_affine`: bool=False, whether to use affine transformation in RevIN.<br>
     `loss`: PyTorch module, instantiated train loss class from [losses collection](https://nixtla.github.io/neuralforecast/losses.pytorch.html).<br>
     `valid_loss`: PyTorch module=`loss`, instantiated valid loss class from [losses collection](https://nixtla.github.io/neuralforecast/losses.pytorch.html).<br>
     `max_steps`: int=1000, maximum number of training steps.<br>
@@ -43,7 +147,7 @@ class iTransformerT5(BaseModel):
     `early_stop_patience_steps`: int=-1, Number of validation iterations before early stopping.<br>
     `val_check_steps`: int=100, Number of training steps between every validation loss check.<br>
     `batch_size`: int=32, number of different series in each batch.<br>
-    `valid_batch_size`: int=None, number of different series in each validation and test batch, if None uses batch_size.<br>
+    `valid_batch_size`: int=None, number of different series in validation and test batch, if None uses batch_size.<br>
     `windows_batch_size`: int=32, number of windows to sample in each training batch, default uses all.<br>
     `inference_windows_batch_size`: int=32, number of windows to sample in each inference batch, -1 uses all.<br>
     `start_padding_enabled`: bool=False, if True, the model will pad the time series with zeros at the beginning, by input size.<br>
@@ -51,13 +155,13 @@ class iTransformerT5(BaseModel):
     `scaler_type`: str='identity', type of scaler for temporal inputs normalization see [temporal scalers](https://nixtla.github.io/neuralforecast/common.scalers.html).<br>
     `random_seed`: int=1, random_seed for pytorch initializer and numpy generators.<br>
     `drop_last_loader`: bool=False, if True `TimeSeriesDataLoader` drops last non-full batch.<br>
-    `alias`: str, optional,  Custom name of the model.<br>
+    `alias`: str, optional, Custom name of the model.<br>
     `optimizer`: Subclass of 'torch.optim.Optimizer', optional, user specified optimizer instead of the default choice (Adam).<br>
     `optimizer_kwargs`: dict, optional, list of parameters used by the user specified `optimizer`.<br>
     `lr_scheduler`: Subclass of 'torch.optim.lr_scheduler.LRScheduler', optional, user specified lr_scheduler instead of the default choice (StepLR).<br>
     `lr_scheduler_kwargs`: dict, optional, list of parameters used by the user specified `lr_scheduler`.<br>
     `dataloader_kwargs`: dict, optional, list of parameters passed into the PyTorch Lightning dataloader by the `TimeSeriesDataLoader`. <br>
-    `**trainer_kwargs`: int,  keyword trainer arguments inherited from [PyTorch Lighning's trainer](https://pytorch-lightning.readthedocs.io/en/stable/api/pytorch_lightning.trainer.trainer.Trainer.html?highlight=trainer).<br>
+    `**trainer_kwargs`: int, keyword trainer arguments inherited from [PyTorch Lighning's trainer](https://pytorch-lightning.readthedocs.io/en/stable/api/pytorch_lightning.trainer.trainer.Trainer.html?highlight=trainer).<br>
 
     **References**<br>
     - [Yong Liu, Tengge Hu, Haoran Zhang, Haixu Wu, Shiyu Wang, Lintao Ma, Mingsheng Long. "iTransformer: Inverted Transformers Are Effective for Time Series Forecasting"](https://arxiv.org/abs/2310.06625)
@@ -75,19 +179,35 @@ class iTransformerT5(BaseModel):
         h,
         input_size,
         n_series,
-        futr_exog_list=None,
-        hist_exog_list=None,
         stat_exog_list=None,
+        hist_exog_list=None,
+        futr_exog_list=None,
         exclude_insample_y=False,
-        transformer_backbone = "google/t5-efficient-tiny",
-        hidden_size: int = 512,
+        # Transformer config
+        transformer_backbone: str = "google/t5-efficient-tiny",
+        transformer_type: str = "encoder_only",
+        randomly_initialize_backbone: bool = True,
+        n_layers: int = 2,
+        num_decoder_layers: int = 0,
         n_heads: int = 8,
-        e_layers: int = 2,
-        d_layers: int = 1,
-        d_ff: int = 2048,
-        factor: int = 1,
+        hidden_size: int = 512,
+        linear_hidden_size: int = 512,
+        d_k: Optional[int] = None,
+        d_v: Optional[int] = None,
         dropout: float = 0.1,
-        use_norm: bool = True,
+        head_dropout: float = 0.0,
+        use_rope: bool = False,
+        multivariate_head: bool = False,
+        enable_gradient_checkpointing: bool = True,
+        revin: bool = True,
+        revin_affine: bool = False,
+        start_padding_enabled=False,
+        step_size: int = 1,
+        scaler_type: str = "identity",
+        random_seed: int = 1,
+        drop_last_loader: bool = False,
+        alias: Optional[str] = None,
+        # Optimization
         loss=MAE(),
         valid_loss=None,
         max_steps: int = 1000,
@@ -98,13 +218,7 @@ class iTransformerT5(BaseModel):
         batch_size: int = 32,
         valid_batch_size: Optional[int] = None,
         windows_batch_size=32,
-        inference_windows_batch_size=32,
-        start_padding_enabled=False,
-        step_size: int = 1,
-        scaler_type: str = "identity",
-        random_seed: int = 1,
-        drop_last_loader: bool = False,
-        alias: Optional[str] = None,
+        inference_windows_batch_size: int = 32,
         optimizer=None,
         optimizer_kwargs=None,
         lr_scheduler=None,
@@ -117,9 +231,9 @@ class iTransformerT5(BaseModel):
             h=h,
             input_size=input_size,
             n_series=n_series,
-            futr_exog_list=futr_exog_list,
-            hist_exog_list=hist_exog_list,
             stat_exog_list=stat_exog_list,
+            hist_exog_list=hist_exog_list,
+            futr_exog_list=futr_exog_list,
             exclude_insample_y=exclude_insample_y,
             loss=loss,
             valid_loss=valid_loss,
@@ -146,82 +260,24 @@ class iTransformerT5(BaseModel):
             **trainer_kwargs
         )
 
-        self.enc_in = n_series
-        self.dec_in = n_series
-        self.c_out = n_series
-        self.hidden_size = hidden_size
-        self.n_heads = n_heads
-        self.e_layers = e_layers
-        self.d_layers = d_layers
-        self.d_ff = d_ff
-        self.factor = factor
-        self.dropout = dropout
-        self.use_norm = use_norm
-
-        # Architecture
-        self.enc_embedding = DataEmbedding_inverted(
-            input_size, self.hidden_size, self.dropout
-        )
-
-        model_config = T5Config.from_pretrained(transformer_backbone)
-        transformer_backbone = T5Model(model_config)
-        self.encoder = transformer_backbone.get_encoder()
-
-        self.projector = nn.Linear(
-            self.hidden_size, h * self.loss.outputsize_multiplier, bias=True
-        )
-
-    def forecast(self, x_enc):
-        if self.use_norm:
-            # Normalization from Non-stationary Transformer
-            means = x_enc.mean(1, keepdim=True).detach()
-            x_enc = x_enc - means
-            stdev = torch.sqrt(
-                torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5
-            )
-            x_enc /= stdev
-
-        _, _, N = x_enc.shape  # B L N
-        # B: batch_size;       E: hidden_size;
-        # L: input_size;       S: horizon(h);
-        # N: number of variate (tokens), can also includes covariates
-
-        # Embedding
-        # B L N -> B N E                (B L N -> B L E in the vanilla Transformer)
-        enc_in = self.enc_embedding(
-            x_enc, None
-        )  # covariates (e.g timestamp) can be also embedded as tokens
-
-        # B N E -> B N E                (B L E -> B L E in the vanilla Transformer)
-        # the dimensions of embedded time series has been inverted, and then processed by native attn, layernorm and ffn modules
-        outputs = self.encoder(inputs_embeds=enc_in) # T5
-        enc_out = outputs.last_hidden_state
-
-        # B N E -> B N S -> B S N
-        dec_out = self.projector(enc_out).permute(0, 2, 1)[
-            :, :, :N
-        ]  # filter the covariates
-
-        if self.use_norm:
-            # De-Normalization from Non-stationary Transformer
-            dec_out = dec_out * (
-                stdev[:, 0, :]
-                .unsqueeze(1)
-                .repeat(1, self.h * self.loss.outputsize_multiplier, 1)
-            )
-            dec_out = dec_out + (
-                means[:, 0, :]
-                .unsqueeze(1)
-                .repeat(1, self.h * self.loss.outputsize_multiplier, 1)
-            )
-
-        return dec_out
-
+        config = {key: value for key, value in self.hparams.items() 
+                  if key != 'loss'}
+        config['c_out'] = self.loss.outputsize_multiplier
+        config = SimpleNamespace(**config)
+        
+        self.h = h
+        self.n_series = n_series
+        self.model = itransformer_backbone(config)
+    
     def forward(self, windows_batch):
-        x = windows_batch["insample_y"]
+        x = windows_batch["insample_y"]  # [batch_size (B), input_size (L), n_series (N)]
+        
         batch_size = x.shape[0]
+        x_enc = x.permute(0, 2, 1)  # [batch_size (B), n_series (N), input_size (L)]
+        
+        forecast = self.model(x_enc=x_enc)  # [batch_size, horizon*c_out, n_series]
+    
+        forecast = forecast.view(batch_size, self.n_series, self.h, -1) # [batch_size, n_series, horizon, c_out]
+        forecast = forecast.permute(0, 2, 3, 1).reshape(batch_size, self.h, -1) # [batch_size, horizon, c_out*n_series] 
 
-        y_pred = self.forecast(x)
-        y_pred = y_pred.reshape(batch_size, self.h, -1)
-
-        return y_pred
+        return forecast
