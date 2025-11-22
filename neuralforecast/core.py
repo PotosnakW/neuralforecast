@@ -70,6 +70,7 @@ from neuralforecast.models import (
     TimeXer,
     MOMENT,
     iTransformerT5,
+    Crossformer,
     PatchTSTMultivariate,
     TimerXL,
 )
@@ -212,6 +213,8 @@ MODEL_FILENAME_DICT = {
     "autopatchtstmultivariate": PatchTSTMultivariate,
     "timerxl": TimerXL,
     "autotimerxl": TimerXL,
+    "crossformer": Crossformer,
+    "autocrossformer": Crossformer,
 }
 
 # %% ../nbs/core.ipynb 8
