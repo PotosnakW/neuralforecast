@@ -30,17 +30,17 @@ class AttentionLayer(nn.Module):
     '''
     The Multi-head Self-Attention (MSA) Layer
     '''
-    def __init__(self, d_model, n_heads, d_keys=None, d_values=None, dropout = 0.1):
+    def __init__(self, d_model, n_heads, d_k=None, d_v=None, dropout = 0.1):
         super(AttentionLayer, self).__init__()
 
-        d_keys = d_keys or (d_model//n_heads)
-        d_values = d_values or (d_model//n_heads)
+        d_k = d_k or (d_model//n_heads)
+        d_v = d_v or (d_model//n_heads)
 
         self.inner_attention = FullAttention(scale=None, attention_dropout = dropout)
-        self.query_projection = nn.Linear(d_model, d_keys * n_heads)
-        self.key_projection = nn.Linear(d_model, d_keys * n_heads)
-        self.value_projection = nn.Linear(d_model, d_values * n_heads)
-        self.out_projection = nn.Linear(d_values * n_heads, d_model)
+        self.query_projection = nn.Linear(d_model, d_k * n_heads)
+        self.key_projection = nn.Linear(d_model, d_k * n_heads)
+        self.value_projection = nn.Linear(d_model, d_v * n_heads)
+        self.out_projection = nn.Linear(d_v * n_heads, d_model)
         self.n_heads = n_heads
 
     def forward(self, queries, keys, values):
@@ -51,6 +51,10 @@ class AttentionLayer(nn.Module):
         queries = self.query_projection(queries).view(B, L, H, -1)
         keys = self.key_projection(keys).view(B, S, H, -1)
         values = self.value_projection(values).view(B, S, H, -1)
+        print(f"{queries.shape=}")
+        print(f"{keys.shape=}")
+        print(f"{values.shape=}")
+        print(' ')
 
         out = self.inner_attention(
             queries,
@@ -67,12 +71,12 @@ class TwoStageAttentionLayer(nn.Module):
     The Two Stage Attention (TSA) Layer
     input/output shape: [batch_size, Data_dim(D), Seg_num(L), d_model]
     '''
-    def __init__(self, seg_num, factor, d_model, n_heads, d_ff = None, dropout=0.1):
+    def __init__(self, seg_num, factor, d_model, n_heads, d_ff = None, dropout=0.1, d_k=None, d_v=None):
         super(TwoStageAttentionLayer, self).__init__()
         d_ff = d_ff or 4*d_model
-        self.time_attention = AttentionLayer(d_model, n_heads, dropout = dropout)
-        self.dim_sender = AttentionLayer(d_model, n_heads, dropout = dropout)
-        self.dim_receiver = AttentionLayer(d_model, n_heads, dropout = dropout)
+        self.time_attention = AttentionLayer(d_model=d_model, n_heads=n_heads, dropout=dropout, d_k=d_k, d_v=d_v)
+        self.dim_sender = AttentionLayer(d_model=d_model, n_heads=n_heads, dropout=dropout, d_k=d_k, d_v=d_v)
+        self.dim_receiver = AttentionLayer(d_model=d_model, n_heads=n_heads, dropout=dropout, d_k=d_k, d_v=d_v)
         self.router = nn.Parameter(torch.randn(seg_num, factor, d_model))
         
         self.dropout = nn.Dropout(dropout)
@@ -156,7 +160,7 @@ class scale_block(nn.Module):
     We set depth = 1 in the paper
     '''
     def __init__(self, win_size, d_model, n_heads, d_ff, depth, dropout, \
-                    seg_num = 10, factor=10):
+                    seg_num = 10, factor=10, d_k=None, d_v=None):
         super(scale_block, self).__init__()
 
         if (win_size > 1):
@@ -167,8 +171,17 @@ class scale_block(nn.Module):
         self.encode_layers = nn.ModuleList()
 
         for i in range(depth):
-            self.encode_layers.append(TwoStageAttentionLayer(seg_num, factor, d_model, n_heads, \
-                                                        d_ff, dropout))
+            self.encode_layers.append(TwoStageAttentionLayer(
+                seg_num=seg_num, 
+                factor=factor, 
+                d_model=d_model, 
+                n_heads=n_heads,
+                d_ff=d_ff, 
+                dropout=dropout,
+                d_k=d_k,
+                d_v=d_v,
+            )
+        )
     
     def forward(self, x):
         _, ts_dim, _, _ = x.shape
@@ -186,15 +199,37 @@ class Encoder(nn.Module):
     The Encoder of Crossformer.
     '''
     def __init__(self, e_blocks, win_size, d_model, n_heads, d_ff, block_depth, dropout,
-                in_seg_num = 10, factor=10):
+                in_seg_num = 10, factor=10, d_k=None, d_v=None):
         super(Encoder, self).__init__()
         self.encode_blocks = nn.ModuleList()
 
-        self.encode_blocks.append(scale_block(1, d_model, n_heads, d_ff, block_depth, dropout,\
-                                            in_seg_num, factor))
+        self.encode_blocks.append(scale_block(
+            win_size=1, 
+            d_model=d_model, 
+            n_heads=n_heads, 
+            d_ff=d_ff, 
+            depth=block_depth, 
+            dropout=dropout,
+            seg_num=in_seg_num, 
+            factor=factor,
+            d_k=d_k,
+            d_v=d_v,
+            )
+        )
         for i in range(1, e_blocks):
-            self.encode_blocks.append(scale_block(win_size, d_model, n_heads, d_ff, block_depth, dropout,\
-                                            ceil(in_seg_num/win_size**i), factor))
+            self.encode_blocks.append(scale_block(
+                win_size=win_size, 
+                d_model=d_model, 
+                n_heads=n_heads, 
+                d_ff=d_ff, 
+                depth=block_depth, 
+                dropout=dropout,
+                seg_num=ceil(in_seg_num/win_size**i), 
+                factor=factor,
+                d_k=d_k,
+                d_v=d_v,
+            )
+        )
 
     def forward(self, x):
         encode_x = []
@@ -210,18 +245,32 @@ class DecoderLayer(nn.Module):
     '''
     The decoder layer of Crossformer, each layer will make a prediction at its scale
     '''
-    def __init__(self, seg_len, d_model, n_heads, d_ff=None, dropout=0.1, out_seg_num = 10, factor = 10):
+    def __init__(self, seg_len, d_model, n_heads, d_ff=None, dropout=0.1, out_seg_num=10, factor=10, d_k=None, d_v=None, c_out=1):
         super(DecoderLayer, self).__init__()
-        self.self_attention = TwoStageAttentionLayer(out_seg_num, factor, d_model, n_heads, \
-                                d_ff, dropout)    
-        self.cross_attention = AttentionLayer(d_model, n_heads, dropout = dropout)
+        self.self_attention = TwoStageAttentionLayer(
+            seg_num=out_seg_num, 
+            factor=factor, 
+            d_model=d_model,
+            n_heads=n_heads, 
+            d_ff=d_ff, 
+            dropout=dropout,
+            d_k=d_k,
+            d_v=d_v,
+        )    
+        self.cross_attention = AttentionLayer(
+            d_model=d_model, 
+            n_heads=n_heads, 
+            dropout=dropout,
+            d_k=d_k,
+            d_v=d_v,
+        )
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
         self.MLP1 = nn.Sequential(nn.Linear(d_model, d_model),
                                 nn.GELU(),
                                 nn.Linear(d_model, d_model))
-        self.linear_pred = nn.Linear(d_model, seg_len)
+        self.linear_pred = nn.Linear(d_model, seg_len * c_out)
 
     def forward(self, x, cross):
         '''
@@ -234,6 +283,8 @@ class DecoderLayer(nn.Module):
         x = rearrange(x, 'b ts_d out_seg_num d_model -> (b ts_d) out_seg_num d_model')
         
         cross = rearrange(cross, 'b ts_d in_seg_num d_model -> (b ts_d) in_seg_num d_model')
+
+        print('using cross attention')
         tmp = self.cross_attention(
             x, cross, cross,
         )
@@ -244,7 +295,7 @@ class DecoderLayer(nn.Module):
         
         dec_output = rearrange(dec_output, '(b ts_d) seg_dec_num d_model -> b ts_d seg_dec_num d_model', b = batch)
         layer_predict = self.linear_pred(dec_output)
-        layer_predict = rearrange(layer_predict, 'b out_d seg_num seg_len -> b (out_d seg_num) seg_len')
+        layer_predict = rearrange(layer_predict, 'b ts_d seg_num pred -> b (ts_d seg_num) pred')
 
         return dec_output, layer_predict
 
@@ -253,29 +304,41 @@ class Decoder(nn.Module):
     The decoder of Crossformer, making the final prediction by adding up predictions at each scale
     '''
     def __init__(self, seg_len, d_layers, d_model, n_heads, d_ff, dropout,\
-                router=False, out_seg_num = 10, factor=10):
+                router=False, out_seg_num = 10, factor=10, d_k=None, d_v=None, c_out=1):
         super(Decoder, self).__init__()
 
         self.router = router
         self.decode_layers = nn.ModuleList()
         for i in range(d_layers):
-            self.decode_layers.append(DecoderLayer(seg_len, d_model, n_heads, d_ff, dropout, \
-                                        out_seg_num, factor))
+            self.decode_layers.append(DecoderLayer(
+                seg_len=seg_len, 
+                d_model=d_model, 
+                n_heads=n_heads, 
+                d_ff=d_ff, 
+                dropout=dropout,
+                out_seg_num=out_seg_num, 
+                factor=factor,
+                d_k=d_k,
+                d_v=d_v,
+                c_out=c_out,
+            )
+        )
 
     def forward(self, x, cross):
         final_predict = None
         i = 0
-
         ts_d = x.shape[1]
+
+        print('using decoder')
         for layer in self.decode_layers:
             cross_enc = cross[i]
-            x, layer_predict = layer(x,  cross_enc)
+            x, layer_predict = layer(x, cross_enc)
             if final_predict is None:
                 final_predict = layer_predict
             else:
                 final_predict = final_predict + layer_predict
             i += 1
         
-        final_predict = rearrange(final_predict, 'b (out_d seg_num) seg_len -> b (seg_num seg_len) out_d', out_d = ts_d)
+        final_predict = rearrange(final_predict, 'b (out_d seg_num) pred -> b (seg_num pred) out_d', out_d = ts_d)
 
         return final_predict

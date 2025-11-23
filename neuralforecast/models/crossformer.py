@@ -28,6 +28,7 @@ class crossformer_backbone(nn.Module):
         self.h = config.h
         self.patch_len = config.patch_len
         self.baseline=False
+        self.c_out = config.c_out
 
         self.padding_patch = config.padding_patch
         patch_num = int((config.input_size - config.patch_len) / config.stride + 1)
@@ -63,11 +64,13 @@ class crossformer_backbone(nn.Module):
             block_depth=1, 
             dropout=config.attn_dropout,
             in_seg_num=patch_num, 
-            factor=config.factor
+            factor=config.factor,
+            d_k=config.d_k,
+            d_v=config.d_v,
         )
         
-        #self.dec_pos_embedding = nn.Parameter(torch.randn(1, data_dim, (self.pad_out_len // seg_len), d_model))
-        out_seg_num = config.h // config.patch_len
+        self.dec_pos_embedding = nn.Parameter(torch.randn(1, config.n_series, patch_num, config.hidden_size))
+        out_seg_num = (config.h + config.patch_len - 1) // config.patch_len
         self.decoder = Decoder(
             seg_len=config.patch_len,
             d_layers=config.n_decoder_layers + 1, 
@@ -75,17 +78,14 @@ class crossformer_backbone(nn.Module):
             n_heads=config.n_heads, 
             d_ff=config.linear_hidden_size, 
             dropout=config.attn_dropout, 
-            out_seg_num = out_seg_num,
-            factor = config.factor
+            out_seg_num = patch_num, #out_seg_num,
+            factor = config.factor,
+            d_k=config.d_k,
+            d_v=config.d_v,
         )
 
     def forward(self, x):
-        batch_size = x.shape[0] # x: [B, N, L]
-        if (self.baseline):
-            base = x.mean(dim = -1, keepdim = True)
-        else:
-            base = 0
-
+        B, N, L = x.shape
         # # Normalization 
         # if self.revin: #Used default neuralforecast RevIN to simplicity/reduce modules
         #     x_enc = x_enc.permute(0, 2, 1) #[bs x seq_len x nvars]
@@ -104,11 +104,13 @@ class crossformer_backbone(nn.Module):
         #x = self.pre_norm(x) Crossformer add this. Remove to align multivariate transformer architectures for comparison
         
         enc_out = self.encoder(x)
-        print('enc_out', enc_out)
 
-        dec_out = self.decoder(pos_enc, enc_out)  # (B, output_patch_len, N)
-        dec_out = base + dec_out[:, :self.h, :]
-        dec_out = dec_out.permute(0, 2, 1)  # (B, N, horizon)
+        dec_in = repeat(self.dec_pos_embedding, 'b ts_d l d -> (repeat b) ts_d l d', repeat=B)
+        dec_out = self.decoder(dec_in, enc_out)  # (B, output_patch_len, N)
+        dec_out = dec_out.view(B, -1, self.c_out, N)  # (B, output_patch_len, N)
+        dec_out = dec_out[:, :self.h, :, :]  # [B, h, c_out, N]
+        dec_out = dec_out.view(B, self.h * self.c_out, N)  # [B, h*c_out, N]
+        dec_out = dec_out.permute(0, 2, 1)
 
         return dec_out
 
@@ -206,7 +208,7 @@ class Crossformer(BaseModel):
         pe_type: str = "sincos",
         learn_pe: bool = False,
         win_size: int = 1, # Crossformer parameter
-        factor: int = 10, # Crossformer parameter
+        factor: int = 1, # Crossformer parameter
         padding_patch="end",
         start_padding_enabled=False,
         step_size: int = 1,
