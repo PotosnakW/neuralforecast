@@ -7,9 +7,7 @@ import torch.nn.functional as F
 from einops import rearrange, repeat
 from typing import Optional
 
-from ..common.crossformer_utils import Encoder
-from ..common.crossformer_utils import Decoder
-from ..common.crossformer_utils import FullAttention, AttentionLayer, TwoStageAttentionLayer
+from ..common.crossformer_utils import Encoder, Decoder, FullAttention, AttentionLayer, TwoStageAttentionLayer
 
 from ..common._base_model import BaseModel
 from ..common._modules import RevINMultivariate, Patching, PositionalEncoding
@@ -29,6 +27,13 @@ class crossformer_backbone(nn.Module):
         self.patch_len = config.patch_len
         self.baseline=False
         self.c_out = config.c_out
+        self.revin = config.revin
+
+        if config.revin:
+            self.revin_layer = RevINMultivariate(num_features=config.n_series, 
+                                                 affine=config.revin_affine,
+                                                 subtract_last=False,
+                                                )
 
         self.padding_patch = config.padding_patch
         patch_num = int((config.input_size - config.patch_len) / config.stride + 1)
@@ -53,6 +58,8 @@ class crossformer_backbone(nn.Module):
             learn_pe=config.learn_pe,
         )
 
+        #self.enc_pos_embedding = nn.Parameter(torch.randn(1, data_dim, (self.pad_in_len // seg_len), d_model))
+        #self.dec_pos_embedding = nn.Parameter(torch.randn(1, config.n_series, patch_num, config.hidden_size))
         #self.pre_norm = nn.LayerNorm(d_model)
 
         self.encoder = Encoder(
@@ -68,17 +75,15 @@ class crossformer_backbone(nn.Module):
             d_k=config.d_k,
             d_v=config.d_v,
         )
-        
-        self.dec_pos_embedding = nn.Parameter(torch.randn(1, config.n_series, patch_num, config.hidden_size))
-        out_seg_num = (config.h + config.patch_len - 1) // config.patch_len
+
         self.decoder = Decoder(
             seg_len=config.patch_len,
-            d_layers=config.n_decoder_layers + 1, 
+            d_layers=config.n_layers + 1, 
             d_model=config.hidden_size, 
             n_heads=config.n_heads, 
             d_ff=config.linear_hidden_size, 
             dropout=config.attn_dropout, 
-            out_seg_num = patch_num, #out_seg_num,
+            out_seg_num = patch_num, 
             factor = config.factor,
             d_k=config.d_k,
             d_v=config.d_v,
@@ -86,11 +91,11 @@ class crossformer_backbone(nn.Module):
 
     def forward(self, x):
         B, N, L = x.shape
-        # # Normalization 
-        # if self.revin: #Used default neuralforecast RevIN to simplicity/reduce modules
-        #     x_enc = x_enc.permute(0, 2, 1) #[bs x seq_len x nvars]
-        #     x_enc = self.revin_layer(x_enc, "norm")
-        #     x_enc = x_enc.permute(0, 2, 1) #[bs x nvars x seq_len]
+        # Normalization 
+        if self.revin:
+            x = x.permute(0, 2, 1) #[bs x seq_len x nvars]
+            x = self.revin_layer(x, "norm")
+            x = x.permute(0, 2, 1) #[bs x nvars x seq_len]
         
         # Patching
         if self.padding_patch == "end":
@@ -103,14 +108,22 @@ class crossformer_backbone(nn.Module):
         x += pos_enc # [batch_size x n_channels x n_patch x d_model]
         #x = self.pre_norm(x) Crossformer add this. Remove to align multivariate transformer architectures for comparison
         
+        # Encoder
         enc_out = self.encoder(x)
 
-        dec_in = repeat(self.dec_pos_embedding, 'b ts_d l d -> (repeat b) ts_d l d', repeat=B)
-        dec_out = self.decoder(dec_in, enc_out)  # (B, output_patch_len, N)
-        dec_out = dec_out.view(B, -1, self.c_out, N)  # (B, output_patch_len, N)
+        # Decoder
+        dec_in = repeat(pos_enc, 'b ts l d -> (B b) (S ts) l d', B=B, S=self.n_series)
+        dec_out = self.decoder(dec_in, enc_out)  # (B, output_patch_len * c_out, N)
+        dec_out = dec_out.view(B, -1, self.c_out, N)  # (B, output_patch_len, c_out, N)
         dec_out = dec_out[:, :self.h, :, :]  # [B, h, c_out, N]
         dec_out = dec_out.view(B, self.h * self.c_out, N)  # [B, h*c_out, N]
-        dec_out = dec_out.permute(0, 2, 1)
+        dec_out = dec_out.permute(0, 2, 1)  # [B, N, h*c_out]
+
+        # denorm
+        if self.revin:
+            dec_out = dec_out.permute(0, 2, 1) #[B, h*c_out, N]
+            dec_out = self.revin_layer(dec_out, "denorm")
+            dec_out = dec_out.permute(0, 2, 1) #[B, N, h*c_out]
 
         return dec_out
 
@@ -194,7 +207,6 @@ class Crossformer(BaseModel):
         futr_exog_list=None,
         exclude_insample_y=False,
         n_layers: int = 4,
-        n_decoder_layers: int = 0,
         n_heads: int = 16,
         hidden_size: int = 128,
         linear_hidden_size: int = 128,

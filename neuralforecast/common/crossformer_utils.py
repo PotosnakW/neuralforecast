@@ -51,15 +51,11 @@ class AttentionLayer(nn.Module):
         queries = self.query_projection(queries).view(B, L, H, -1)
         keys = self.key_projection(keys).view(B, S, H, -1)
         values = self.value_projection(values).view(B, S, H, -1)
-        print(f"{queries.shape=}")
-        print(f"{keys.shape=}")
-        print(f"{values.shape=}")
-        print(' ')
 
         out = self.inner_attention(
-            queries,
-            keys,
-            values,
+            queries=queries,
+            keys=keys,
+            values=values,
         )
 
         out = out.view(B, L, -1)
@@ -86,12 +82,16 @@ class TwoStageAttentionLayer(nn.Module):
         self.norm3 = nn.LayerNorm(d_model)
         self.norm4 = nn.LayerNorm(d_model)
 
-        self.MLP1 = nn.Sequential(nn.Linear(d_model, d_ff),
-                                nn.GELU(),
-                                nn.Linear(d_ff, d_model))
-        self.MLP2 = nn.Sequential(nn.Linear(d_model, d_ff),
-                                nn.GELU(),
-                                nn.Linear(d_ff, d_model))
+        self.MLP1 = nn.Sequential(
+            nn.Linear(d_model, d_ff),
+            nn.GELU(),
+            nn.Linear(d_ff, d_model)
+        )
+        self.MLP2 = nn.Sequential(
+            nn.Linear(d_model, d_ff),
+            nn.GELU(),
+            nn.Linear(d_ff, d_model)
+        )
 
     def forward(self, x):
         #Cross Time Stage: Directly apply MSA to each dimension
@@ -284,7 +284,6 @@ class DecoderLayer(nn.Module):
         
         cross = rearrange(cross, 'b ts_d in_seg_num d_model -> (b ts_d) in_seg_num d_model')
 
-        print('using cross attention')
         tmp = self.cross_attention(
             x, cross, cross,
         )
@@ -329,7 +328,6 @@ class Decoder(nn.Module):
         i = 0
         ts_d = x.shape[1]
 
-        print('using decoder')
         for layer in self.decode_layers:
             cross_enc = cross[i]
             x, layer_predict = layer(x, cross_enc)
