@@ -9,6 +9,7 @@ __all__ = ['SinCosPosEncoding', 'Transpose', 'get_activation_fn', 'PositionalEnc
 import math
 import numpy as np
 from typing import Optional  # , Any, Tuple
+from types import SimpleNamespace
 
 import torch
 import torch.nn as nn
@@ -54,115 +55,47 @@ class PatchTST_backbone(nn.Module):
     """
     def __init__(
         self,
-        n_series: int,
-        c_out: int,
-        input_size: int,
-        h: int,
-        patch_len: int,
-        stride: int,
-        max_seq_len: Optional[int] = 1024,
-        n_layers: int = 3,
-        hidden_size=128,
-        n_heads=16,
-        d_k: Optional[int] = None,
-        d_v: Optional[int] = None,
-        linear_hidden_size: int = 256,
-        norm: str = "BatchNorm",
-        attn_dropout: float = 0.0,
-        dropout: float = 0.0,
-        act: str = "gelu",
-        key_padding_mask: str = "auto",
-        padding_var: Optional[int] = None,
-        attn_mask: Optional[torch.Tensor] = None,
-        res_attention: bool = True,
-        pre_norm: bool = False,
-        store_attn: bool = False,
-        pe_type: str = "sincos",
-        learn_pe: bool = True,
-        head_dropout=0,
-        padding_patch='end',
-        multivariate_head=False,
-        infini_mixer_type: str = 'none', 
-        infini_channel_exclusion: bool = False,
-        channelwise_beta: bool = False,
-        layerwise_beta: bool = True,
-        mlpmixer_hidden_size: int = 128,
-        mlpmixer_n_layers: int = 3,
-        mlpmixer_dropout: float = 0.1,
-        revin=True,
-        affine=True,
-        subtract_last=False,
+        config,
     ):
 
         super().__init__()
 
         # RevIn
-        self.revin = revin
+        self.revin = config.revin
         if self.revin:
             self.revin_layer = RevINMultivariate(
-                num_features=n_series, 
-                affine=affine, 
-                subtract_last=subtract_last
+                num_features=config.n_series, 
+                affine=config.affine, 
+                subtract_last=config.subtract_last
             )
 
         # Patching
-        self.patch_len = patch_len
-        self.stride = stride
-        self.padding_patch = padding_patch
-        patch_num = int((input_size - patch_len) / stride + 1)
-        if padding_patch == "end":  # can be modified to general case
-            self.padding_patch_layer = nn.ReplicationPad1d((0, stride))
+        self.patch_len = config.patch_len
+        self.stride = config.stride
+        self.padding_patch = config.padding_patch
+        patch_num = int((config.input_size - config.patch_len) / config.stride + 1)
+        if config.padding_patch == "end":  # can be modified to general case
+            self.padding_patch_layer = nn.ReplicationPad1d((0, config.stride))
             patch_num += 1
 
         self.tokenizer = Patching(
-            patch_len=patch_len, 
-            stride=stride,
+            patch_len=config.patch_len, 
+            stride=config.stride,
         )
 
         # Backbone
         self.backbone = TSTiEncoder(
-            n_series=n_series,
+            config=config,
             patch_num=patch_num,
-            patch_len=patch_len,
-            max_seq_len=max_seq_len,
-            n_layers=n_layers,
-            hidden_size=hidden_size,
-            n_heads=n_heads,
-            d_k=d_k,
-            d_v=d_v,
-            linear_hidden_size=linear_hidden_size,
-            attn_dropout=attn_dropout,
-            dropout=dropout,
-            act=act,
-            key_padding_mask=key_padding_mask,
-            padding_var=padding_var,
-            attn_mask=attn_mask,
-            res_attention=res_attention,
-            pre_norm=pre_norm,
-            store_attn=store_attn,
-            pe_type=pe_type,
-            learn_pe=learn_pe,
-            infini_mixer_type=infini_mixer_type, 
-            infini_channel_exclusion=infini_channel_exclusion,
-            channelwise_beta=channelwise_beta,
-            layerwise_beta=layerwise_beta,
-            mlpmixer_hidden_size=mlpmixer_hidden_size,
-            mlpmixer_n_layers=mlpmixer_n_layers,
-            mlpmixer_dropout=mlpmixer_dropout,
         )
 
-        # Head
-        self.head_nf = hidden_size * patch_num
-        self.n_vars = n_series
-        self.c_out = c_out
-
         self.head = Flatten_Head(
-            multivariate_head=multivariate_head,
-            n_vars=n_series,
-            nf=self.head_nf,
-            h=h,
-            c_out=c_out,
-            head_dropout=head_dropout,
+            multivariate_head=config.multivariate_head,
+            n_vars=config.n_series,
+            nf=config.hidden_size * patch_num,
+            h=config.h,
+            c_out=config.c_out,
+            head_dropout=config.head_dropout,
             )
 
     def forward(self, z):  # z: [bs x nvars x seq_len]
@@ -195,82 +128,34 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
 
     def __init__(
         self,
-        n_series,
+        config,
         patch_num,
-        patch_len,
-        max_seq_len=1024,
-        n_layers=3,
-        hidden_size=128,
-        n_heads=16,
-        d_k=None,
-        d_v=None,
-        linear_hidden_size=256,
-        norm="BatchNorm",
-        attn_dropout=0.0,
-        dropout=0.0,
-        act="gelu",
-        store_attn=False,
-        key_padding_mask="auto",
-        padding_var=None,
-        attn_mask=None,
-        res_attention=True,
-        pre_norm=False,
-        pe_type="sincos",
-        learn_pe=True,
-        infini_mixer_type='none',
-        infini_channel_exclusion=False,
-        layerwise_beta=True,
-        channelwise_beta=False,
-        mlpmixer_hidden_size=128,
-        mlpmixer_n_layers=3,
-        mlpmixer_dropout=0.1,
     ):
 
         super().__init__()
 
         self.patch_num = patch_num
-        self.patch_len = patch_len
+        self.patch_len = config.patch_len
 
         # Input encoding
-        q_len = patch_num
         self.W_P = nn.Linear(
-            patch_len, hidden_size
+            config.patch_len, config.hidden_size
         )  # Eq 1: projection of feature vectors onto a d-dim vector space
-        self.seq_len = q_len
+        self.seq_len = patch_num
 
         # Positional encoding
         self.W_pos = PositionalEncoding(
-            pe_type=pe_type,
-            hidden_size=hidden_size,
-            learn_pe=learn_pe,
+            pe_type=config.pe_type,
+            hidden_size=config.hidden_size,
+            learn_pe=config.learn_pe,
         )
         # Residual dropout
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(config.dropout)
 
         # Encoder
         self.encoder = TSTEncoder(
-            n_series=n_series,
-            q_len=q_len,
-            hidden_size=hidden_size,
-            n_heads=n_heads,
-            d_k=d_k,
-            d_v=d_v,
-            linear_hidden_size=linear_hidden_size,
-            norm=norm,
-            attn_dropout=attn_dropout,
-            dropout=dropout,
-            pre_norm=pre_norm,
-            activation=act,
-            res_attention=res_attention,
-            n_layers=n_layers,
-            store_attn=store_attn,
-            infini_mixer_type=infini_mixer_type, 
-            infini_channel_exclusion=infini_channel_exclusion,
-            channelwise_beta=channelwise_beta,
-            layerwise_beta=layerwise_beta,
-            mlpmixer_hidden_size=mlpmixer_hidden_size,
-            mlpmixer_n_layers=mlpmixer_n_layers,
-            mlpmixer_dropout=mlpmixer_dropout,
+            config=config,
+            q_len=patch_num,
         )
 
     def forward(self, x) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
@@ -298,61 +183,21 @@ class TSTEncoder(nn.Module):
     """
     def __init__(
         self,
-        n_series,
+        config,
         q_len,
-        hidden_size,
-        n_heads,
-        d_k=None,
-        d_v=None,
-        linear_hidden_size=None,
-        norm="BatchNorm",
-        attn_dropout=0.0,
-        dropout=0.0,
-        activation="gelu",
-        res_attention=False,
-        n_layers=1,
-        pre_norm=False,
-        store_attn=False,
-        infini_mixer_type='none',
-        infini_channel_exclusion=False,
-        layerwise_beta=True,
-        channelwise_beta=False,
-        mlpmixer_hidden_size=128,
-        mlpmixer_n_layers=3,
-        mlpmixer_dropout=0.1,
     ):
         super().__init__()
 
         self.layers = nn.ModuleList(
             [
                 TSTEncoderLayer(
-                    n_series=n_series,
+                    config=config,
                     q_len=q_len,
-                    hidden_size=hidden_size,
-                    n_heads=n_heads,
-                    d_k=d_k,
-                    d_v=d_v,
-                    linear_hidden_size=linear_hidden_size,
-                    norm=norm,
-                    attn_dropout=attn_dropout,
-                    dropout=dropout,
-                    activation=activation,
-                    res_attention=res_attention,
-                    pre_norm=pre_norm,
-                    store_attn=store_attn,
-                    infini_mixer_type=infini_mixer_type, 
-                    infini_channel_exclusion=infini_channel_exclusion,
-                    channelwise_beta=channelwise_beta,
-                    layerwise_beta=layerwise_beta,
-                    mlpmixer_hidden_size=mlpmixer_hidden_size,
-                    mlpmixer_n_layers=mlpmixer_n_layers,
-                    mlpmixer_dropout=mlpmixer_dropout,
                 )
-                for i in range(n_layers)
+                for i in range(config.n_layers)
             ]
         )
-        self.res_attention = res_attention
-        self.n_series=n_series
+        self.res_attention = config.res_attention
 
     def forward(
         self,
@@ -380,105 +225,70 @@ class TSTEncoder(nn.Module):
                 )
             return output
 
-
 class TSTEncoderLayer(nn.Module):
     """
     TSTEncoderLayer
     """
     def __init__(
         self,
-        n_series,
+        config,
         q_len,
-        hidden_size,
-        n_heads,
-        d_k=None,
-        d_v=None,
-        linear_hidden_size=256,
-        store_attn=False,
-        norm="BatchNorm",
-        attn_dropout=0,
-        dropout=0.0,
-        bias=True,
-        activation="gelu",
-        res_attention=False,
-        pre_norm=False,
-        infini_mixer_type='none',
-        infini_channel_exclusion=False,
-        layerwise_beta=True,
-        channelwise_beta=False,
-        mlpmixer_hidden_size=128,
-        mlpmixer_n_layers=3,
-        mlpmixer_dropout=0.1,
-
     ):
         super().__init__()
         assert (
-            not hidden_size % n_heads
-        ), f"hidden_size ({hidden_size}) must be divisible by n_heads ({n_heads})"
-        d_k = hidden_size // n_heads if d_k is None else d_k
-        d_v = hidden_size // n_heads if d_v is None else d_v
+            not config.hidden_size % config.n_heads
+        ), f"hidden_size ({config.hidden_size}) must be divisible by n_heads ({config.n_heads})"
 
-        if layerwise_beta:
-            beta = None
-        else:
-            # Create a layer-specific beta
-            if channelwise_beta:
-                beta = nn.Parameter(torch.rand((1, n_series, n_heads, 1, 1))*1e-2)
+        if config.infini_mixer_type == 'betas':
+            if config.layerwise_beta:
+                beta = None
             else:
-                beta = nn.Parameter(torch.rand((1, 1, n_heads, 1, 1))*1e-2)
-            # Adjust the values to ensure they sum to 0
-            with torch.no_grad():
-                beta -= beta.mean(dim=2, keepdim=True)
+                # Create a layer-specific beta
+                if config.channelwise_beta:
+                    beta = nn.Parameter(torch.rand((1, config.n_series, config.n_heads, 1, 1))*1e-2)
+                else:
+                    beta = nn.Parameter(torch.rand((1, 1, config.n_heads, 1, 1))*1e-2)
+                # Adjust the values to ensure they sum to 0
+                with torch.no_grad():
+                    beta -= beta.mean(dim=2, keepdim=True)
+        else:
+            beta=None
 
         # Multi-Head attention
-        self.res_attention = res_attention
+        self.res_attention = config.res_attention
         self.self_attn = _MultiheadAttention(
-            hidden_size=hidden_size,
-            n_heads=n_heads,
-            n_channels=n_series,
-            d_k=d_k,
-            d_v=d_v,
-            attn_dropout=attn_dropout,
-            proj_dropout=dropout,
-            res_attention=res_attention,
+            config=config,
             beta=beta,
-            infini_mixer_type=infini_mixer_type, 
-            infini_channel_exclusion=infini_channel_exclusion,
-            channelwise_beta=channelwise_beta,
-            mlpmixer_hidden_size=mlpmixer_hidden_size,
-            mlpmixer_n_layers=mlpmixer_n_layers,
-            mlpmixer_dropout=mlpmixer_dropout,
         )
 
         # Add & Norm
-        self.dropout_attn = nn.Dropout(dropout)
-        if "batch" in norm.lower():
+        self.dropout_attn = nn.Dropout(config.dropout)
+        if "batch" in config.norm.lower():
             self.norm_attn = nn.Sequential(
-                Transpose(1, 2), nn.BatchNorm1d(hidden_size), Transpose(1, 2)
+                Transpose(1, 2), nn.BatchNorm1d(config.hidden_size), Transpose(1, 2)
             )
         else:
-            self.norm_attn = nn.LayerNorm(hidden_size)
+            self.norm_attn = nn.LayerNorm(config.hidden_size)
 
         # Position-wise Feed-Forward
         self.ff = nn.Sequential(
-            nn.Linear(hidden_size, linear_hidden_size, bias=bias),
-            get_activation_fn(activation),
-            nn.Dropout(dropout),
-            nn.Linear(linear_hidden_size, hidden_size, bias=bias),
+            nn.Linear(config.hidden_size, config.linear_hidden_size, bias=True), # hard-coded in PatchTST
+            get_activation_fn(config.activation),
+            nn.Dropout(config.dropout),
+            nn.Linear(config.linear_hidden_size, config.hidden_size, bias=True), # hard-coded in PatchTST
         )
 
         # Add & Norm
-        self.dropout_ffn = nn.Dropout(dropout)
-        if "batch" in norm.lower():
+        self.dropout_ffn = nn.Dropout(config.dropout)
+        if "batch" in config.norm.lower():
             self.norm_ffn = nn.Sequential(
-                Transpose(1, 2), nn.BatchNorm1d(hidden_size), Transpose(1, 2)
+                Transpose(1, 2), nn.BatchNorm1d(config.hidden_size), Transpose(1, 2)
             )
         else:
-            self.norm_ffn = nn.LayerNorm(hidden_size)
+            self.norm_ffn = nn.LayerNorm(config.hidden_size)
 
-        self.pre_norm = pre_norm
-        self.store_attn = store_attn
-        self.n_series = n_series
+        self.pre_norm = config.pre_norm
+        self.store_attn = config.store_attn
 
     def forward(
         self,
@@ -488,13 +298,15 @@ class TSTEncoderLayer(nn.Module):
         attn_mask: Optional[torch.Tensor] = None,
     ):  # -> Tuple[torch.Tensor, Any]:
 
+        n_channels = src.shape[1] #CHECK THIS WILLA!!!
+
         # Multi-Head attention sublayer
         if self.pre_norm:
             src = self.norm_attn(src)
         ## Multi-Head attention
         if self.res_attention:
             src2, attn, scores = self.self_attn(
-                n_channels=self.n_series,
+                n_channels=n_channels,
                 Q=src,
                 K=src,
                 V=src,
@@ -504,7 +316,7 @@ class TSTEncoderLayer(nn.Module):
             )
         else:
             src2, attn = self.self_attn(
-                n_channels=self.n_series,
+                n_channels=n_channels,
                 Q=src,
                 K=src,
                 V=src,
@@ -705,56 +517,25 @@ class PatchTSTMultivariate(BaseModel):
         # Enforce correct patch_len, regardless of user input
         patch_len = min(input_size + stride, patch_len)
 
-        c_out = self.loss.outputsize_multiplier
-
-        # Fixed hyperparameters
-        norm = "BatchNorm"  # Use BatchNorm (if batch_normalization is True)
-        store_attn = False  # Store attention weights
-        max_seq_len = 1024  # Not used
-        key_padding_mask = "auto"  # Not used
-        padding_var = None  # Not used
-        attn_mask = None  # Not used
+        config = {key: value for key, value in self.hparams.items() 
+                  if key != 'loss'}
+        config['c_out'] = self.loss.outputsize_multiplier
+        config['patch_len'] = patch_len
+        config['norm'] = "BatchNorm"
+        config['store_attn'] = False
+        config['max_seq_len'] = 1024
+        config['key_padding_mask'] = "auto"
+        config['padding_var'] = None
+        config['attn_mask'] = None
+        config['qkv_bias'] = True
+        config['d_k'] = d_k
+        config['d_v'] = d_v
+        config = SimpleNamespace(**config)
 
         self.model = PatchTST_backbone(
-            n_series=n_series,
-            c_out=c_out,
-            input_size=input_size,
-            h=h,
-            patch_len=patch_len,
-            stride=stride,
-            max_seq_len=max_seq_len,
-            n_layers=n_layers,
-            hidden_size=hidden_size,
-            n_heads=n_heads,
-            d_k=d_k,
-            d_v=d_v,
-            linear_hidden_size=linear_hidden_size,
-            norm=norm,
-            attn_dropout=attn_dropout,
-            dropout=dropout,
-            act=activation,
-            key_padding_mask=key_padding_mask,
-            padding_var=padding_var,
-            attn_mask=attn_mask,
-            res_attention=res_attention,
-            pre_norm=batch_normalization,
-            store_attn=store_attn,
-            pe_type=pe_type,
-            learn_pe=learn_pe,
-            head_dropout=head_dropout,
-            padding_patch=padding_patch,
-            multivariate_head=multivariate_head,
-            infini_mixer_type=infini_mixer_type, 
-            infini_channel_exclusion=infini_channel_exclusion,
-            channelwise_beta=channelwise_beta,
-            layerwise_beta=layerwise_beta,
-            mlpmixer_hidden_size=mlpmixer_hidden_size,
-            mlpmixer_n_layers=mlpmixer_n_layers,
-            mlpmixer_dropout=mlpmixer_dropout,
-            revin=revin,
-            affine=revin_affine,
-            subtract_last=revin_subtract_last,
+            config=config,
         )
+        self.n_series = n_series
 
     def forward(self, windows_batch):  # x: [batch, input_size]
         x = windows_batch[

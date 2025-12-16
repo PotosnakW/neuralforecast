@@ -559,6 +559,17 @@ class BaseModel(pl.LightningModule):
         torch.manual_seed(self.random_seed)
         np.random.seed(self.random_seed)
         random.seed(self.random_seed)
+        # Track training start time
+        self.training_start_time = time.time()
+
+    def on_fit_end(self):
+        # Calculate total training time
+        if hasattr(self, 'training_start_time'):
+            training_duration = time.time() - self.training_start_time
+            self.training_time = training_duration
+            
+            # Optionally log it
+            self.log('training_time_seconds', training_duration)
 
     def configure_optimizers(self):
         if self.optimizer:
@@ -624,7 +635,12 @@ class BaseModel(pl.LightningModule):
     def save(self, path):
         with fsspec.open(path, "wb") as f:
             torch.save(
-                {"hyper_parameters": self.hparams, "state_dict": self.state_dict()},
+                {"hyper_parameters": self.hparams, 
+                 "state_dict": self.state_dict(),
+                 "train_trajectories": self.train_trajectories,
+                 "valid_trajectories": self.valid_trajectories,
+                 "training_time": getattr(self, 'training_time', None), 
+                },
                 f,
             )
 

@@ -6,7 +6,7 @@ from typing import Optional
 
 from ..common._modules import MLP
 
-class _ScaledDotProductAttention(nn.Module):
+class ScaledDotProductAttention(nn.Module):
     """
     Vanilla Scaled Dot-Product Attention.
     Based on "Attention is All You Need" (Vaswani et al., 2017).
@@ -14,24 +14,23 @@ class _ScaledDotProductAttention(nn.Module):
     
     def __init__(
         self,
-        hidden_size: int,
-        n_heads: int,
-        attn_dropout: float = 0.0,
-        res_attention=False,
+        config,
     ):
         super().__init__()
-        self.hidden_size = hidden_size
-        self.n_heads = n_heads
-        self.head_dim = hidden_size // n_heads
+        self.hidden_size = config.hidden_size
+        self.n_heads = config.n_heads
+        self.head_dim = config.hidden_size // config.n_heads
         self.scale = self.head_dim ** -0.5
-        self.attn_dropout = nn.Dropout(attn_dropout)
-        self.res_attention = res_attention
+        self.attn_dropout = nn.Dropout(config.attn_dropout)
+        self.res_attention = config.res_attention
+        self.inner_dim = config.n_heads * config.d_v
     
     def forward(
         self,
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
+        n_channels: int,
         prev: Optional[torch.Tensor] = None,
         attn_mask: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
@@ -51,6 +50,8 @@ class _ScaledDotProductAttention(nn.Module):
             output: [bs x n_heads x seq_len x d_v]
             attn_weights: [bs x n_heads x seq_len x seq_len]
         """
+
+        batch_size = q.shape[0]
         
         # Scaled MatMul (q, k) - compute attention scores
         attn_scores = torch.matmul(q, k) * self.scale  # Vaswani et al. scaling
@@ -77,14 +78,18 @@ class _ScaledDotProductAttention(nn.Module):
         attn_weights = self.attn_dropout(attn_weights)
         
         # Compute attention output
-        output = torch.matmul(attn_weights, v)
+        output = torch.matmul(attn_weights, v) # [bs x n_heads x seq_len x d_v]
+
+        # Reshape back
+        output = output.transpose(1, 2).contiguous()  # [bs x seq_len x n_heads x d_v]
+        output = output.view(batch_size, -1, self.inner_dim)  # [bs x seq_len x n_heads*d_v]
         
         if self.res_attention:
             return output, attn_weights, attn_scores
         else:
             return output, attn_weights
 
-class _InfiniScaledDotProductAttention(nn.Module):
+class InfiniScaledDotProductAttention(ScaledDotProductAttention):
     """
     Scaled Dot-Product Attention with Infini-attention memory mechanism.
     Based on "Attention is All You Need" (Vaswani et al., 2017) and 
@@ -93,28 +98,57 @@ class _InfiniScaledDotProductAttention(nn.Module):
     
     def __init__(
         self,
-        hidden_size: int,
-        n_heads: int,
-        attn_dropout: float = 0.0,
-        res_attention=False,
-        infini_channel_exclusion: bool = False,
+        config,
+        beta: Optional[torch.tensor] = None,
     ):
-        super().__init__()
-        self.hidden_size = hidden_size
-        self.n_heads = n_heads
-        self.head_dim = hidden_size // n_heads
-        self.scale = self.head_dim ** -0.5
-        self.attn_dropout = nn.Dropout(attn_dropout)
-        self.res_attention = res_attention
+        super().__init__(config)
+
         self.elu = nn.ELU()
         
         # Select memory update/retrieval methods based on channel exclusion
-        if infini_channel_exclusion:
+        if config.infini_channel_exclusion:
             self._update_memory_matrix = self._update_memory_matrix_channelexl
             self._retrieve_from_memory = self._retrieve_from_memory_channelexl
         else:
             self._update_memory_matrix = self._update_memory_matrix_allchannels
             self._retrieve_from_memory = self._retrieve_from_memory_allchannels
+
+        if config.infini_mixer_type.lower() == 'betas':
+            self.mixing_gate = self.beta_mixing_gate
+            if beta is not None:
+                self.beta = beta
+            else:
+                if config.channelwise_beta:
+                    self.beta = nn.Parameter(torch.rand((1, config.n_channels, config.n_heads, 1, 1))*1e-2)
+                else:
+                    self.beta = nn.Parameter(torch.rand((1, 1, config.n_heads, 1, 1))*1e-2)
+                # Center values around 0
+                with torch.no_grad():
+                    self.beta -= self.beta.mean(dim=2, keepdim=True)
+    
+        elif config.infini_mixer_type.lower() == 'mlp':
+            self.mixing_gate = self.mlp_mixing_gate
+            self.mlp = MLP(
+                in_features=d_v * 2,
+                out_features=d_v,
+                activation='ReLU',
+                hidden_size=config.mlpmixer_hidden_size,
+                num_layers=config.mlpmixer_n_layers,
+                dropout=config.mlpmixer_dropout,
+            )
+        elif config.infini_mixer_type.lower() == 'mlp_query':
+            self.mixing_gate = self.mlp_query_mixing_gate
+            self.mlp = MLP(
+                in_features=d_v * 3,
+                out_features=d_v,
+                activation='ReLU',
+                hidden_size=config.mlpmixer_hidden_size,
+                num_layers=config.mlpmixer_n_layers,
+                dropout=config.mlpmixer_dropout,
+            )
+        else:
+            raise ValueError(f"infini_mixer_type '{config.infini_mixer_type}' not recognized. "
+                    f"Use 'betas', 'mlp', 'mlp_query', or 'none'.")
     
     def _update_memory_matrix_allchannels(self, key_states, value_states, n_channels):
         sigma_k = self.elu(key_states) + 1.0  # [batch_size, n_channels, n_heads, n_patch, dim]
@@ -168,6 +202,23 @@ class _InfiniScaledDotProductAttention(nn.Module):
         A_mem = numerator / denominator             # [B, C, H, P, D]
     
         return A_mem
+    
+    def beta_mixing_gate(self, a_mem, attn_output, query_states):
+        """Learned interpolation between memory and attention using per-head betas."""
+        attn_output = torch.sigmoid(self.beta) * a_mem + (1 - torch.sigmoid(self.beta)) * attn_output 
+        return attn_output
+    
+    def mlp_mixing_gate(self, a_mem, attn_output, query_states):
+        """Context-aware mixing via MLP on concatenated memory and attention."""
+        attn_output = torch.cat([a_mem, attn_output], dim=-1)  # [batch_size, n_channels, n_heads, n_patch, dim*2]
+        attn_output = self.mlp(attn_output)  # [batch_size, n_channels, n_heads, n_patch, dim]
+        return attn_output
+    
+    def mlp_query_mixing_gate(self, a_mem, attn_output, query_states):
+        """Context-aware mixing via MLP with query, memory, and attention."""
+        attn_output = torch.cat([a_mem, attn_output, query_states], dim=-1)  # [batch_size, n_channels, n_heads, n_patch, dim*3]
+        attn_output = self.mlp(attn_output)  # [batch_size, n_channels, n_heads, n_patch, dim]
+        return attn_output
 
     def forward(
         self,
@@ -195,6 +246,8 @@ class _InfiniScaledDotProductAttention(nn.Module):
             A_mem: [bs x n_channels x n_heads x seq_len x d_v]
             attn_weights: [bs x n_channels x n_heads x seq_len x seq_len]
         """
+
+        batch_size = q.shape[0]
         
         # Scaled MatMul (q, k) - compute attention scores
         attn_scores = torch.matmul(q, k) * self.scale  # Vaswani et al. scaling
@@ -229,10 +282,20 @@ class _InfiniScaledDotProductAttention(nn.Module):
         memory_matrix, z = self._update_memory_matrix(k_for_memory, v, n_channels)
         A_mem = self._retrieve_from_memory(q, memory_matrix, z)
 
+        # Channel mixing
+        output = self.mixing_gate(
+            a_mem=A_mem, 
+            attn_output=output, 
+            query_states=q,
+        ) # [batch_size, n_channels, n_heads, n_patch, dim]
+
+        output = output.transpose(2, 3).contiguous()  # [bs x n_channels x seq_len x n_heads x d_v]
+        output = output.view(batch_size, -1, self.inner_dim)  # [bs*n_channels x seq_len x n_heads*d_v]
+
         if self.res_attention:
-            return output, A_mem, attn_weights, attn_scores
+            return output, attn_weights, attn_scores
         else:
-            return output, A_mem, attn_weights
+            return output, attn_weights
         
 class _MultiheadAttention(nn.Module):
     """
@@ -242,22 +305,8 @@ class _MultiheadAttention(nn.Module):
     
     def __init__(
         self,
-        n_channels: int,
-        hidden_size: int,
-        n_heads: int,
-        d_k: Optional[int] = None,
-        d_v: Optional[int] = None,
-        res_attention=False,
-        attn_dropout: float = 0.0,
-        proj_dropout: float = 0.0,
-        qkv_bias: bool = True,
-        infini_mixer_type: str = 'none',
-        infini_channel_exclusion: bool = False,
+        config,
         beta: Optional[torch.tensor] = None,
-        channelwise_beta: bool = False,
-        mlpmixer_hidden_size: int = 128,
-        mlpmixer_n_layers: int = 3,
-        mlpmixer_dropout: float = 0.1,
     ):
         """
         Multi-Head Attention with optional Infini memory mechanism.
@@ -275,67 +324,36 @@ class _MultiheadAttention(nn.Module):
         """
         super().__init__()
         
-        d_k = hidden_size // n_heads if d_k is None else d_k
-        d_v = hidden_size // n_heads if d_v is None else d_v
-        
-        self.hidden_size = hidden_size
-        self.n_heads = n_heads
-        self.d_k = d_k
-        self.d_v = d_v
-        self.infini_mixer_type = infini_mixer_type.lower()
-        self.res_attention = res_attention
+        self.hidden_size = config.hidden_size
+        self.n_heads = config.n_heads
+        self.d_k = config.hidden_size // config.n_heads if config.d_k is None else config.d_k
+        self.d_v = config.hidden_size // config.n_heads if config.d_v is None else config.d_v
+        self.infini_mixer_type = config.infini_mixer_type.lower()
+        self.res_attention = config.res_attention
         
         # Q, K, V projections
-        self.W_Q = nn.Linear(hidden_size, d_k * n_heads, bias=qkv_bias)
-        self.W_K = nn.Linear(hidden_size, d_k * n_heads, bias=qkv_bias)
-        self.W_V = nn.Linear(hidden_size, d_v * n_heads, bias=qkv_bias)
+        self.W_Q = nn.Linear(config.hidden_size, config.d_k * config.n_heads, bias=config.qkv_bias)
+        self.W_K = nn.Linear(config.hidden_size, config.d_k * config.n_heads, bias=config.qkv_bias)
+        self.W_V = nn.Linear(config.hidden_size, config.d_v * config.n_heads, bias=config.qkv_bias)
         
         # Scaled Dot-Product Attention (vanilla or infini)
-        if self.infini_mixer_type == 'none':
-            self.sdp_attn = _ScaledDotProductAttention(
-                hidden_size=hidden_size,
-                n_heads=n_heads,
-                attn_dropout=attn_dropout,
-                res_attention=res_attention,
+        if config.infini_mixer_type.lower() in ['betas', 'mlp', 'mlp_query']:
+            self.sdp_attn = InfiniScaledDotProductAttention(
+                config=config,
+                beta=beta,
             )
-        elif self.infini_mixer_type in ['mlp', 'betas']:
-            self.sdp_attn = _InfiniScaledDotProductAttention(
-                hidden_size=hidden_size,
-                n_heads=n_heads,
-                attn_dropout=attn_dropout,
-                res_attention=res_attention,
-                infini_channel_exclusion=infini_channel_exclusion,
+        elif config.infini_mixer_type == 'none':
+            self.sdp_attn = ScaledDotProductAttention(
+                config=config,
             )
-
-            if self.infini_mixer_type == 'mlp':
-                self.mlp = MLP(
-                    in_features=d_v * 2,
-                    out_features=d_v,
-                    activation='ReLU',
-                    hidden_size=mlpmixer_hidden_size,
-                    num_layers=mlpmixer_n_layers,
-                    dropout=mlpmixer_dropout,
-                )
-                
-            elif self.infini_mixer_type == 'betas':
-                # Beta parameter for gated mixing
-                if beta is not None:
-                    self.beta = beta
-                else:
-                    if channelwise_beta:
-                        self.beta = nn.Parameter(torch.rand((1, n_channels, n_heads, 1, 1)) * 1e-2)
-                    else:
-                        self.beta = nn.Parameter(torch.rand((1, 1, n_heads, 1, 1)) * 1e-2)
-                    # Adjust the values to ensure they sum to 0 across heads
-                    with torch.no_grad():
-                        self.beta -= self.beta.mean(dim=2, keepdim=True)
         else:
-            raise ValueError(f"infini_mixer_type must be 'none', 'mlp', or 'betas', got '{infini_mixer_type}'")
-        
+            raise ValueError(f"Channel mixing method: {config.infini_mixer_type} not recognized. "
+                            f"Use 'betas', 'mlp', 'mlp_query', or 'none'.")
+
         # Output projection
         self.to_out = nn.Sequential(
-            nn.Linear(n_heads * d_v, hidden_size),
-            nn.Dropout(proj_dropout)
+            nn.Linear(config.n_heads * config.d_v, config.hidden_size),
+            nn.Dropout(config.proj_dropout)
         )
     
     def forward(
@@ -392,68 +410,32 @@ class _MultiheadAttention(nn.Module):
             
             v_s = v_s.view(bs_orig, n_channels, seq_len, self.n_heads, self.d_v)
             v_s = v_s.transpose(2, 3).contiguous()  # [bs x n_channels x n_heads x seq_len x d_v]
-            
-            # Apply Scaled Dot-Product Attention (multiple heads)
-            if self.res_attention:
-                output, A_mem, attn_weights, attn_scores = self.sdp_attn(
-                    q=q_s,
-                    k=k_s,
-                    v=v_s,
-                    n_channels=n_channels,
-                    prev=prev,
-                    key_padding_mask=key_padding_mask,
-                    attn_mask=attn_mask,
-                )
-            else:
-                output, A_mem, attn_weights = self.sdp_attn(
-                    q=q_s, 
-                    k=k_s, 
-                    v=v_s, 
-                    n_channels=n_channels,
-                    key_padding_mask=key_padding_mask, 
-                    attn_mask=attn_mask
-                )
-            
-            # Mix attention and memory
-            if self.infini_mixer_type == 'mlp':
-                # Concatenate memory and attention outputs
-                mixed = torch.cat([A_mem, output], dim=-1)  # [bs x n_channels x n_heads x seq_len x d_v*2]
-                output = self.mlp(mixed)  # [bs x n_channels x n_heads x seq_len x d_v]
-            elif self.infini_mixer_type == 'betas':
-                output = torch.sigmoid(self.beta) * A_mem + (1 - torch.sigmoid(self.beta)) * output
-            
-            # Reshape back
-            output = output.transpose(2, 3).contiguous()  # [bs x n_channels x seq_len x n_heads x d_v]
-            output = output.view(bs, -1, self.n_heads * self.d_v)  # [bs*n_channels x seq_len x n_heads*d_v]
-            
         else:
             # Standard transformer format (vanilla attention or no channels)
             q_s = q_s.transpose(1, 2)  # [bs x n_heads x seq_len x d_k]
             k_s = k_s.permute(0, 2, 3, 1)  # [bs x n_heads x d_k x seq_len]
             v_s = v_s.transpose(1, 2)  # [bs x n_heads x seq_len x d_v]
             
-            # Apply Scaled Dot-Product Attention (multiple heads)
-            if self.res_attention:
-                output, attn_weights, attn_scores = self.sdp_attn(
-                    q=q_s,
-                    k=k_s,
-                    v=v_s,
-                    prev=prev,
-                    key_padding_mask=key_padding_mask,
-                    attn_mask=attn_mask,
-                )
-            else:
-                output, attn_weights = self.sdp_attn(
-                    q=q_s, 
-                    k=k_s, 
-                    v=v_s, 
-                    key_padding_mask=key_padding_mask, 
-                    attn_mask=attn_mask
-                )
-            
-            # Reshape back
-            output = output.transpose(1, 2).contiguous()  # [bs x seq_len x n_heads x d_v]
-            output = output.view(bs, -1, self.n_heads * self.d_v)  # [bs x seq_len x n_heads*d_v]
+        # Apply Scaled Dot-Product Attention (multiple heads)
+        if self.res_attention:
+            output, attn_weights, attn_scores = self.sdp_attn(
+                q=q_s,
+                k=k_s,
+                v=v_s,
+                n_channels=n_channels,
+                prev=prev,
+                key_padding_mask=key_padding_mask,
+                attn_mask=attn_mask,
+            )
+        else:
+            output, attn_weights = self.sdp_attn(
+                q=q_s, 
+                k=k_s, 
+                v=v_s, 
+                n_channels=n_channels,
+                key_padding_mask=key_padding_mask, 
+                attn_mask=attn_mask
+            )
         
         # Final output projection
         output = self.to_out(output)

@@ -266,6 +266,7 @@ class T5InfiniAttention(T5Attention):
         self.use_rope = config.use_rope
         self.elu = nn.ELU()
 
+        # Select memory update/retrieval methods based on channel exclusion
         if config.infini_channel_exclusion:
             self._update_memory_matrix = self._update_memory_matrix_channelexl
             self._retrieve_from_memory = self._retrieve_from_memory_channelexl
