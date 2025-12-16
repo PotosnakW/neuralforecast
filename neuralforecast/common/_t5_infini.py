@@ -244,17 +244,22 @@ class T5Attention(nn.Module): # Default T5Attention copied from HuggingFace for 
 
         attn_output = torch.matmul(attn_weights, value_states)
 
+        attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_output = attn_output.view(batch_size, -1, self.inner_dim)
+        attn_output = self.o(attn_output)
+
         outputs = (attn_output, past_key_value, position_bias)
 
         if output_attentions:
             outputs = outputs + (attn_weights,)
-        return outputs, None
+        return outputs
     
 class T5InfiniAttention(T5Attention):
     def __init__(self,
         config: T5Config,
         has_relative_attention_bias=False,
         layer_idx: Optional[int] = None,
+        beta: Optional[torch.tensor] = None,
     ):
         super().__init__(config, has_relative_attention_bias, layer_idx)
         
@@ -267,6 +272,43 @@ class T5InfiniAttention(T5Attention):
         else:
             self._update_memory_matrix = self._update_memory_matrix_allchannels
             self._retrieve_from_memory = self._retrieve_from_memory_allchannels
+
+        if config.infini_mixer_type.lower() == 'betas':
+            self.mixing_gate = self.beta_mixing_gate
+            if beta is not None:
+                self.beta = beta
+            else:
+                if config.channelwise_beta:
+                    self.beta = nn.Parameter(torch.rand((1, config.n_channels, config.num_heads, 1, 1))*1e-2)
+                else:
+                    self.beta = nn.Parameter(torch.rand((1, 1, config.num_heads, 1, 1))*1e-2)
+                # Center values around 0
+                with torch.no_grad():
+                    self.beta -= self.beta.mean(dim=2, keepdim=True)
+    
+        elif config.infini_mixer_type.lower() == 'mlp':
+            self.mixing_gate = self.mlp_mixing_gate
+            self.mlp = MLP(
+                in_features=config.d_kv * 2,
+                out_features=config.d_kv,
+                activation='ReLU',
+                hidden_size=config.mlpmixer_hidden_size,
+                num_layers=config.mlpmixer_n_layers,
+                dropout=config.mlpmixer_dropout,
+            )
+        elif config.infini_mixer_type.lower() == 'mlp_query':
+            self.mixing_gate = self.mlp_query_mixing_gate
+            self.mlp = MLP(
+                in_features=config.d_kv * 3,
+                out_features=config.d_kv,
+                activation='ReLU',
+                hidden_size=config.mlpmixer_hidden_size,
+                num_layers=config.mlpmixer_n_layers,
+                dropout=config.mlpmixer_dropout,
+            )
+        else:
+            raise ValueError(f"infini_mixer_type '{config.infini_mixer_type}' not recognized. "
+                    f"Use 'betas', 'mlp', 'mlp_query', or 'none'.")
 
     def compute_bias(self, query_length, key_length, device=None, cache_position=None):
         """Compute binned relative position bias"""
@@ -340,6 +382,23 @@ class T5InfiniAttention(T5Attention):
         A_mem = numerator / denominator             # [B, C, H, P, D]
     
         return A_mem
+    
+    def beta_mixing_gate(self, a_mem, attn_output, query_states):
+        """Learned interpolation between memory and attention using per-head betas."""
+        attn_output = torch.sigmoid(self.beta) * a_mem + (1 - torch.sigmoid(self.beta)) * attn_output 
+        return attn_output
+    
+    def mlp_mixing_gate(self, a_mem, attn_output, query_states):
+        """Context-aware mixing via MLP on concatenated memory and attention."""
+        attn_output = torch.cat([a_mem, attn_output], dim=-1)  # [batch_size, n_channels, n_heads, n_patch, dim*2]
+        attn_output = self.mlp(attn_output)  # [batch_size, n_channels, n_heads, n_patch, dim]
+        return attn_output
+    
+    def mlp_query_mixing_gate(self, a_mem, attn_output, query_states):
+        """Context-aware mixing via MLP with query, memory, and attention."""
+        attn_output = torch.cat([a_mem, attn_output, query_states], dim=-1)  # [batch_size, n_channels, n_heads, n_patch, dim*3]
+        attn_output = self.mlp(attn_output)  # [batch_size, n_channels, n_heads, n_patch, dim]
+        return attn_output
 
     def forward(
         self,
@@ -471,11 +530,22 @@ class T5InfiniAttention(T5Attention):
 
         attn_output = torch.matmul(attn_weights, value_states) # [batch_size, n_channels, n_heads, n_patch, dim]
 
+        # Channel mixing
+        attn_output = self.mixing_gate(
+            a_mem=A_mem, 
+            attn_output=attn_output, 
+            query_states=query_states,
+        ) # [batch_size, n_channels, n_heads, n_patch, dim]
+        
+        attn_output = attn_output.transpose(2, 3).contiguous() # [batch_size, n_channels, n_patch, n_heads, dim]
+        attn_output = attn_output.view(batch_size, -1, self.inner_dim) # [batch_size*n_channels, n_patch, n_heads*dim]
+        attn_output = self.o(attn_output) # [batch_size*n_channels, n_patch, n_heads*dim]
+
         outputs = (attn_output, past_key_value, position_bias)
 
         if output_attentions:
             outputs = outputs + (attn_weights,)
-        return outputs, A_mem
+        return outputs
 
 class T5LayerSelfAttention(nn.Module):
     def __init__(self, 
@@ -486,45 +556,23 @@ class T5LayerSelfAttention(nn.Module):
         ):
         super().__init__()
 
-        if config.infini_mixer_type.lower() == 'betas':
+        if config.infini_mixer_type.lower() in ['betas', 'mlp', 'mlp_query']:
             self.SelfAttention = T5InfiniAttention(
-                config, has_relative_attention_bias=has_relative_attention_bias, layer_idx=layer_idx,
-            )
-            if beta is not None:
-                self.beta = beta
-            else:
-                if config.channelwise_beta:
-                    self.beta = nn.Parameter(torch.rand((1, config.n_channels, config.num_heads, 1, 1))*1e-2)
-                else:
-                    self.beta = nn.Parameter(torch.rand((1, 1, config.num_heads, 1, 1))*1e-2)
-                # Adjust the values to ensure they sum to 0
-                with torch.no_grad():
-                    self.beta -= self.beta.mean(dim=2, keepdim=True)
-
-        elif config.infini_mixer_type.lower() == 'mlp':
-            self.SelfAttention = T5InfiniAttention(
-                config, has_relative_attention_bias=has_relative_attention_bias, layer_idx=layer_idx,
-            )
-            self.mlp = MLP(
-                in_features=config.d_kv * 2,
-                out_features=config.d_kv,
-                activation='ReLU',
-                hidden_size=config.mlpmixer_hidden_size,
-                num_layers=config.mlpmixer_n_layers,
-                dropout=config.mlpmixer_dropout,
+                config, 
+                has_relative_attention_bias=has_relative_attention_bias, 
+                layer_idx=layer_idx, 
+                beta=beta,
             )
         elif config.infini_mixer_type.lower() == 'none':
             self.SelfAttention = T5Attention(
                 config, has_relative_attention_bias=has_relative_attention_bias, layer_idx=layer_idx
             )
         else:
-            raise Exception(f"Channel mixing method: {config.infini_mixer_type} is not an option. Please use one of 'betas', 'mlp', or 'none'.")
-    
+            raise ValueError(f"Channel mixing method: {config.infini_mixer_type} not recognized. "
+                            f"Use 'betas', 'mlp', 'mlp_query', or 'none'.")
+
         self.layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
-        self.inner_dim = config.num_heads * config.d_kv
-        self.o = nn.Linear(self.inner_dim, config.d_model, bias=False)
-        self.infini_mixer_type = config.infini_mixer_type
 
     def forward(
         self,
@@ -539,7 +587,7 @@ class T5LayerSelfAttention(nn.Module):
         cache_position=None,
     ):
         normed_hidden_states = self.layer_norm(hidden_states)
-        attention_outputs, a_mem = self.SelfAttention(
+        attention_output = self.SelfAttention(
             n_channels=n_channels,
             hidden_states=normed_hidden_states,
             mask=attention_mask,
@@ -550,73 +598,32 @@ class T5LayerSelfAttention(nn.Module):
             output_attentions=output_attentions,
             cache_position=cache_position,
         )
-        if self.infini_mixer_type == 'mlp':
-            # Concatenate memory and attention outputs
-            attn_output = torch.cat([a_mem, attention_outputs[0]], dim=-1)  # [batch_size, n_channels, n_heads, n_patch, dim*2]
-            attn_output = self.mlp(attn_output)  # [batch_size, n_channels, n_heads, n_patch, dim*2]
-            attn_output = attn_output.transpose(2, 3).contiguous() # [batch_size, n_channels, n_patch, n_heads, dim]
+        hidden_states = hidden_states + self.dropout(attention_output[0])
+        outputs = (hidden_states,) + attention_output[1:]  # add attentions if we output them
 
-        elif self.infini_mixer_type == 'betas':
-            attn_output = torch.sigmoid(self.beta) * a_mem + (1 - torch.sigmoid(self.beta)) * attention_outputs[0] 
-            attn_output = attn_output.transpose(2, 3).contiguous() # [batch_size, n_channels, n_patch, n_heads, dim]
-
-        elif self.infini_mixer_type == 'none':
-            attn_output = attention_outputs[0] # [batch_size, n_heads, n_patch, dim]
-            attn_output = attn_output.transpose(1, 2).contiguous() # [batch_size, n_patch, n_heads, dim]
-
-        else:
-            raise Exception(f'infini_mixer_type {self.infini_mixer_type} not recognized.')
-        
-        attn_output = attn_output.view(hidden_states.shape[0], -1, self.inner_dim) # [batch_size*n_channels, n_patch, n_heads*dim]
-        attn_output = self.o(attn_output) # [batch_size*n_channels, n_patch, n_heads*dim]
-
-        hidden_states = hidden_states + self.dropout(attn_output)
-        outputs = (hidden_states,) + attention_outputs[1:]  # add attentions if we output them
         return outputs
     
 class T5LayerCrossAttention(nn.Module):
     def __init__(self, config, layer_idx: Optional[int] = None, beta: Optional[torch.tensor] = None):
         super().__init__()
 
-        if config.infini_mixer_type.lower() == 'betas':
-            self.SelfAttention = T5InfiniAttention(
-                config, has_relative_attention_bias=False, layer_idx=layer_idx,
-            )
-            if beta is not None:
-                self.beta = beta
-            else:
-                if config.channelwise_beta:
-                    self.beta = nn.Parameter(torch.rand((1, config.n_channels, config.num_heads, 1, 1))*1e-2)
-                else:
-                    self.beta = nn.Parameter(torch.rand((1, 1, config.num_heads, 1, 1))*1e-2)
-                # Adjust the values to ensure they sum to 0
-                with torch.no_grad():
-                    self.beta -= self.beta.mean(dim=2, keepdim=True)
-
-        elif config.infini_mixer_type.lower() == 'mlp':
-            self.SelfAttention = T5InfiniAttention(
-                config, has_relative_attention_bias=False, layer_idx=layer_idx,
-            )
-            self.mlp = MLP(
-                in_features=config.d_kv * 2,
-                out_features=config.d_kv,
-                activation='ReLU',
-                hidden_size=config.mlpmixer_hidden_size,
-                num_layers=config.mlpmixer_n_layers,
-                dropout=config.mlpmixer_dropout,
+        if config.infini_mixer_type.lower() in ['betas', 'mlp', 'mlp_query']:
+            self.EncDecAttention = T5InfiniAttention(
+                config, 
+                has_relative_attention_bias=False, 
+                layer_idx=layer_idx, 
+                beta=beta,
             )
         elif config.infini_mixer_type.lower() == 'none':
-            self.SelfAttention = T5Attention(
+            self.EncDecAttention = T5Attention(
                 config, has_relative_attention_bias=False, layer_idx=layer_idx
             )
         else:
-            raise Exception(f"Channel mixing method: {config.infini_mixer_type} is not an option. Please use one of 'betas', 'mlp', or 'none'.")
+            raise ValueError(f"Channel mixing method: {config.infini_mixer_type} not recognized. "
+                            f"Use 'betas', 'mlp', 'mlp_query', or 'none'.")
     
         self.layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
-        self.inner_dim = config.num_heads * config.d_kv
-        self.o = nn.Linear(self.inner_dim, config.d_model, bias=False)
-        self.infini_mixer_type = config.infini_mixer_type
     
     def forward(
         self,
@@ -633,7 +640,7 @@ class T5LayerCrossAttention(nn.Module):
         cache_position=None,
     ):
         normed_hidden_states = self.layer_norm(hidden_states)
-        attention_outputs, a_mem = self.EncDecAttention(
+        attention_output = self.EncDecAttention(
             n_channels=n_channels,
             hidden_states=normed_hidden_states,
             mask=attention_mask,
@@ -646,28 +653,8 @@ class T5LayerCrossAttention(nn.Module):
             output_attentions=output_attentions,
             cache_position=cache_position,
         )
-        if self.infini_mixer_type == 'mlp':
-            # Concatenate memory and attention outputs
-            attn_output = torch.cat([a_mem, attention_outputs[0]], dim=-1)  # [batch_size, n_channels, n_heads, n_patch, dim*2]
-            attn_output = self.mlp(attn_output)  # [batch_size, n_channels, n_heads, n_patch, dim*2]
-            attn_output = attn_output.transpose(2, 3).contiguous() # [batch_size, n_channels, n_patch, n_heads, dim]
-
-        elif self.infini_mixer_type == 'betas':
-            attn_output = torch.sigmoid(self.beta) * a_mem + (1 - torch.sigmoid(self.beta)) * attention_outputs[0] 
-            attn_output = attn_output.transpose(2, 3).contiguous() # [batch_size, n_channels, n_patch, n_heads, dim]
-        
-        elif self.infini_mixer_type == 'none':
-            attn_output = attention_outputs[0] # [batch_size, n_heads, n_patch, dim]
-            attn_output = attn_output.transpose(1, 2).contiguous() # [batch_size, n_patch, n_heads, dim]
-        
-        else:
-            raise Exception(f'infini_mixer_type {self.infini_mixer_type} not recognized.')
-        
-        attn_output = attn_output.view(hidden_states.shape[0], -1, self.inner_dim) # [batch_size*n_channels, n_patch, n_heads*dim]
-        attn_output = self.o(attn_output) # [batch_size*n_channels, n_patch, n_heads*dim]
-
-        layer_output = hidden_states + self.dropout(attn_output)
-        outputs = (layer_output,) + attention_outputs[1:]  # add attentions if we output them
+        layer_output = hidden_states + self.dropout(attention_output[0])
+        outputs = (layer_output,) + attention_output[1:]  # add attentions if we output them
         return outputs
         
 class T5Block(T5Block):
@@ -783,19 +770,22 @@ class T5Stack(T5Stack):
         self.is_decoder = config.is_decoder
     
         # check on beta initialization --> people have used zeros and random, which one is best?
-        if config.layerwise_beta:
-            beta = None
-        else:
-            n_channels = config.n_channels
-            n_heads = config.num_heads
-            # Create a layer-specific beta
-            if config.channelwise_beta:
-                beta = nn.Parameter(torch.rand((1, n_channels, n_heads, 1, 1))*1e-2)
+        if config.infini_mixer_type == 'betas':
+            if config.layerwise_beta:
+                beta = None
             else:
-                beta = nn.Parameter(torch.rand((1, 1, n_heads, 1, 1))*1e-2)
-            # Adjust the values to ensure they sum to 0
-            with torch.no_grad():
-                beta -= beta.mean(dim=2, keepdim=True)
+                n_channels = config.n_channels
+                n_heads = config.num_heads
+                # Create a layer-specific beta
+                if config.channelwise_beta:
+                    beta = nn.Parameter(torch.rand((1, n_channels, n_heads, 1, 1))*1e-2)
+                else:
+                    beta = nn.Parameter(torch.rand((1, 1, n_heads, 1, 1))*1e-2)
+                # Center values around 0
+                with torch.no_grad():
+                    beta -= beta.mean(dim=2, keepdim=True)
+        else:
+            beta = None
 
         self.block = nn.ModuleList(
             [T5Block(config, has_relative_attention_bias=bool(i == 0), layer_idx=i, beta=beta) for i in range(config.num_layers)]
