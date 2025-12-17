@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import List, Dict, Union
+import time
 
 import fsspec
 import numpy as np
@@ -567,9 +568,6 @@ class BaseModel(pl.LightningModule):
         if hasattr(self, 'training_start_time'):
             training_duration = time.time() - self.training_start_time
             self.training_time = training_duration
-            
-            # Optionally log it
-            self.log('training_time_seconds', training_duration)
 
     def configure_optimizers(self):
         if self.optimizer:

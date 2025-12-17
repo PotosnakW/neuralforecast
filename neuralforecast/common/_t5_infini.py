@@ -52,6 +52,7 @@ class T5Attention(nn.Module): # Default T5Attention copied from HuggingFace for 
         self.q = nn.Linear(self.d_model, self.inner_dim, bias=False)
         self.k = nn.Linear(self.d_model, self.inner_dim, bias=False)
         self.v = nn.Linear(self.d_model, self.inner_dim, bias=False)
+        self.o = nn.Linear(self.inner_dim, self.d_model, bias=False)
 
         if self.has_relative_attention_bias:
             self.relative_attention_bias = nn.Embedding(self.relative_attention_num_buckets, self.n_heads)

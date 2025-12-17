@@ -15,6 +15,7 @@ class ScaledDotProductAttention(nn.Module):
     def __init__(
         self,
         config,
+        d_v,
     ):
         super().__init__()
         self.hidden_size = config.hidden_size
@@ -23,7 +24,7 @@ class ScaledDotProductAttention(nn.Module):
         self.scale = self.head_dim ** -0.5
         self.attn_dropout = nn.Dropout(config.attn_dropout)
         self.res_attention = config.res_attention
-        self.inner_dim = config.n_heads * config.d_v
+        self.inner_dim = config.n_heads * d_v
     
     def forward(
         self,
@@ -99,9 +100,10 @@ class InfiniScaledDotProductAttention(ScaledDotProductAttention):
     def __init__(
         self,
         config,
+        d_v,
         beta: Optional[torch.tensor] = None,
     ):
-        super().__init__(config)
+        super().__init__(config=config, d_v=d_v)
 
         self.elu = nn.ELU()
         
@@ -119,7 +121,7 @@ class InfiniScaledDotProductAttention(ScaledDotProductAttention):
                 self.beta = beta
             else:
                 if config.channelwise_beta:
-                    self.beta = nn.Parameter(torch.rand((1, config.n_channels, config.n_heads, 1, 1))*1e-2)
+                    self.beta = nn.Parameter(torch.rand((1, config.n_series, config.n_heads, 1, 1))*1e-2)
                 else:
                     self.beta = nn.Parameter(torch.rand((1, 1, config.n_heads, 1, 1))*1e-2)
                 # Center values around 0
@@ -237,17 +239,18 @@ class InfiniScaledDotProductAttention(ScaledDotProductAttention):
             q: [bs x n_channels x n_heads x seq_len x d_k]
             k: [bs x n_channels x n_heads x d_k x seq_len]  (transposed)
             v: [bs x n_channels x n_heads x seq_len x d_v]
+            n_channels: int
             prev            : [bs x n_heads x q_len x seq_len]
             key_padding_mask: [bs x seq_len]
             attn_mask       : [1 x seq_len x seq_len]
             
         Output shape:
             output: [bs x n_channels x n_heads x seq_len x d_v]
-            A_mem: [bs x n_channels x n_heads x seq_len x d_v]
             attn_weights: [bs x n_channels x n_heads x seq_len x seq_len]
         """
 
         batch_size = q.shape[0]
+        n_channels = q.shape[1]
         
         # Scaled MatMul (q, k) - compute attention scores
         attn_scores = torch.matmul(q, k) * self.scale  # Vaswani et al. scaling
@@ -290,14 +293,14 @@ class InfiniScaledDotProductAttention(ScaledDotProductAttention):
         ) # [batch_size, n_channels, n_heads, n_patch, dim]
 
         output = output.transpose(2, 3).contiguous()  # [bs x n_channels x seq_len x n_heads x d_v]
-        output = output.view(batch_size, -1, self.inner_dim)  # [bs*n_channels x seq_len x n_heads*d_v]
+        output = output.view(batch_size*n_channels, -1, self.inner_dim)  # [bs*n_channels x seq_len x n_heads*d_v]
 
         if self.res_attention:
             return output, attn_weights, attn_scores
         else:
             return output, attn_weights
         
-class _MultiheadAttention(nn.Module):
+class MultiheadAttention(nn.Module):
     """
     Multi-Head Attention with optional Infini-attention memory mechanism.
     Traditional format similar to standard Transformer implementations.
@@ -332,19 +335,21 @@ class _MultiheadAttention(nn.Module):
         self.res_attention = config.res_attention
         
         # Q, K, V projections
-        self.W_Q = nn.Linear(config.hidden_size, config.d_k * config.n_heads, bias=config.qkv_bias)
-        self.W_K = nn.Linear(config.hidden_size, config.d_k * config.n_heads, bias=config.qkv_bias)
-        self.W_V = nn.Linear(config.hidden_size, config.d_v * config.n_heads, bias=config.qkv_bias)
+        self.W_Q = nn.Linear(config.hidden_size, self.d_k * config.n_heads, bias=config.qkv_bias)
+        self.W_K = nn.Linear(config.hidden_size, self.d_k * config.n_heads, bias=config.qkv_bias)
+        self.W_V = nn.Linear(config.hidden_size, self.d_v * config.n_heads, bias=config.qkv_bias)
         
         # Scaled Dot-Product Attention (vanilla or infini)
         if config.infini_mixer_type.lower() in ['betas', 'mlp', 'mlp_query']:
             self.sdp_attn = InfiniScaledDotProductAttention(
                 config=config,
+                d_v=self.d_v,
                 beta=beta,
             )
         elif config.infini_mixer_type == 'none':
             self.sdp_attn = ScaledDotProductAttention(
                 config=config,
+                d_v=self.d_v,
             )
         else:
             raise ValueError(f"Channel mixing method: {config.infini_mixer_type} not recognized. "
@@ -352,7 +357,7 @@ class _MultiheadAttention(nn.Module):
 
         # Output projection
         self.to_out = nn.Sequential(
-            nn.Linear(config.n_heads * config.d_v, config.hidden_size),
+            nn.Linear(config.n_heads * self.d_v, config.hidden_size),
             nn.Dropout(config.proj_dropout)
         )
     
@@ -384,7 +389,7 @@ class _MultiheadAttention(nn.Module):
             attn_weights: [bs x (n_channels) x n_heads x seq_len x seq_len]
         """
         
-        bs = Q.size(0)
+        batch_size = Q.size(0)
         if K is None:
             K = Q
         if V is None:
@@ -393,22 +398,22 @@ class _MultiheadAttention(nn.Module):
         use_channels = n_channels > 1
         
         # Linear projections and split into multiple heads
-        q_s = self.W_Q(Q).view(bs, -1, self.n_heads, self.d_k)  # [bs x seq_len x n_heads x d_k]
-        k_s = self.W_K(K).view(bs, -1, self.n_heads, self.d_k)  # [bs x seq_len x n_heads x d_k]
-        v_s = self.W_V(V).view(bs, -1, self.n_heads, self.d_v)  # [bs x seq_len x n_heads x d_v]
+        q_s = self.W_Q(Q).view(batch_size, -1, self.n_heads, self.d_k)  # [bs x seq_len x n_heads x d_k]
+        k_s = self.W_K(K).view(batch_size, -1, self.n_heads, self.d_k)  # [bs x seq_len x n_heads x d_k]
+        v_s = self.W_V(V).view(batch_size, -1, self.n_heads, self.d_v)  # [bs x seq_len x n_heads x d_v]
         
         if use_channels and self.infini_mixer_type != 'none':
             # Reshape for multi-channel processing (Infini-attention)
             seq_len = q_s.size(1)
-            bs_orig = bs // n_channels
+            batch_size_orig = batch_size // n_channels
             
-            q_s = q_s.view(bs_orig, n_channels, seq_len, self.n_heads, self.d_k)
+            q_s = q_s.view(batch_size_orig, n_channels, seq_len, self.n_heads, self.d_k)
             q_s = q_s.transpose(2, 3).contiguous()  # [bs x n_channels x n_heads x seq_len x d_k]
             
-            k_s = k_s.view(bs_orig, n_channels, seq_len, self.n_heads, self.d_k)
+            k_s = k_s.view(batch_size_orig, n_channels, seq_len, self.n_heads, self.d_k)
             k_s = k_s.permute(0, 1, 3, 4, 2).contiguous()  # [bs x n_channels x n_heads x d_k x seq_len]
             
-            v_s = v_s.view(bs_orig, n_channels, seq_len, self.n_heads, self.d_v)
+            v_s = v_s.view(batch_size_orig, n_channels, seq_len, self.n_heads, self.d_v)
             v_s = v_s.transpose(2, 3).contiguous()  # [bs x n_channels x n_heads x seq_len x d_v]
         else:
             # Standard transformer format (vanilla attention or no channels)

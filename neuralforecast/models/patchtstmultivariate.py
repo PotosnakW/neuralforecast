@@ -17,7 +17,7 @@ import torch.nn.functional as F
 
 from ..common._base_model import BaseModel
 from ..common._modules import RevINMultivariate, Flatten_Head, Patching, PositionalEncoding
-from ..common._infini import _MultiheadAttention
+from ..common._infini import MultiheadAttention
 
 from ..losses.pytorch import MAE
 
@@ -65,8 +65,8 @@ class PatchTST_backbone(nn.Module):
         if self.revin:
             self.revin_layer = RevINMultivariate(
                 num_features=config.n_series, 
-                affine=config.affine, 
-                subtract_last=config.subtract_last
+                affine=config.revin_affine, 
+                subtract_last=config.revin_subtract_last
             )
 
         # Patching
@@ -96,7 +96,7 @@ class PatchTST_backbone(nn.Module):
             h=config.h,
             c_out=config.c_out,
             head_dropout=config.head_dropout,
-            )
+        )
 
     def forward(self, z):  # z: [bs x nvars x seq_len]
         # norm
@@ -134,14 +134,10 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
 
         super().__init__()
 
-        self.patch_num = patch_num
-        self.patch_len = config.patch_len
-
         # Input encoding
         self.W_P = nn.Linear(
             config.patch_len, config.hidden_size
         )  # Eq 1: projection of feature vectors onto a d-dim vector space
-        self.seq_len = patch_num
 
         # Positional encoding
         self.W_pos = PositionalEncoding(
@@ -158,8 +154,10 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
             q_len=patch_num,
         )
 
+        self.res_attention = config.res_attention
+
     def forward(self, x) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
-        n_vars = x.shape[1]
+        n_channels = x.shape[1]
         x = self.W_P(x) # x: [bs x nvars x patch_num x hidden_size]
         x += self.W_pos(x) # x: [bs x nvars x patch_num x hidden_size]
 
@@ -169,9 +167,9 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
         u = self.dropout(u)  # u: [bs * nvars x patch_num x hidden_size]
 
         # Encoder
-        z = self.encoder(u)  # z: [bs * nvars x patch_num x hidden_size]
+        z = self.encoder(src=u, n_channels=n_channels)  # z: [bs * nvars x patch_num x hidden_size]
         z = torch.reshape(
-            z, (-1, n_vars, z.shape[-2], z.shape[-1])
+            z, (-1, n_channels, z.shape[-2], z.shape[-1])
         )  # z: [bs x nvars x patch_num x hidden_size]
         z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x hidden_size x patch_num]
 
@@ -192,7 +190,6 @@ class TSTEncoder(nn.Module):
             [
                 TSTEncoderLayer(
                     config=config,
-                    q_len=q_len,
                 )
                 for i in range(config.n_layers)
             ]
@@ -202,6 +199,7 @@ class TSTEncoder(nn.Module):
     def forward(
         self,
         src: torch.Tensor,
+        n_channels: int,
         key_padding_mask: Optional[torch.Tensor] = None,
         attn_mask: Optional[torch.Tensor] = None,
     ):
@@ -211,6 +209,7 @@ class TSTEncoder(nn.Module):
             for mod in self.layers:
                 output, scores = mod(
                     src=output,
+                    n_channels=n_channels,
                     prev=scores,
                     key_padding_mask=key_padding_mask,
                     attn_mask=attn_mask,
@@ -220,6 +219,7 @@ class TSTEncoder(nn.Module):
             for mod in self.layers:
                 output = mod(
                     src=output, 
+                    n_channels=n_channels,
                     key_padding_mask=key_padding_mask, 
                     attn_mask=attn_mask
                 )
@@ -232,7 +232,6 @@ class TSTEncoderLayer(nn.Module):
     def __init__(
         self,
         config,
-        q_len,
     ):
         super().__init__()
         assert (
@@ -256,7 +255,7 @@ class TSTEncoderLayer(nn.Module):
 
         # Multi-Head attention
         self.res_attention = config.res_attention
-        self.self_attn = _MultiheadAttention(
+        self.self_attn = MultiheadAttention(
             config=config,
             beta=beta,
         )
@@ -293,12 +292,11 @@ class TSTEncoderLayer(nn.Module):
     def forward(
         self,
         src: torch.Tensor,
+        n_channels: int,
         prev: Optional[torch.Tensor] = None,
         key_padding_mask: Optional[torch.Tensor] = None,
         attn_mask: Optional[torch.Tensor] = None,
     ):  # -> Tuple[torch.Tensor, Any]:
-
-        n_channels = src.shape[1] #CHECK THIS WILLA!!!
 
         # Multi-Head attention sublayer
         if self.pre_norm:
@@ -439,7 +437,9 @@ class PatchTSTMultivariate(BaseModel):
         d_k: int = 32, 
         d_v: int = 32,
         dropout: float = 0.2,
+        attn_dropout: float = 0.0,
         head_dropout: float = 0.0,
+        proj_dropout: float = 0.0,
         patch_len: int = 16,
         stride: int = 8,
         revin: bool = True,
@@ -454,7 +454,6 @@ class PatchTSTMultivariate(BaseModel):
         activation: str = "gelu",
         res_attention: bool = True,
         batch_normalization: bool = False,
-        attn_dropout: float = 0.0,
         padding_patch = "end",
         start_padding_enabled=False,
         step_size: int = 1,
@@ -527,9 +526,8 @@ class PatchTSTMultivariate(BaseModel):
         config['key_padding_mask'] = "auto"
         config['padding_var'] = None
         config['attn_mask'] = None
-        config['qkv_bias'] = True
-        config['d_k'] = d_k
-        config['d_v'] = d_v
+        config['qkv_bias'] = True # hardcoded in PatchTST
+        config['pre_norm'] = batch_normalization
         config = SimpleNamespace(**config)
 
         self.model = PatchTST_backbone(
