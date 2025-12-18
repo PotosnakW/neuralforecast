@@ -8,7 +8,7 @@ from torch import nn
 
 from ..common._base_model import BaseModel
 from ..common._modules import RevINMultivariate, Flatten_Head, Patching, PositionalEncoding
-from ..common._moment_utils import Masking, _update_inputs, _validate_inputs, torch_pca, torch_inverse_pca
+from ..common._moment_utils import Masking, _update_inputs, _validate_inputs
 
 from ..common._t5_infini import T5Model, T5EncoderModel
 #from transformers.models.t5.modeling_t5 import T5Model, T5EncoderModel
@@ -38,9 +38,6 @@ class Long_Forecaster(nn.Module):
                                                  affine=config.revin_affine,
                                                  subtract_last=False,
                                                 )
-
-        self.use_pca_adapter = config.use_pca_adapter
-        self.pca_n_series = config.pca_n_series
 
         self.padding_patch = config.padding_patch
         patch_num = int((config.input_size - config.patch_len) / config.stride + 1)
@@ -127,16 +124,6 @@ class Long_Forecaster(nn.Module):
             x_enc = x_enc.permute(0, 2, 1) #[bs x seq_len x nvars]
             x_enc = self.revin_layer(x_enc, "norm")
             x_enc = x_enc.permute(0, 2, 1) #[bs x nvars x seq_len]
-
-        if self.use_pca_adapter:
-            x_enc = x_enc.reshape(-1, self.pca_n_series, n_channels, seq_len) #[Ws * n_series, C==1, L]
-            x_reshaped = x_enc.permute(0, 2, 3, 1) #[Ws, C==1, L, n_series]
-            x_flat = x_reshaped.reshape(-1, self.pca_n_series) #[Ws * C==1 * L, n_series]
-            x_pca, pca_components, pca_eigvals, pca_mean = torch_pca(
-                x_flat, n_components=self.pca_n_series, whiten=True, center=True
-            )
-            x_enc_pca = x_pca.view(-1, n_channels, seq_len, self.pca_n_series).permute(0, 3, 1, 2)
-            x_enc = x_enc_pca.reshape(-1, n_channels, seq_len)
         
         # Patching
         if self.padding_patch == "end":
@@ -160,17 +147,6 @@ class Long_Forecaster(nn.Module):
 
         # Decoder
         dec_out = self.head(enc_out)  # [batch_size, n_channels, horizon*c_out]
-
-        if self.use_pca_adapter:
-            dec_out = dec_out.reshape(-1, self.pca_n_series, n_channels, self.h*self.c_out)
-            dec_reshaped = dec_out.permute(0, 2, 3, 1)
-            dec_flat = dec_reshaped.reshape(-1, self.pca_n_series)
-            dec_reconstructed = torch_inverse_pca(
-                dec_flat, pca_components, pca_eigvals, pca_mean, 
-                whiten=True, center=True
-            )
-            dec_out = dec_reconstructed.view(-1, n_channels, self.h*self.c_out, self.pca_n_series).permute(0, 3, 1, 2)
-            dec_out = dec_out.reshape(-1, n_channels, self.h*self.c_out)
         
         # De-Normalization
         #dec_out = self.normalizer(x=dec_out, mode='denorm') #Used default neuralforecast RevIN to simplicity/reduce modules
@@ -288,8 +264,6 @@ class MOMENT(BaseModel):
         multivariate_head: bool = False,
         pe_type: str = "sincos",
         learn_pe: bool = False,
-        use_pca_adapter: bool = False,
-        pca_n_series: int = 2,
         padding_patch="end",
         start_padding_enabled=False,
         step_size: int = 1,

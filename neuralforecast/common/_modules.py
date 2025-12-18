@@ -919,4 +919,3 @@ class Patching(nn.Module):
                      step=self.stride)
         # x : [batch_size x n_channels x num_patch x patch_len]
         return x 
-
