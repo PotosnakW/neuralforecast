@@ -56,24 +56,7 @@ class T5Attention(nn.Module): # Default T5Attention copied from HuggingFace for 
 
         if self.has_relative_attention_bias:
             self.relative_attention_bias = nn.Embedding(self.relative_attention_num_buckets, self.n_heads)
-        self.pruned_heads = set()
         self.gradient_checkpointing = False
-
-    def prune_heads(self, heads):
-        if len(heads) == 0:
-            return
-        heads, index = find_pruneable_heads_and_indices(
-            heads, self.n_heads, self.key_value_proj_dim, self.pruned_heads
-        )
-        # Prune linear layers
-        self.q = prune_linear_layer(self.q, index)
-        self.k = prune_linear_layer(self.k, index)
-        self.v = prune_linear_layer(self.v, index)
-        self.o = prune_linear_layer(self.o, index, dim=1)
-        # Update hyper params
-        self.n_heads = self.n_heads - len(heads)
-        self.inner_dim = self.key_value_proj_dim * self.n_heads
-        self.pruned_heads = self.pruned_heads.union(heads)
 
     @staticmethod
     def _relative_position_bucket(relative_position, bidirectional=True, num_buckets=32, max_distance=128):
@@ -222,12 +205,7 @@ class T5Attention(nn.Module): # Default T5Attention copied from HuggingFace for 
                 mask = (1.0 - mask.float()) * -1e9
                 position_bias = position_bias + mask
 
-        if self.pruned_heads:
-            mask = torch.ones(position_bias.shape[1])
-            mask[list(self.pruned_heads)] = 0
-            position_bias_masked = position_bias[:, mask.bool()]
-        else:
-            position_bias_masked = position_bias
+        position_bias_masked = position_bias
 
         # compute scores, equivalent of torch.einsum("bnqd,bnkd->bnqk", query_states, key_states), compatible with onnx op>9
         scores = torch.matmul(query_states, key_states.transpose(-1, -2)) # same thing: torch.matmul(query_states, key_states.transpose(3, 2))
@@ -238,10 +216,6 @@ class T5Attention(nn.Module): # Default T5Attention copied from HuggingFace for 
         # (batch_size, n_heads, seq_length, key_length)
         attn_weights = nn.functional.softmax(scores.float(), dim=-1).type_as(scores)
         attn_weights = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
-
-        # Mask heads if we want to
-        if layer_head_mask is not None:
-            attn_weights = attn_weights * layer_head_mask
 
         attn_output = torch.matmul(attn_weights, value_states)
 
@@ -264,16 +238,13 @@ class T5InfiniAttention(T5Attention):
     ):
         super().__init__(config, has_relative_attention_bias, layer_idx)
         
-        self.use_rope = config.use_rope
         self.elu = nn.ELU()
 
         # Select memory update/retrieval methods based on channel exclusion
         if config.infini_channel_exclusion:
             self._update_memory_matrix = self._update_memory_matrix_channelexl
-            self._retrieve_from_memory = self._retrieve_from_memory_channelexl
         else:
             self._update_memory_matrix = self._update_memory_matrix_allchannels
-            self._retrieve_from_memory = self._retrieve_from_memory_allchannels
 
         if config.infini_mixer_type.lower() == 'betas':
             self.mixing_gate = self.beta_mixing_gate
@@ -343,14 +314,6 @@ class T5InfiniAttention(T5Attention):
         
         return memory_matrix, z
     
-    def _retrieve_from_memory_allchannels(self, query_states, memory_matrix, z_excluded):
-        sigma_q = self.elu(query_states) + 1.0  # [B, C, H, P, D]
-        numerator = sigma_q @ memory_matrix         # [B, C, H, P, D]
-        denominator = (sigma_q @ z_excluded) + 1e-6 # [B, C, H, P, 1]
-        A_mem = numerator / denominator             # [B, C, H, P, D]
-    
-        return A_mem
-    
     def _update_memory_matrix_channelexl(self, key_states, value_states, n_channels):
         # σ_k = elu(k) + 1
         sigma_k = self.elu(key_states) + 1.0  # [B, C, H, P, D]
@@ -377,7 +340,7 @@ class T5InfiniAttention(T5Attention):
 
         return memory_matrix_summed, z_excluded
 
-    def _retrieve_from_memory_channelexl(self, query_states, memory_matrix, z_excluded):
+    def retrieve_from_memory(self, query_states, memory_matrix, z_excluded):
         sigma_q = self.elu(query_states) + 1.0  # [B, C, H, P, D]
         numerator = sigma_q @ memory_matrix         # [B, C, H, P, D]
         denominator = (sigma_q @ z_excluded) + 1e-6 # [B, C, H, P, 1]
@@ -506,12 +469,7 @@ class T5InfiniAttention(T5Attention):
                 mask = (1.0 - mask.float()) * -1e9
                 position_bias = position_bias + mask
 
-        if self.pruned_heads:
-            head_mask = torch.ones(position_bias.shape[1])
-            head_mask[list(self.pruned_heads)] = 0
-            position_bias_masked = position_bias[:, head_mask.bool()]
-        else:
-            position_bias_masked = position_bias
+        position_bias_masked = position_bias
 
         # compute scores, equivalent of torch.einsum("bnqd,bnkd->bnqk", query_states, key_states), compatible with onnx op>9
         scores = torch.matmul(query_states, key_states.transpose(-1, -2)) # [batch_size, n_channels, n_heads, n_patch, n_patch]
@@ -522,15 +480,11 @@ class T5InfiniAttention(T5Attention):
         attn_weights = nn.functional.softmax(scores.float(), dim=-1).type_as(scores) # [batch_size, n_channels, n_heads, n_patch, n_patch]
         attn_weights = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training) # [batch_size, n_channels, n_heads, n_patch, n_patch]
 
+        attn_output = torch.matmul(attn_weights, value_states) # [batch_size, n_channels, n_heads, n_patch, dim]
+
         # Infini attention computation across channels
         memory_matrix, z = self._update_memory_matrix(key_states, value_states, n_channels)
-        A_mem = self._retrieve_from_memory(query_states, memory_matrix, z)
-
-        # Mask heads if we want to
-        if layer_head_mask is not None:
-            attn_weights = attn_weights * layer_head_mask
-
-        attn_output = torch.matmul(attn_weights, value_states) # [batch_size, n_channels, n_heads, n_patch, dim]
+        A_mem = self.retrieve_from_memory(query_states, memory_matrix, z)
 
         # Channel mixing
         attn_output = self.mixing_gate(
@@ -560,14 +514,16 @@ class T5LayerSelfAttention(nn.Module):
 
         if config.infini_mixer_type.lower() in ['betas', 'mlp', 'mlp_query']:
             self.SelfAttention = T5InfiniAttention(
-                config, 
+                config=config, 
                 has_relative_attention_bias=has_relative_attention_bias, 
                 layer_idx=layer_idx, 
                 beta=beta,
             )
         elif config.infini_mixer_type.lower() == 'none':
             self.SelfAttention = T5Attention(
-                config, has_relative_attention_bias=has_relative_attention_bias, layer_idx=layer_idx
+                config=config,
+                has_relative_attention_bias=has_relative_attention_bias, 
+                layer_idx=layer_idx
             )
         else:
             raise ValueError(f"Channel mixing method: {config.infini_mixer_type} not recognized. "
@@ -611,14 +567,16 @@ class T5LayerCrossAttention(nn.Module):
 
         if config.infini_mixer_type.lower() in ['betas', 'mlp', 'mlp_query']:
             self.EncDecAttention = T5InfiniAttention(
-                config, 
+                config=config, 
                 has_relative_attention_bias=False, 
                 layer_idx=layer_idx, 
                 beta=beta,
             )
         elif config.infini_mixer_type.lower() == 'none':
             self.EncDecAttention = T5Attention(
-                config, has_relative_attention_bias=False, layer_idx=layer_idx
+                config=config, 
+                has_relative_attention_bias=False, 
+                layer_idx=layer_idx
             )
         else:
             raise ValueError(f"Channel mixing method: {config.infini_mixer_type} not recognized. "

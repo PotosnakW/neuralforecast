@@ -6,9 +6,7 @@ __all__ = ['SinCosPosEncoding', 'Transpose', 'get_activation_fn', 'PositionalEnc
            'TSTEncoder', 'TSTEncoderLayer', 'PatchTST']
 
 # %% ../../nbs/models.patchtst.ipynb 5
-import math
-import numpy as np
-from typing import Optional  # , Any, Tuple
+from typing import Optional
 from types import SimpleNamespace
 
 import torch
@@ -60,7 +58,9 @@ class PatchTST_backbone(nn.Module):
 
         super().__init__()
 
-        # RevIn
+        self.patch_len = config.patch_len
+        self.stride = config.stride
+
         self.revin = config.revin
         if self.revin:
             self.revin_layer = RevINMultivariate(
@@ -69,24 +69,20 @@ class PatchTST_backbone(nn.Module):
                 subtract_last=config.revin_subtract_last
             )
 
-        # Patching
-        self.patch_len = config.patch_len
-        self.stride = config.stride
         self.padding_patch = config.padding_patch
         patch_num = int((config.input_size - config.patch_len) / config.stride + 1)
         if config.padding_patch == "end":  # can be modified to general case
             self.padding_patch_layer = nn.ReplicationPad1d((0, config.stride))
             patch_num += 1
+        self.patch_num = patch_num
 
         self.tokenizer = Patching(
             patch_len=config.patch_len, 
             stride=config.stride,
         )
 
-        # Backbone
         self.backbone = TSTiEncoder(
             config=config,
-            patch_num=patch_num,
         )
 
         self.head = Flatten_Head(
@@ -111,7 +107,7 @@ class PatchTST_backbone(nn.Module):
         z = self.tokenizer(z) # z: [bs x nvars x patch_num x patch_len]
 
         # model
-        z = self.backbone(z)  # z: [bs x nvars x hidden_size x patch_num]
+        z = self.backbone(z)  # z: [bs x nvars x patch_num x hidden_size]
         z = self.head(z)  # z: [bs x nvars x h]
 
         # denorm
@@ -121,7 +117,7 @@ class PatchTST_backbone(nn.Module):
             z = z.permute(0, 2, 1)
         return z
 
-class TSTiEncoder(nn.Module):  # i means channel-independent
+class TSTiEncoder(nn.Module):
     """
     TSTiEncoder
     """
@@ -129,7 +125,6 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
     def __init__(
         self,
         config,
-        patch_num,
     ):
 
         super().__init__()
@@ -151,13 +146,10 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
         # Encoder
         self.encoder = TSTEncoder(
             config=config,
-            q_len=patch_num,
         )
 
-        self.res_attention = config.res_attention
-
     def forward(self, x) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
-        n_channels = x.shape[1]
+        batch_size, n_channels,_,patch_num = x.shape
         x = self.W_P(x) # x: [bs x nvars x patch_num x hidden_size]
         x += self.W_pos(x) # x: [bs x nvars x patch_num x hidden_size]
 
@@ -169,9 +161,8 @@ class TSTiEncoder(nn.Module):  # i means channel-independent
         # Encoder
         z = self.encoder(src=u, n_channels=n_channels)  # z: [bs * nvars x patch_num x hidden_size]
         z = torch.reshape(
-            z, (-1, n_channels, z.shape[-2], z.shape[-1])
+            z, (batch_size, n_channels, patch_num, -1)
         )  # z: [bs x nvars x patch_num x hidden_size]
-        z = z.permute(0, 1, 3, 2)  # z: [bs x nvars x hidden_size x patch_num]
 
         return z
 
@@ -182,7 +173,6 @@ class TSTEncoder(nn.Module):
     def __init__(
         self,
         config,
-        q_len,
     ):
         super().__init__()
 
@@ -234,9 +224,6 @@ class TSTEncoderLayer(nn.Module):
         config,
     ):
         super().__init__()
-        assert (
-            not config.hidden_size % config.n_heads
-        ), f"hidden_size ({config.hidden_size}) must be divisible by n_heads ({config.n_heads})"
 
         if config.infini_mixer_type == 'betas':
             if config.layerwise_beta:
@@ -271,10 +258,10 @@ class TSTEncoderLayer(nn.Module):
 
         # Position-wise Feed-Forward
         self.ff = nn.Sequential(
-            nn.Linear(config.hidden_size, config.linear_hidden_size, bias=True), # hard-coded in PatchTST
+            nn.Linear(config.hidden_size, config.linear_hidden_size, bias=True), # bias hard-coded in PatchTST
             get_activation_fn(config.activation),
             nn.Dropout(config.dropout),
-            nn.Linear(config.linear_hidden_size, config.hidden_size, bias=True), # hard-coded in PatchTST
+            nn.Linear(config.linear_hidden_size, config.hidden_size, bias=True), # bias hard-coded in PatchTST
         )
 
         # Add & Norm
@@ -539,9 +526,6 @@ class PatchTSTMultivariate(BaseModel):
         x = windows_batch[
             "insample_y"
         ]  #   [batch_size (B), input_size (L), n_series (N)]
-        #hist_exog = windows_batch["hist_exog"]  #   [B, hist_exog_size (X), L, N]
-        #futr_exog = windows_batch["futr_exog"]  #   [B, futr_exog_size (F), L + h, N]
-        #stat_exog = windows_batch["stat_exog"]  #   [N, stat_exog_size (S)]
         
         batch_size = x.shape[0]
         x_enc = x.permute(0, 2, 1) # [batch_size (B), n_series (N), input_size (L)]

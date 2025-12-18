@@ -909,9 +909,6 @@ class Patching(nn.Module):
         super().__init__()
         self.patch_len = patch_len
         self.stride = stride
-        if self.stride != self.patch_len:
-            warnings.warn("Stride and patch length are not equal. \
-                          This may lead to unexpected behavior.")
 
     def forward(self, x):
         x = x.unfold(dimension=-1, 

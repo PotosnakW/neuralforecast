@@ -1,3 +1,5 @@
+import numpy as np
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -64,14 +66,14 @@ class ScaledDotProductAttention(nn.Module):
         # Apply attention mask (optional)
         if attn_mask is not None:
             if attn_mask.dtype == torch.bool:
-                attn_scores.masked_fill_(attn_mask, -float('inf'))
+                attn_scores.masked_fill_(attn_mask, -np.inf)
             else:
                 attn_scores += attn_mask
         
         # Apply key padding mask (optional)
         if key_padding_mask is not None:
             attn_scores.masked_fill_(
-                key_padding_mask.unsqueeze(1).unsqueeze(2), -float('inf')
+                    key_padding_mask.unsqueeze(1).unsqueeze(2), -np.inf
             )
         
         # Normalize attention weights
@@ -110,10 +112,8 @@ class InfiniScaledDotProductAttention(ScaledDotProductAttention):
         # Select memory update/retrieval methods based on channel exclusion
         if config.infini_channel_exclusion:
             self._update_memory_matrix = self._update_memory_matrix_channelexl
-            self._retrieve_from_memory = self._retrieve_from_memory_channelexl
         else:
             self._update_memory_matrix = self._update_memory_matrix_allchannels
-            self._retrieve_from_memory = self._retrieve_from_memory_allchannels
 
         if config.infini_mixer_type.lower() == 'betas':
             self.mixing_gate = self.beta_mixing_gate
@@ -154,22 +154,14 @@ class InfiniScaledDotProductAttention(ScaledDotProductAttention):
     
     def _update_memory_matrix_allchannels(self, key_states, value_states, n_channels):
         sigma_k = self.elu(key_states) + 1.0  # [batch_size, n_channels, n_heads, n_patch, dim]
-        sigma_k_transposed = sigma_k.transpose(-2, -1) # [batch_size, n_channels, n_heads, dim, n_patch]
+        sigma_k_T = sigma_k.transpose(-2, -1) # [batch_size, n_channels, n_heads, dim, n_patch]
 
-        memory_matrix = torch.matmul(sigma_k_transposed, value_states).sum(dim=1).unsqueeze(1) # [batch_size, 1, n_heads, dim, dim] sum over channels then unsqueeze to enable broadcasting over channels
+        memory_matrix = torch.matmul(sigma_k_T, value_states).sum(dim=1).unsqueeze(1) # [batch_size, 1, n_heads, dim, dim] sum over channels then unsqueeze to enable broadcasting over channels
         
         z = sigma_k.sum(dim=-2).unsqueeze(-1).sum(dim=1) # [batch_size, n_heads, dim, 1] sum over sequence length and channels
         z = z.unsqueeze(dim=1) # [batch_size, 1, n_heads, dim, 1]
         
         return memory_matrix, z
-    
-    def _retrieve_from_memory_allchannels(self, query_states, memory_matrix, z_excluded):
-        sigma_q = self.elu(query_states) + 1.0  # [B, C, H, P, D]
-        numerator = sigma_q @ memory_matrix         # [B, C, H, P, D]
-        denominator = (sigma_q @ z_excluded) + 1e-6 # [B, C, H, P, 1]
-        A_mem = numerator / denominator             # [B, C, H, P, D]
-    
-        return A_mem
     
     def _update_memory_matrix_channelexl(self, key_states, value_states, n_channels):
         # σ_k = elu(k) + 1
@@ -197,7 +189,7 @@ class InfiniScaledDotProductAttention(ScaledDotProductAttention):
 
         return memory_matrix_summed, z_excluded
 
-    def _retrieve_from_memory_channelexl(self, query_states, memory_matrix, z_excluded):
+    def _retrieve_from_memory(self, query_states, memory_matrix, z_excluded):
         sigma_q = self.elu(query_states) + 1.0  # [B, C, H, P, D]
         numerator = sigma_q @ memory_matrix         # [B, C, H, P, D]
         denominator = (sigma_q @ z_excluded) + 1e-6 # [B, C, H, P, 1]
@@ -262,14 +254,14 @@ class InfiniScaledDotProductAttention(ScaledDotProductAttention):
         # Apply attention mask (optional)
         if attn_mask is not None:
             if attn_mask.dtype == torch.bool:
-                attn_scores.masked_fill_(attn_mask, -float('inf'))
+                attn_scores.masked_fill_(attn_mask, -np.inf)
             else:
                 attn_scores += attn_mask
         
         # Apply key padding mask (optional)
         if key_padding_mask is not None:
             attn_scores.masked_fill_(
-                key_padding_mask.unsqueeze(1).unsqueeze(2).unsqueeze(3), -float('inf')
+                key_padding_mask.unsqueeze(1).unsqueeze(2), -np.inf
             )
         
         # Normalize attention weights
@@ -283,14 +275,14 @@ class InfiniScaledDotProductAttention(ScaledDotProductAttention):
         # k_for_memory should be [B, C, H, P, D] (not transposed)
         k_for_memory = k.transpose(-2, -1)
         memory_matrix, z = self._update_memory_matrix(k_for_memory, v, n_channels)
-        A_mem = self._retrieve_from_memory(q, memory_matrix, z)
+        A_mem = self.retrieve_from_memory(q, memory_matrix, z)
 
         # Channel mixing
         output = self.mixing_gate(
             a_mem=A_mem, 
             attn_output=output, 
             query_states=q,
-        ) # [batch_size, n_channels, n_heads, n_patch, dim]
+        ) # [bs x n_channels x n_heads x seq_len x d_v]
 
         output = output.transpose(2, 3).contiguous()  # [bs x n_channels x seq_len x n_heads x d_v]
         output = output.view(batch_size*n_channels, -1, self.inner_dim)  # [bs*n_channels x seq_len x n_heads*d_v]
@@ -315,22 +307,18 @@ class MultiheadAttention(nn.Module):
         Multi-Head Attention with optional Infini memory mechanism.
         
         Args:
-            hidden_size: Model dimension
-            n_heads: Number of attention heads
-            d_k: Dimension per head for keys/queries (default: hidden_size // n_heads)
-            d_v: Dimension per head for values (default: hidden_size // n_heads)
-            attn_dropout: Dropout rate for attention weights
-            proj_dropout: Dropout rate for output projection
-            qkv_bias: Whether to use bias in Q/K/V projections
-            infini_mixer_type: Type of mixer ('none', 'mlp', 'betas')
-            infini_channel_exclusion: Whether to exclude self-channel in memory
+            config: configuration file
+            betas: beta infini parameter
         """
         super().__init__()
-        
-        self.hidden_size = config.hidden_size
-        self.n_heads = config.n_heads
+        assert (
+            not config.hidden_size % config.n_heads
+        ), f"hidden_size ({config.hidden_size}) must be divisible by n_heads ({config.n_heads})"
         self.d_k = config.hidden_size // config.n_heads if config.d_k is None else config.d_k
         self.d_v = config.hidden_size // config.n_heads if config.d_v is None else config.d_v
+
+        self.hidden_size = config.hidden_size
+        self.n_heads = config.n_heads
         self.infini_mixer_type = config.infini_mixer_type.lower()
         self.res_attention = config.res_attention
         

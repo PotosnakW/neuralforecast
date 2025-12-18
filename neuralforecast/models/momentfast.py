@@ -1,5 +1,6 @@
 import logging
 import warnings
+from math import ceil
 from typing import Optional
 
 import torch
@@ -8,58 +9,49 @@ from torch import nn
 from ..common._base_model import BaseModel
 from ..common._modules import RevINMultivariate, Flatten_Head, Patching, PositionalEncoding
 from ..common._moment_utils import Masking, _update_inputs, _validate_inputs
-from ..common._t5_infini import T5Model
-from ..losses.pytorch import MAE
+
+from ..common._t5_infini import T5Model, T5EncoderModel
+#from transformers.models.t5.modeling_t5 import T5Model, T5EncoderModel
 
 from transformers import T5Config
+from ..losses.pytorch import MAE
+
+from torch.nn.utils.rnn import pad_sequence
+from transformers import AutoProcessor
 
 logger = logging.getLogger(__name__)
 
-
-class Long_Forecaster(nn.Module): 
+    
+class Long_Forecaster(nn.Module):
+    """
+    Long-term forecaster using FAST (Factorized Action Space Tokenizer).
+    
+    Key differences from Long_Forecaster:
+    - Uses VQ-VAE discrete tokenization instead of patching
+    - Token embeddings instead of linear projection
+    - No positional encodings (tokens encode temporal structure)
+    - Data normalized to [-1, 1] for FAST
+    - Shape without n_patch dimension
+    """
 
     def __init__(self, config):
-
         super().__init__()
 
         self.hidden_size = config.hidden_size
-        self.patch_len = config.patch_len
-        self.stride = config.stride
         self.transformer_type = config.transformer_type
         self.h = config.h
         self.c_out = config.c_out
-
-        self.revin = config.revin
-        if config.revin:
-            self.revin_layer = RevINMultivariate(num_features=config.n_series, 
-                                                 affine=config.revin_affine,
-                                                 subtract_last=False,
-                                                )
-
-        self.padding_patch = config.padding_patch
-        patch_num = int((config.input_size - config.patch_len) / config.stride + 1)
-        if config.padding_patch == "end":  # can be modified to general case
-            self.padding_patch_layer = nn.ReplicationPad1d((0, config.stride))
-            patch_num += 1
-        self.patch_num = patch_num
-
-        self.tokenizer = Patching(
-            patch_len=config.patch_len, 
-            stride=config.stride,
+        self.n_series = config.n_series
+        
+        # FAST specific
+        self.tokenizer = AutoProcessor.from_pretrained("physical-intelligence/fast", trust_remote_code=True)
+        
+        # Token embedding (replaces W_P projection)
+        self.token_embedding = nn.Embedding(
+            num_embeddings=1024,
+            embedding_dim=config.hidden_size
         )
-
-        self.mask_generator = Masking(mask_ratio=0.0) # no masking for forecasting task
-
-        self.W_P = nn.Linear(
-            config.patch_len, config.hidden_size
-        )  # Eq 1: projection of feature vectors onto a d-dim vector space
-
-        # Positional encoding
-        self.W_pos = PositionalEncoding(
-            pe_type=config.pe_type,
-            hidden_size=config.hidden_size,
-            learn_pe=config.learn_pe,
-        )
+        
         # Residual dropout
         self.dropout = nn.Dropout(config.dropout)
 
@@ -67,95 +59,93 @@ class Long_Forecaster(nn.Module):
         self.encoder = self._get_huggingface_transformer(config)
 
         # Prediction Head
-        self.head = Flatten_Head(
-            multivariate_head=config.multivariate_head,
-            n_vars=config.n_series,
-            nf=config.hidden_size * patch_num,
-            h=config.h,
-            c_out=config.c_out,
-            head_dropout=config.head_dropout,
-        )
+        self.head = nn.Linear(config.hidden_size, 1024)
 
     def _get_huggingface_transformer(self, configs):
-            
-        model_config = T5Config.from_pretrained(
-            configs.transformer_backbone)
+        from ..common._t5_infini import T5Model
+        
+        model_config = T5Config.from_pretrained(configs.transformer_backbone)
 
         setattr(model_config, 'infini_mixer_type', configs.infini_mixer_type)
         setattr(model_config, 'infini_channel_exclusion', configs.infini_channel_exclusion)
         setattr(model_config, 'layerwise_beta', configs.layerwise_beta)
         setattr(model_config, 'channelwise_beta', configs.channelwise_beta)
-        setattr(model_config, 'max_sequence_length', configs.input_size / configs.patch_len)
+        setattr(model_config, 'use_rope', configs.use_rope)
+        setattr(model_config, 'max_sequence_length', configs.input_size)  # No patching
         setattr(model_config, 'n_channels', configs.n_series)
         setattr(model_config, 'mlpmixer_hidden_size', configs.mlpmixer_hidden_size)
         setattr(model_config, 'mlpmixer_n_layers', configs.mlpmixer_n_layers)
         setattr(model_config, 'mlpmixer_dropout', configs.mlpmixer_dropout)
-      
+
         transformer_backbone = T5Model(model_config)
-        logging.info(f"Initializing randomly initialized\
-                       transformer from {configs.transformer_backbone}.  ModelClass: {T5Model.__name__}.")
-        
+        logging.info(f"Initializing randomly initialized transformer from {configs.transformer_backbone}. ModelClass: {T5Model.__name__}.")
+
         transformer_backbone = transformer_backbone.get_encoder()
-        
-        if configs.getattr('enable_gradient_checkpointing', True):
+
+        if configs.__dict__.get('enable_gradient_checkpointing', True):
             transformer_backbone.gradient_checkpointing_enable()
             logging.info("Enabling gradient checkpointing.")
-        
+
         return transformer_backbone
 
-    def forward(self, 
-                x_enc : torch.Tensor,
-                **kwargs):
+    def forward(self, x_enc: torch.Tensor, **kwargs):
         """
-        x_enc : [batch_size x n_channels x seq_len]
-        input_mask : [batch_size x seq_len]
+        Args:
+            x_enc: [batch_size x n_channels x seq_len]
+        
+        Returns:
+            dec_out: [batch_size, n_channels, horizon*c_out]
         """
-
         batch_size, n_channels, seq_len = x_enc.shape
-        attention_mask = torch.ones(batch_size*n_channels, self.patch_num, device=x_enc.device)
+        x_enc = x_enc.permute(0, 2, 1)  # [B, seq_len, n_channels]
 
-        # Normalization (applied over axis=1)
-        if self.revin:
-            x_enc = x_enc.permute(0, 2, 1) # [batch_size x seq_len x n_channel]
-            x_enc = self.revin_layer(x_enc, "norm")
-            x_enc = x_enc.permute(0, 2, 1) # [batch_size x n_channel x seq_len]
-        
-        # Patching
-        if self.padding_patch == "end":
-            x_enc = self.padding_patch_layer(x_enc)
-        x_enc = self.tokenizer(x=x_enc) # [batch_size x n_channels x n_patch x patch_len]
+        # --- Tokenize, truncate, and pad ---
+        x_enc = x_enc.cpu().numpy() 
+        token_lists = self.tokenizer(x_enc)
 
-        # Embeddings
-        x_enc = self.W_P(x_enc) # [batch_size x n_channels x n_patch x d_model]
-        x_enc += self.W_pos(x_enc) # [batch_size x n_channels x n_patch x d_model]
-        
-        x_enc = x_enc.reshape(
-            (batch_size * n_channels, self.patch_num, self.hidden_size)) # [batch_size*n_channels, n_patch, d_model]
-        x_enc = self.dropout(x_enc) # [batch_size*n_channels, n_patch, d_model]
+        token_tensors = [torch.tensor(t, dtype=torch.long) for t in token_lists]
+        orig_lengths = [len(t) for t in token_tensors]
+        padded_tokens = pad_sequence(token_tensors, batch_first=True, padding_value=0)
+        padded_tokens = padded_tokens.to(self.token_embedding.weight.device)
+        padded_tokens = padded_tokens.clamp(0, 1023)
 
+        # --- Token embeddings ---
+        x_embeds = self.token_embedding(padded_tokens)  # [B, token_len, hidden_size]
+        x_embeds = self.dropout(x_embeds)
+
+        # Attention mask
+        attention_mask = torch.ones(batch_size, x_embeds.shape[1], device=self.token_embedding.weight.device)
+
+        # --- Encoder ---
         outputs = self.encoder(
-            inputs_embeds=x_enc, 
-            attention_mask=attention_mask, 
-            n_channels=n_channels
-        ) 
-        enc_out = outputs.last_hidden_state
+            inputs_embeds=x_embeds,
+            attention_mask=attention_mask,
+            n_channels=1
+        )
+        enc_out = outputs.last_hidden_state  # [B, token_len, hidden_size]
 
-        enc_out = enc_out.reshape(
-            (batch_size, n_channels, self.patch_num, self.hidden_size)) # [batch_size, n_channels, n_patch, d_model]
+        # --- Prediction head ---
+        logits = self.head(enc_out)  # [B, token_len, vocab_size]
 
-        # Decoder
-        dec_out = self.head(enc_out) # [batch_size, n_channels, horizon*c_out]
-        
-        # De-Normalization
-        if self.revin:
-            dec_out = dec_out.permute(0, 2, 1) # [batch_size x horizon*c_out x n_channel]
-            dec_out = self.revin_layer(dec_out, "denorm")
-            dec_out = dec_out.permute(0, 2, 1) # [batch_size x n_channel x horizon*c_out]
+        # --- Convert logits to token IDs ---
+        predicted_token_ids = logits.argmax(dim=-1).tolist()  # [B, token_len]
+
+        decoded = [seq[:L] for seq, L in zip(predicted_token_ids, orig_lengths)]
+
+        # --- Decode to reconstruct actions ---
+        dec_out = self.tokenizer.decode(decoded)  # [B, seq_len, n_channels]
+        dec_out = torch.from_numpy(dec_out).to(padded_tokens.device).float() 
+
+        # --- Trim to horizon ---
+        dec_out = dec_out[:, :self.h, :]  # [B, horizon, n_channels]
+
+        # --- Permute back to [B, n_channels, horizon] ---
+        dec_out = dec_out.permute(0, 2, 1)  # [B, n_channels, horizon]
 
         return dec_out
 
 # %% ../../nbs/models.patchtst.ipynb 17
-class MOMENT(BaseModel):
+class MOMENTFAST(BaseModel):
     """MOMENT
 
     **Parameters:**<br>
@@ -165,7 +155,7 @@ class MOMENT(BaseModel):
     `hist_exog_list`: str list, historic exogenous columns.<br>
     `futr_exog_list`: str list, future exogenous columns.<br>
     `exclude_insample_y`: bool=False, the model skips the autoregressive features y[t-input_size:t] if True.<br>
-    `n_layers`: int, number of layers for encoder.<br>
+    `num_layers`: int, number of layers for encoder.<br>
     `num_decoder_layers`: int, number of layers for decoder.<br>
     `n_heads`: int=16, number of multi-head's attention.<br>
     `hidden_size`: int=128, units of embeddings and encoders.<br>
@@ -253,12 +243,15 @@ class MOMENT(BaseModel):
         head_dropout: float = 0.0,
         patch_len: int = 16,
         stride: int = 8,
+        use_rope: bool = False,
         mlpmixer_hidden_size: int = 128,
         mlpmixer_n_layers: int = 3,
         mlpmixer_dropout: float = 0.1,
         multivariate_head: bool = False,
         pe_type: str = "sincos",
         learn_pe: bool = False,
+        use_pca_adapter: bool = False,
+        pca_n_series: int = 2,
         padding_patch="end",
         start_padding_enabled=False,
         step_size: int = 1,
@@ -287,7 +280,7 @@ class MOMENT(BaseModel):
         dataloader_kwargs=None,
         **trainer_kwargs
     ):
-        super(MOMENT, self).__init__(
+        super(MOMENTFAST, self).__init__(
             h=h,
             input_size=input_size, 
             n_series=n_series,
@@ -336,6 +329,9 @@ class MOMENT(BaseModel):
         x = windows_batch[
             "insample_y"
         ]  #   [batch_size (B), input_size (L), n_series (N)]
+        #hist_exog = windows_batch["hist_exog"]  #   [B, hist_exog_size (X), L, N]
+        #futr_exog = windows_batch["futr_exog"]  #   [B, futr_exog_size (F), L + h, N]
+        #stat_exog = windows_batch["stat_exog"]  #   [N, stat_exog_size (S)]
 
         batch_size = x.shape[0]
         x_enc = x.permute(0, 2, 1) # [batch_size (B), n_series (N), input_size (L)]
