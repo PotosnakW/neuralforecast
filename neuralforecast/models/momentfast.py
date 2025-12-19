@@ -8,7 +8,6 @@ from torch import nn
 
 from ..common._base_model import BaseModel
 from ..common._modules import RevINMultivariate, Flatten_Head, Patching, PositionalEncoding
-from ..common._moment_utils import Masking, _update_inputs, _validate_inputs
 
 from ..common._t5_infini import T5Model, T5EncoderModel
 #from transformers.models.t5.modeling_t5 import T5Model, T5EncoderModel
@@ -81,10 +80,6 @@ class Long_Forecaster(nn.Module):
         logging.info(f"Initializing randomly initialized transformer from {configs.transformer_backbone}. ModelClass: {T5Model.__name__}.")
 
         transformer_backbone = transformer_backbone.get_encoder()
-
-        if configs.__dict__.get('enable_gradient_checkpointing', True):
-            transformer_backbone.gradient_checkpointing_enable()
-            logging.info("Enabling gradient checkpointing.")
 
         return transformer_backbone
 
@@ -318,8 +313,7 @@ class MOMENTFAST(BaseModel):
                  }
         config['c_out'] = self.loss.outputsize_multiplier
 
-        config = _update_inputs(config)
-        config = _validate_inputs(config)
+        config = SimpleNamespace(**config)
         self.h = h
         self.n_series = n_series
         self.model = Long_Forecaster(config)

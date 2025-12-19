@@ -1,13 +1,13 @@
 import logging
 import warnings
 from typing import Optional
+from types import SimpleNamespace
 
 import torch
 from torch import nn
 
 from ..common._base_model import BaseModel
 from ..common._modules import RevINMultivariate, Flatten_Head, Patching, PositionalEncoding
-from ..common._moment_utils import Masking, _update_inputs, _validate_inputs
 from ..common._t5_infini import T5Model
 from ..losses.pytorch import MAE
 
@@ -24,17 +24,14 @@ class Long_Forecaster(nn.Module):
 
         self.hidden_size = config.hidden_size
         self.patch_len = config.patch_len
-        self.stride = config.stride
-        self.transformer_type = config.transformer_type
-        self.h = config.h
-        self.c_out = config.c_out
 
         self.revin = config.revin
         if config.revin:
-            self.revin_layer = RevINMultivariate(num_features=config.n_series, 
-                                                 affine=config.revin_affine,
-                                                 subtract_last=False,
-                                                )
+            self.revin_layer = RevINMultivariate(
+                num_features=config.n_series, 
+                affine=config.revin_affine,
+                subtract_last=config.revin_subtract_last,
+            )
 
         self.padding_patch = config.padding_patch
         patch_num = int((config.input_size - config.patch_len) / config.stride + 1)
@@ -47,8 +44,6 @@ class Long_Forecaster(nn.Module):
             patch_len=config.patch_len, 
             stride=config.stride,
         )
-
-        self.mask_generator = Masking(mask_ratio=0.0) # no masking for forecasting task
 
         self.W_P = nn.Linear(
             config.patch_len, config.hidden_size
@@ -97,10 +92,6 @@ class Long_Forecaster(nn.Module):
         
         transformer_backbone = transformer_backbone.get_encoder()
         
-        if configs.getattr('enable_gradient_checkpointing', True):
-            transformer_backbone.gradient_checkpointing_enable()
-            logging.info("Enabling gradient checkpointing.")
-        
         return transformer_backbone
 
     def forward(self, 
@@ -112,7 +103,7 @@ class Long_Forecaster(nn.Module):
         """
 
         batch_size, n_channels, seq_len = x_enc.shape
-        attention_mask = torch.ones(batch_size*n_channels, self.patch_num, device=x_enc.device)
+        attention_mask = torch.ones(batch_size*n_channels, self.patch_num, device=x_enc.device) # no masking, 1==available
 
         # Normalization (applied over axis=1)
         if self.revin:
@@ -122,7 +113,7 @@ class Long_Forecaster(nn.Module):
         
         # Patching
         if self.padding_patch == "end":
-            x_enc = self.padding_patch_layer(x_enc)
+            x_enc = self.padding_patch_layer(x_enc) 
         x_enc = self.tokenizer(x=x_enc) # [batch_size x n_channels x n_patch x patch_len]
 
         # Embeddings
@@ -133,15 +124,17 @@ class Long_Forecaster(nn.Module):
             (batch_size * n_channels, self.patch_num, self.hidden_size)) # [batch_size*n_channels, n_patch, d_model]
         x_enc = self.dropout(x_enc) # [batch_size*n_channels, n_patch, d_model]
 
+        # Encoder
         outputs = self.encoder(
+            n_channels=n_channels,
             inputs_embeds=x_enc, 
             attention_mask=attention_mask, 
-            n_channels=n_channels
         ) 
         enc_out = outputs.last_hidden_state
 
         enc_out = enc_out.reshape(
-            (batch_size, n_channels, self.patch_num, self.hidden_size)) # [batch_size, n_channels, n_patch, d_model]
+            (batch_size, n_channels, self.patch_num, self.hidden_size)
+        ) # [batch_size, n_channels, n_patch, d_model]
 
         # Decoder
         dec_out = self.head(enc_out) # [batch_size, n_channels, horizon*c_out]
@@ -243,16 +236,18 @@ class MOMENT(BaseModel):
         transformer_type: str = "encoder_only",
         randomly_initialize_backbone: bool = True,
         n_layers: int = 4,
-        num_decoder_layers: int = 0,
         n_heads: int = 16,
         hidden_size: int = 128,
-        linear_hidden_size: int = 128,
+        linear_hidden_size: int = 256,
         d_k: int = 32,
         d_v: int = 32,
-        dropout: float = 0.1,
+        dropout: float = 0.0,
         head_dropout: float = 0.0,
         patch_len: int = 16,
         stride: int = 8,
+        revin: bool = True,
+        revin_affine: bool = False,
+        revin_subtract_last: bool = True,
         mlpmixer_hidden_size: int = 128,
         mlpmixer_n_layers: int = 3,
         mlpmixer_dropout: float = 0.1,
@@ -263,8 +258,6 @@ class MOMENT(BaseModel):
         start_padding_enabled=False,
         step_size: int = 1,
         scaler_type: str = "identity",
-        revin: str = True,
-        revin_affine: str = False,
         random_seed: int = 1,
         drop_last_loader: bool = False,
         alias: Optional[str] = None,
@@ -320,16 +313,19 @@ class MOMENT(BaseModel):
             **trainer_kwargs
             )
 
+        # Enforce correct patch_len, regardless of user input
+        patch_len = min(input_size + stride, patch_len)
+
         config = {key: value for key, value in self.hparams.items() 
                   if key != 'loss'
-                 }
+        }
         config['c_out'] = self.loss.outputsize_multiplier
-
-        config = _update_inputs(config)
-        config = _validate_inputs(config)
+        config['patch_len'] = patch_len
+        config = SimpleNamespace(**config)
+    
         self.h = h
         self.n_series = n_series
-        self.model = Long_Forecaster(config)
+        self.model = Long_Forecaster(config=config)
 
     def forward(self, windows_batch):
         # Parse windows_batch

@@ -9,65 +9,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Type
  
-SUPPORTED_HUGGINGFACE_MODELS = [
-    't5-small', 't5-base', 't5-large', 't5-3b', 't5-11b',
-    'google/flan-t5-small', 'google/flan-t5-base', 
-    'google/flan-t5-large', 'google/flan-t5-xl', 
-    'google/flan-t5-xxl',
-    'google/t5-efficient-tiny', 'google/t5-efficient-mini',
-    'google/t5-efficient-small', 'google/t5-efficient-medium',
-    'google/t5-efficient-large', 'google/t5-efficient-base',
-]
-
-
-class NamespaceWithDefaults(Namespace):
-    @classmethod
-    def from_namespace(cls, namespace):
-        new_instance = cls()
-
-        if isinstance(namespace, dict):
-            # Handle the case where namespace is a dictionary
-            for key, value in namespace.items():
-                setattr(new_instance, key, value)
-                
-        elif isinstance(namespace, Namespace):
-            # Handle the case where namespace is a Namespace object
-            for attr in dir(namespace):
-                if not attr.startswith('__'):
-                    setattr(new_instance, attr, getattr(namespace, attr))
-                    
-        return new_instance
-    
-    def getattr(self, key, default=None):
-        return getattr(self, key, default)
-
-def _update_inputs(configs: Namespace | dict, **kwargs) -> NamespaceWithDefaults:
-    if isinstance(configs, dict) and 'model_kwargs' in kwargs:
-        return NamespaceWithDefaults(**{**configs, **kwargs['model_kwargs']})
-    else:
-        return NamespaceWithDefaults.from_namespace(configs)
-
-def _validate_inputs(configs: NamespaceWithDefaults) -> NamespaceWithDefaults:
-    if configs.transformer_backbone == "PatchTST" and configs.transformer_type != "encoder_only":
-        warnings.warn("PatchTST only supports encoder-only transformer backbones.")
-        configs.transformer_type = "encoder_only"
-    if configs.transformer_backbone != "PatchTST" and configs.transformer_backbone not in SUPPORTED_HUGGINGFACE_MODELS:
-        raise NotImplementedError(f"Transformer backbone {configs.transformer_backbone} not supported."
-                                    f"Please choose from {SUPPORTED_HUGGINGFACE_MODELS} or PatchTST.")
-    if configs.hidden_size is None and configs.transformer_backbone in SUPPORTED_HUGGINGFACE_MODELS: 
-        configs.hidden_size = get_huggingface_model_dimensions(configs.transformer_backbone)
-        logging.info("Setting hidden_size to {}".format(configs.d_model))
-    elif configs.hidden_size is None:
-        raise ValueError("d_model must be specified if transformer backbone \
-                            unless transformer backbone is a Huggingface model.")
-        
-    if configs.transformer_type not in ["encoder_only", "decoder_only", "encoder_decoder"]:
-        raise ValueError("transformer_type must be one of ['encoder_only', 'decoder_only', 'encoder_decoder']")
-
-    if configs.stride != configs.patch_len:
-        warnings.warn("Patch stride length is not equal to patch length.")
-
-    return configs
 
 class Masking:
     def __init__(self, 

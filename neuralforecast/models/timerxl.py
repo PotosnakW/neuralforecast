@@ -1,13 +1,12 @@
 import torch
 from torch import nn
 from typing import Optional
+from types import SimpleNamespace
 
 from ..common._base_model import BaseModel
 from ..common._timerxl_utils import TimerBlock, TimerLayer, AttentionLayer, TimeAttention
 from ..common._modules import RevINMultivariate, Flatten_Head, Patching, PositionalEncoding
 from ..losses.pytorch import MAE
-
-from ..common._moment_utils import _update_inputs
 
 
 class timerxl_backbone(nn.Module):
@@ -262,7 +261,7 @@ class TimerXL(BaseModel):
                  }
         config['c_out'] = self.loss.outputsize_multiplier
 
-        config = _update_inputs(config)
+        config = SimpleNamespace(**config)
         self.h = h
         self.n_series = n_series
         self.model = timerxl_backbone(config)

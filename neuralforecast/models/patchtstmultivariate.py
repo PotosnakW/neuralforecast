@@ -58,15 +58,15 @@ class PatchTST_backbone(nn.Module):
 
         super().__init__()
 
+        self.hidden_size = config.hidden_size
         self.patch_len = config.patch_len
-        self.stride = config.stride
 
         self.revin = config.revin
-        if self.revin:
+        if config.revin:
             self.revin_layer = RevINMultivariate(
                 num_features=config.n_series, 
                 affine=config.revin_affine, 
-                subtract_last=config.revin_subtract_last
+                subtract_last=config.revin_subtract_last,
             )
 
         self.padding_patch = config.padding_patch
@@ -81,55 +81,6 @@ class PatchTST_backbone(nn.Module):
             stride=config.stride,
         )
 
-        self.backbone = TSTiEncoder(
-            config=config,
-        )
-
-        self.head = Flatten_Head(
-            multivariate_head=config.multivariate_head,
-            n_vars=config.n_series,
-            nf=config.hidden_size * patch_num,
-            h=config.h,
-            c_out=config.c_out,
-            head_dropout=config.head_dropout,
-        )
-
-    def forward(self, z):  # z: [bs x nvars x seq_len]
-        # norm
-        if self.revin:
-            z = z.permute(0, 2, 1)
-            z = self.revin_layer(z, "norm")
-            z = z.permute(0, 2, 1)
-
-        # do patching
-        if self.padding_patch == "end":
-            z = self.padding_patch_layer(z)
-        z = self.tokenizer(z) # z: [bs x nvars x patch_num x patch_len]
-
-        # model
-        z = self.backbone(z)  # z: [bs x nvars x patch_num x hidden_size]
-        z = self.head(z)  # z: [bs x nvars x h]
-
-        # denorm
-        if self.revin:
-            z = z.permute(0, 2, 1)
-            z = self.revin_layer(z, "denorm")
-            z = z.permute(0, 2, 1)
-        return z
-
-class TSTiEncoder(nn.Module):
-    """
-    TSTiEncoder
-    """
-
-    def __init__(
-        self,
-        config,
-    ):
-
-        super().__init__()
-
-        # Input encoding
         self.W_P = nn.Linear(
             config.patch_len, config.hidden_size
         )  # Eq 1: projection of feature vectors onto a d-dim vector space
@@ -143,28 +94,57 @@ class TSTiEncoder(nn.Module):
         # Residual dropout
         self.dropout = nn.Dropout(config.dropout)
 
-        # Encoder
-        self.encoder = TSTEncoder(
-            config=config,
+        self.encoder = TSTEncoder(config=config)
+
+        # Prediction Head
+        self.head = Flatten_Head(
+            multivariate_head=config.multivariate_head,
+            n_vars=config.n_series,
+            nf=config.hidden_size * patch_num,
+            h=config.h,
+            c_out=config.c_out,
+            head_dropout=config.head_dropout,
         )
 
-    def forward(self, x) -> torch.Tensor:  # x: [bs x nvars x patch_len x patch_num]
-        batch_size, n_channels,_,patch_num = x.shape
-        x = self.W_P(x) # x: [bs x nvars x patch_num x hidden_size]
-        x += self.W_pos(x) # x: [bs x nvars x patch_num x hidden_size]
+    def forward(self, x_enc : torch.Tensor):  # z: [bs x nvars x seq_len]
 
-        u = torch.reshape(
-            x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3])
-        )  # u: [bs * nvars x patch_num x hidden_size]
-        u = self.dropout(u)  # u: [bs * nvars x patch_num x hidden_size]
+        batch_size, n_channels, seq_len = x_enc.shape
+
+        # Normalization (applied over axis=1)
+        if self.revin:
+            x_enc = x_enc.permute(0, 2, 1) # [batch_size x seq_len x n_channel]
+            x_enc = self.revin_layer(x_enc, "norm")
+            x_enc = x_enc.permute(0, 2, 1) # [batch_size x n_channel x seq_len]
+        
+        # Patching
+        if self.padding_patch == "end":
+            x_enc = self.padding_patch_layer(x_enc) 
+        x_enc = self.tokenizer(x=x_enc) # [batch_size x n_channels x n_patch x patch_len]
+
+        # Embeddings
+        x_enc = self.W_P(x_enc) # [batch_size x n_channels x n_patch x d_model]
+        x_enc += self.W_pos(x_enc) # [batch_size x n_channels x n_patch x d_model]
+        
+        x_enc = x_enc.reshape(
+            (batch_size * n_channels, self.patch_num, self.hidden_size)) # [batch_size*n_channels, n_patch, d_model]
+        x_enc = self.dropout(x_enc) # [batch_size*n_channels, n_patch, d_model]
 
         # Encoder
-        z = self.encoder(src=u, n_channels=n_channels)  # z: [bs * nvars x patch_num x hidden_size]
-        z = torch.reshape(
-            z, (batch_size, n_channels, patch_num, -1)
-        )  # z: [bs x nvars x patch_num x hidden_size]
+        enc_out = self.encoder(src=x_enc, n_channels=n_channels)  # z: [bs x nvars x patch_num x hidden_size]
+        enc_out = enc_out.reshape(
+            (batch_size, n_channels, self.patch_num, self.hidden_size)
+        ) # [batch_size, n_channels, n_patch, d_model]
+        
+        # Decoder
+        dec_out = self.head(enc_out)  # z: [bs x nvars x h]
 
-        return z
+        # De-Normalization
+        if self.revin:
+            dec_out = dec_out.permute(0, 2, 1) # [batch_size x horizon*c_out x n_channel]
+            dec_out = self.revin_layer(dec_out, "denorm")
+            dec_out = dec_out.permute(0, 2, 1) # [batch_size x n_channel x horizon*c_out]
+
+        return dec_out
 
 class TSTEncoder(nn.Module):
     """
@@ -176,10 +156,26 @@ class TSTEncoder(nn.Module):
     ):
         super().__init__()
 
+        if config.infini_mixer_type == 'betas':
+            if config.layerwise_beta:
+                beta = None
+            else:
+                # Create a shared beta
+                if config.channelwise_beta:
+                    beta = nn.Parameter(torch.rand((1, config.n_series, config.n_heads, 1, 1))*1e-2)
+                else:
+                    beta = nn.Parameter(torch.rand((1, 1, config.n_heads, 1, 1))*1e-2)
+                # Adjust the values to ensure they sum to 0
+                with torch.no_grad():
+                    beta -= beta.mean(dim=2, keepdim=True)
+        else:
+            beta=None
+
         self.layers = nn.ModuleList(
             [
                 TSTEncoderLayer(
                     config=config,
+                    beta=beta,
                 )
                 for i in range(config.n_layers)
             ]
@@ -222,23 +218,9 @@ class TSTEncoderLayer(nn.Module):
     def __init__(
         self,
         config,
+        beta,
     ):
         super().__init__()
-
-        if config.infini_mixer_type == 'betas':
-            if config.layerwise_beta:
-                beta = None
-            else:
-                # Create a layer-specific beta
-                if config.channelwise_beta:
-                    beta = nn.Parameter(torch.rand((1, config.n_series, config.n_heads, 1, 1))*1e-2)
-                else:
-                    beta = nn.Parameter(torch.rand((1, 1, config.n_heads, 1, 1))*1e-2)
-                # Adjust the values to ensure they sum to 0
-                with torch.no_grad():
-                    beta -= beta.mean(dim=2, keepdim=True)
-        else:
-            beta=None
 
         # Multi-Head attention
         self.res_attention = config.res_attention
@@ -417,13 +399,13 @@ class PatchTSTMultivariate(BaseModel):
         infini_channel_exclusion: bool = False,
         layerwise_beta: bool = True,
         channelwise_beta: bool = False,
-        n_layers: int = 3,
+        n_layers: int = 4,
         n_heads: int = 16,
         hidden_size: int = 128,
         linear_hidden_size: int = 256,
         d_k: int = 32, 
         d_v: int = 32,
-        dropout: float = 0.2,
+        dropout: float = 0.0,
         attn_dropout: float = 0.0,
         head_dropout: float = 0.0,
         proj_dropout: float = 0.0,
@@ -504,7 +486,8 @@ class PatchTSTMultivariate(BaseModel):
         patch_len = min(input_size + stride, patch_len)
 
         config = {key: value for key, value in self.hparams.items() 
-                  if key != 'loss'}
+                  if key != 'loss'
+        }
         config['c_out'] = self.loss.outputsize_multiplier
         config['patch_len'] = patch_len
         config['norm'] = "BatchNorm"
@@ -517,10 +500,9 @@ class PatchTSTMultivariate(BaseModel):
         config['pre_norm'] = batch_normalization
         config = SimpleNamespace(**config)
 
-        self.model = PatchTST_backbone(
-            config=config,
-        )
+        self.h = h
         self.n_series = n_series
+        self.model = PatchTST_backbone(config=config)
 
     def forward(self, windows_batch):  # x: [batch, input_size]
         x = windows_batch[

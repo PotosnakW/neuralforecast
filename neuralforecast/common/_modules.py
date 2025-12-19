@@ -687,9 +687,32 @@ class RevIN(nn.Module):
         return x
 
 # %% ../../nbs/common.modules.ipynb 22
-class RevINMultivariate(nn.Module):
-    """
-    ReversibleInstanceNorm1d for Multivariate models
+class RevINMultivariate(nn.Module):  
+    """Reversible Instance Normalization for multivariate time series models.  
+
+    Normalizes multivariate time series data using batch statistics computed across   
+    the time dimension. The normalization can be reversed after model predictions to   
+    restore the original scale. Optionally includes learnable affine parameters for   
+    additional transformation flexibility.  
+
+    Args:  
+        num_features (int): The number of features or channels in the time series.  
+        eps (float): A value added for numerical stability.
+        affine (bool): If True, RevINMultivariate has learnable affine parameters   
+            (weight and bias).
+        subtract_last (bool): Not used in this implementation (kept for API compatibility).  
+        non_norm (bool): Not used in this implementation (kept for API compatibility).
+
+    Returns:
+        (torch.Tensor): Normalized tensor (if mode="norm") or denormalized tensor
+            (if mode="denorm") of the same shape as the input [batch, seq_len, num_features].
+
+    Notes:
+        - The forward method requires a mode parameter: "norm" for normalization or
+          "denorm" for denormalization.
+        - Batch statistics (mean and std) are computed across axis=1 (time dimension).
+        - If affine=True, learnable parameters have shape [1, 1, num_features].
+        - Used in multivariate models like TSMixer, TSMixerx, and RMoK.
     """
 
     def __init__(
@@ -804,7 +827,6 @@ class PositionalEncoding(nn.Module):
         hidden_size: int = 768,
         learn_pe: bool = False,
         normalize: bool = True,
-        exponential: bool = False,
     ):
         super().__init__()
 
@@ -813,11 +835,13 @@ class PositionalEncoding(nn.Module):
         self.hidden_size = hidden_size
         self.learn_pe = learn_pe
         self.normalize = normalize
-        self.exponential = exponential
 
         # Build encoding tensor
         W_pos = self._build_encoding()
-        self.W_pos = nn.Parameter(W_pos, requires_grad=self.learn_pe)
+        if self.learn_pe:
+            self.W_pos = nn.Parameter(W_pos)
+        else:
+            self.register_buffer("W_pos", W_pos)
 
     def _build_encoding(self):
         pe = self.pe_type
@@ -825,17 +849,16 @@ class PositionalEncoding(nn.Module):
         if pe is None:
             W_pos = torch.empty((self.q_len, self.hidden_size))
             nn.init.uniform_(W_pos, -0.02, 0.02)
-            self.learn_pe = False
 
         elif pe in ["zero", "zeros"]:
             W_pos = torch.zeros((self.q_len, self.hidden_size))
 
         elif pe in ["gauss", "normal"]:
-            W_pos = torch.zeros((self.q_len, self.hidden_size))
-            torch.nn.init.normal_(W_pos, mean=0.0, std=0.1)
+            W_pos = torch.empty((self.q_len, self.hidden_size))
+            nn.init.normal_(W_pos, mean=0.0, std=0.1)
 
         elif pe == "uniform":
-            W_pos = torch.zeros((self.q_len, self.hidden_size))
+            W_pos = torch.empty((self.q_len, self.hidden_size))
             nn.init.uniform_(W_pos, a=0.0, b=0.1)
 
         elif pe == "sincos":
@@ -884,12 +907,10 @@ class PositionalEncoding(nn.Module):
                 * (torch.linspace(0, 1, hidden_size).reshape(1, -1) ** x)
                 - 1
             )
-            if abs(cpe.mean()) <= eps:
+            mean = cpe.mean()
+            if abs(mean) <= eps:
                 break
-            elif cpe.mean() > eps:
-                x += 0.001
-            else:
-                x -= 0.001
+            x += -0.001 if mean > eps else 0.001
         return cpe
 
     def forward(self, x):
