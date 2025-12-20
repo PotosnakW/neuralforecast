@@ -218,7 +218,7 @@ class TSTEncoderLayer(nn.Module):
     def __init__(
         self,
         config,
-        beta,
+        beta: Optional[torch.Tensor] = None,
     ):
         super().__init__()
 
