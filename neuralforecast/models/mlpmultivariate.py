@@ -137,7 +137,6 @@ class MLPMultivariate(BaseModel):
         # Architecture
         self.num_layers = num_layers
         self.hidden_size = hidden_size
-        self.n_series = n_series
 
         input_size_first_layer = n_series * (
             input_size

@@ -7,13 +7,14 @@ __all__ = ['iTransformerT5']
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import logging
 from types import SimpleNamespace
 
 from typing import Optional
 from ..losses.pytorch import MAE
 from ..common._base_model import BaseModel
 from neuralforecast.common._modules import DataEmbedding_inverted, RevINMultivariate, Flatten_Head
-from transformers.models.t5.modeling_t5 import T5Model
+from ..common._t5_infini import T5Model
 from transformers import T5Config
 
 
@@ -23,64 +24,53 @@ class itransformer_backbone(nn.Module):
     def __init__(self, config):
         super().__init__()
         
-        self.hidden_size = config.hidden_size
-        self.h = config.h
-        self.c_out = config.c_out
-        self.n_series = config.n_series
-        self.input_size = config.input_size
-        
         # RevIN normalization
         self.revin = config.revin
         if config.revin:
             self.revin_layer = RevINMultivariate(
                 num_features=config.n_series,
                 affine=config.revin_affine,
-                subtract_last=False,
+                subtract_last=config.revin_subtract_last,
             )
         
         # Embedding layer (inverted - operates on variate dimension)
         self.enc_embedding = DataEmbedding_inverted(
-            config.input_size, self.hidden_size, config.dropout
+            config.input_size, config.hidden_size, config.dropout
         )
         
         # Transformer backbone
         self.encoder = self._get_huggingface_transformer(config)
         
-        # # Prediction head
-        # self.projector = nn.Linear(
-        #     self.hidden_size, config.h * config.c_out, bias=True
-        # )
-        head_nf = self.hidden_size
+        # Prediction head
         self.head = Flatten_Head(
             multivariate_head=config.multivariate_head,
             n_vars=config.n_series,
-            nf=head_nf,
+            nf=config.hidden_size,
             h=config.h,
             c_out=config.c_out,
             head_dropout=config.head_dropout,
         )
     
-    def _get_huggingface_transformer(self, config):
-        """Initialize transformer encoder"""
-        model_config = T5Config.from_pretrained(config.transformer_backbone)
-        
-        # Optional: Add custom config attributes if needed
-        if hasattr(config, 'use_rope'):
-            setattr(model_config, 'use_rope', config.use_rope)
-        
+    def _get_huggingface_transformer(self, configs):
+            
+        model_config = T5Config.from_pretrained(
+            configs.transformer_backbone)
+
+        setattr(model_config, 'infini_mixer_type', 'none')
+      
         transformer_backbone = T5Model(model_config)
-        encoder = transformer_backbone.get_encoder()
+        logging.info(f"Initializing randomly initialized\
+                       transformer from {configs.transformer_backbone}.  ModelClass: {T5Model.__name__}.")
         
-        if config.enable_gradient_checkpointing:
-            encoder.gradient_checkpointing_enable()
+        transformer_backbone = transformer_backbone.get_encoder()
         
-        return encoder
+        return transformer_backbone
     
     def forward(self, x_enc: torch.Tensor, **kwargs):
         """
         x_enc: [batch_size x n_series x seq_len]
         """
-        batch_size, n_series, seq_len = x_enc.shape
+        batch_size, n_channels, seq_len = x_enc.shape
         
         # Normalization with RevIN
         if self.revin:
@@ -90,17 +80,17 @@ class itransformer_backbone(nn.Module):
         
         # Embedding
         x_enc = x_enc.permute(0, 2, 1) # x_enc: [B, L, N]
-        # B L N -> B N E                (B L N -> B L E in the vanilla Transformer)
-        enc_in = self.enc_embedding(x_enc, None)
+        enc_in = self.enc_embedding(x_enc, None) # B L N -> B N E 
         
         # Transformer encoding
         # B N E -> B N E
-        outputs = self.encoder(inputs_embeds=enc_in)
+        outputs = self.encoder(
+            n_channels=n_channels,
+            inputs_embeds=enc_in, 
+        )
         enc_out = outputs.last_hidden_state # [B, N, E]
         
         # Projection to forecast horizon
-        # B N E -> B N (H*C) -> B (H*C) N
-        #dec_out = self.projector(enc_out).permute(0, 2, 1)[:, :, :n_series]
         enc_out = enc_out.unsqueeze(2)  # [B, N, 1, E]
         dec_out = self.head(enc_out) # [B, N, 1, E] -> [B, N, H*C]
     
@@ -185,22 +175,19 @@ class iTransformerT5(BaseModel):
         exclude_insample_y=False,
         # Transformer config
         transformer_backbone: str = "google/t5-efficient-tiny",
-        transformer_type: str = "encoder_only",
-        randomly_initialize_backbone: bool = True,
         n_layers: int = 2,
-        num_decoder_layers: int = 0,
         n_heads: int = 8,
         hidden_size: int = 512,
-        linear_hidden_size: int = 512,
+        linear_hidden_size: int = 256,
         d_k: Optional[int] = None,
         d_v: Optional[int] = None,
         dropout: float = 0.1,
         head_dropout: float = 0.0,
-        use_rope: bool = False,
         multivariate_head: bool = False,
         enable_gradient_checkpointing: bool = True,
         revin: bool = True,
         revin_affine: bool = False,
+        revin_subtract_last: bool = True,
         start_padding_enabled=False,
         step_size: int = 1,
         scaler_type: str = "identity",

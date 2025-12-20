@@ -317,7 +317,36 @@ class TransDecoder(nn.Module):
         return x
 
 # %% ../../nbs/common.modules.ipynb 17
-class AttentionLayer(nn.Module):
+class AttentionLayer(nn.Module):  
+    """Multi-head attention layer wrapper.  
+
+    This layer wraps an attention mechanism and handles the linear projections  
+    for queries, keys, and values in multi-head attention. It projects inputs  
+    to multiple heads, applies the inner attention mechanism, and projects back  
+    to the original hidden dimension.  
+
+    Args:  
+        attention (nn.Module): Inner attention mechanism (e.g., FullAttention,   
+            ProbAttention) that computes attention scores and outputs.  
+        hidden_size (int): Dimension of the model's hidden states.  
+        n_heads (int): Number of attention heads.  
+        d_keys (int, optional): Dimension of keys per head. If `None` defaults to   
+            hidden_size // n_heads.  
+        d_values (int, optional): Dimension of values per head. If `None` defaults to
+            hidden_size // n_heads.
+
+    Returns:
+        (torch.Tensor): Output tensor of shape [batch, seq_len, hidden_size] after
+          applying multi-head attention.
+        (torch.Tensor) or None: Attention weights of shape [batch, n_heads, seq_len, seq_len]
+          if output_attention is True in the inner attention mechanism, otherwise None.
+
+    Notes:
+        - The forward method accepts queries, keys, values, and optional masks.
+        - Additional parameters tau and delta are passed through to the inner
+          attention mechanism for specialized attention variants.
+    """
+
     def __init__(self, attention, hidden_size, n_heads, d_keys=None, d_values=None):
         super(AttentionLayer, self).__init__()
 
@@ -370,7 +399,40 @@ class TriangularCausalMask:
         return self._mask
 
 
-class FullAttention(nn.Module):
+class FullAttention(nn.Module):  
+    """Full attention mechanism with scaled dot-product attention.  
+
+    Implements standard multi-head attention using scaled dot-product attention.  
+    Supports both efficient computation via PyTorch's scaled_dot_product_attention  
+    and explicit attention computation when attention weights are needed. Optional  
+    causal masking prevents attention to future positions in autoregressive models.  
+
+    Args:  
+        mask_flag (bool, optional): If True, applies causal masking to prevent  
+            attention to future positions.
+        factor (int, optional): Attention factor parameter (unused in FullAttention,  
+            kept for API compatibility with ProbAttention).
+        scale (float, optional): Custom scaling factor for attention scores. If None,  
+            uses 1/sqrt(d_k) where d_k is the key dimension.  
+        attention_dropout (float, optional): Dropout rate applied to attention  
+            weights.
+        output_attention (bool, optional): If True, returns attention weights along
+            with output. If False, uses efficient flash attention.
+
+    Returns:
+        (torch.Tensor): Attention output of shape [batch, seq_len, n_heads, head_dim].
+        (torch.Tensor or None): Attention weights of shape [batch, n_heads, seq_len, seq_len]
+              if output_attention is True, otherwise None.
+
+    Notes:
+        - When output_attention=False, uses PyTorch's optimized scaled_dot_product_attention
+          for better performance (flash attention).
+        - When output_attention=True, computes attention explicitly using einsum operations.
+        - If mask_flag=True and no attn_mask is provided, automatically creates a
+          TriangularCausalMask for autoregressive attention.
+        - The tau and delta parameters are accepted for API compatibility but unused.
+    """
+
     def __init__(
         self,
         mask_flag=True,
@@ -388,23 +450,40 @@ class FullAttention(nn.Module):
     def forward(self, queries, keys, values, attn_mask, tau=None, delta=None):
         B, L, H, E = queries.shape
         _, S, _, D = values.shape
-        scale = self.scale or 1.0 / math.sqrt(E)
 
-        scores = torch.einsum("blhe,bshe->bhls", queries, keys)
+        if not self.output_attention:  # flash attention not supported
+            q = queries.permute(0, 2, 1, 3)  # [B, H, L, E]
+            k = keys.permute(0, 2, 1, 3)
+            v = values.permute(0, 2, 1, 3)
 
-        if self.mask_flag:
-            if attn_mask is None:
-                attn_mask = TriangularCausalMask(B, L, device=queries.device)
-
-            scores.masked_fill_(attn_mask.mask, -np.inf)
-
-        A = self.dropout(torch.softmax(scale * scores, dim=-1))
-        V = torch.einsum("bhls,bshd->blhd", A, values)
-
-        if self.output_attention:
-            return V.contiguous(), A
+            scale = self.scale or 1.0 / math.sqrt(E)
+            attn_output = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=(
+                    attn_mask.mask[:, 0] if (self.mask_flag and attn_mask) else None
+                ),
+                dropout_p=self.dropout.p if self.training else 0.0,
+                scale=scale,
+            )
+            V = attn_output.permute(0, 2, 1, 3).contiguous()
+            return (V, None) if self.output_attention else (V, None)
         else:
-            return V.contiguous(), None
+            scale = self.scale or 1.0 / math.sqrt(E)
+            scores = torch.einsum("blhe,bshe->bhls", queries, keys)
+
+            if self.mask_flag:
+                if attn_mask is None:
+                    attn_mask = TriangularCausalMask(B, L, device=queries.device)
+                scores.masked_fill_(attn_mask.mask, -np.inf)
+
+            A = self.dropout(torch.softmax(scale * scores, dim=-1))
+            V = torch.einsum("bhls,bshd->blhd", A, values)
+
+            return (
+                (V.contiguous(), A) if self.output_attention else (V.contiguous(), None)
+            )
 
 # %% ../../nbs/common.modules.ipynb 19
 class PositionalEmbedding(nn.Module):

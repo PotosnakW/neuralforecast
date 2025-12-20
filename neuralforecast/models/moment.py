@@ -80,7 +80,6 @@ class Long_Forecaster(nn.Module):
         setattr(model_config, 'infini_channel_exclusion', configs.infini_channel_exclusion)
         setattr(model_config, 'layerwise_beta', configs.layerwise_beta)
         setattr(model_config, 'channelwise_beta', configs.channelwise_beta)
-        setattr(model_config, 'max_sequence_length', configs.input_size / configs.patch_len)
         setattr(model_config, 'n_channels', configs.n_series)
         setattr(model_config, 'mlpmixer_hidden_size', configs.mlpmixer_hidden_size)
         setattr(model_config, 'mlpmixer_n_layers', configs.mlpmixer_n_layers)
@@ -233,8 +232,6 @@ class MOMENT(BaseModel):
         layerwise_beta: bool = True,
         channelwise_beta: bool = False,
         transformer_backbone: str = "google/t5-efficient-tiny",
-        transformer_type: str = "encoder_only",
-        randomly_initialize_backbone: bool = True,
         n_layers: int = 4,
         n_heads: int = 16,
         hidden_size: int = 128,

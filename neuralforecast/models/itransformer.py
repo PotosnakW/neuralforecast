@@ -29,54 +29,51 @@ class itransformer_backbone(nn.Module):
     
     def __init__(self, config):
         super().__init__()
-        
-        self.hidden_size = config.hidden_size
-        self.h = config.h
-        self.c_out = config.c_out
-        self.n_series = config.n_series
-        self.input_size = config.input_size
-        
+
         # RevIN normalization
         self.revin = config.revin
         if config.revin:
             self.revin_layer = RevINMultivariate(
                 num_features=config.n_series,
                 affine=config.revin_affine,
-                subtract_last=False,
+                subtract_last=config.revin_subtract_last,
             )
         
         # Embedding layer (inverted - operates on variate dimension)
         self.enc_embedding = DataEmbedding_inverted(
-            config.input_size, self.hidden_size, config.dropout
+            config.input_size, config.hidden_size, config.dropout
         )
         
         # Transformer encoder
         self.encoder = TransEncoder(
             [
                 TransEncoderLayer(
-                    AttentionLayer(
-                        FullAttention(
-                            False, config.factor, attention_dropout=config.dropout
+                    attention=AttentionLayer(
+                        attention=FullAttention(
+                            mask_flag=False, 
+                            factor=config.factor, 
+                            attention_dropout=config.dropout,
                         ),
-                        self.hidden_size,
-                        config.n_heads,
+                        hidden_size=config.hidden_size,
+                        n_heads=config.n_heads,
+                        d_keys=config.d_k,
+                        d_values=config.d_v,
                     ),
-                    self.hidden_size,
-                    config.linear_hidden_size,
+                    hidden_size=config.hidden_size,
+                    conv_hidden_size=config.linear_hidden_size,
                     dropout=config.dropout,
                     activation=F.gelu,
                 )
                 for l in range(config.n_layers)
             ],
-            norm_layer=torch.nn.LayerNorm(self.hidden_size),
+            norm_layer=torch.nn.LayerNorm(config.hidden_size),
         )
         
-        # Prediction head (same as MOMENT/iTransformerT5)
-        head_nf = self.hidden_size
+        # Prediction head
         self.head = Flatten_Head(
             multivariate_head=config.multivariate_head,
             n_vars=config.n_series,
-            nf=head_nf,
+            nf=config.hidden_size,
             h=config.h,
             c_out=config.c_out,
             head_dropout=config.head_dropout,
@@ -95,21 +92,21 @@ class itransformer_backbone(nn.Module):
         
         # Embedding
         x_enc = x_enc.permute(0, 2, 1)  # [B, L, N]
-        enc_out = self.enc_embedding(x_enc, None) # B L N -> B N E
+        enc_in = self.enc_embedding(x_enc, None) # B L N -> B N E
         
         # Encoding
-        enc_out, attns = self.encoder(enc_out, attn_mask=None) # B N E -> B N E
+        enc_out, attns = self.encoder(enc_in, attn_mask=None) # B N E -> B N E
         
         # Projection to forecast horizon using Flatten_Head
         # [B, N, E] -> [B, N, 1, E] -> [B, N, H*C]
         enc_out = enc_out.unsqueeze(2)  # [B, N, 1, E]
-        dec_out = self.head(enc_out)  # [B, N, H*C]
+        dec_out = self.head(enc_out)  # [B, N, H*c_out]
         
         # De-normalization with RevIN
         if self.revin:
-            dec_out = dec_out.permute(0, 2, 1)  # [B, H*C, N]
+            dec_out = dec_out.permute(0, 2, 1)  # [B, H*c_out, N]
             dec_out = self.revin_layer(dec_out, "denorm")
-            dec_out = dec_out.permute(0, 2, 1)  # [B, N, H*C]
+            dec_out = dec_out.permute(0, 2, 1)  # [B, N, H*c_out]
         
         return dec_out
 
@@ -183,12 +180,15 @@ class iTransformer(BaseModel):
         n_layers: int = 2,
         factor: int = 1,
         hidden_size: int = 512,
-        linear_hidden_size: Optional[int] = None,
+        linear_hidden_size: int = 256,
+        d_k: Optional[int] = None,
+        d_v: Optional[int] = None,
         dropout: float = 0.1,
         head_dropout: float = 0.0,
         multivariate_head: bool = False,
         revin: bool = True,
         revin_affine: bool = False,
+        revin_subtract_last: bool = True,
         start_padding_enabled=False,
         step_size: int = 1,
         scaler_type: str = "identity",
