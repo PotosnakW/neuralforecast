@@ -30,11 +30,11 @@ class timerxl_backbone(nn.Module):
         self.hidden_size = config.hidden_size
 
         self.blocks = TimerBlock(
-            [
+            attn_layers=[
                 TimerLayer(
-                    AttentionLayer(
+                    attention=AttentionLayer(
                         TimeAttention(
-                            True, 
+                            mask_flag=True, 
                             attention_dropout=config.dropout,
                             output_attention=False, # output_attention option returns the same thing (not implemented yet?)
                             d_model=config.hidden_size, 
@@ -42,7 +42,7 @@ class timerxl_backbone(nn.Module):
                             covariate=False, # config.covariate, todo: future work
                             flash_attention=False, #config.flash_attention),
                             d_keys=config.d_k,
-                            use_rope=config.pe_type == 'rope', # rm for now to match other multivariate transformers w/o rope
+                            use_rope=config.pe_type == 'rope',
                         ), 
                         d_model=config.hidden_size, 
                         n_heads=config.n_heads,
@@ -60,10 +60,11 @@ class timerxl_backbone(nn.Module):
 
         self.revin = config.revin
         if config.revin:
-            self.revin_layer = RevINMultivariate(num_features=config.n_series, 
-                                                 affine=config.revin_affine,
-                                                 subtract_last=False,
-                                                )
+            self.revin_layer = RevINMultivariate(
+                num_features=config.n_series, 
+                affine=config.revin_affine,
+                subtract_last=config.revin_subtract_last,
+            )
 
         self.padding_patch = config.padding_patch
         patch_num = int((config.input_size - config.patch_len) / config.stride + 1)
@@ -74,7 +75,7 @@ class timerxl_backbone(nn.Module):
 
         self.tokenizer = Patching(
             patch_len=config.patch_len, 
-            stride=config.stride,
+            stride=config.stride, # Timer-XL uses step=self.input_token_len
         )
 
         self.W_P = nn.Linear(
@@ -91,54 +92,45 @@ class timerxl_backbone(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
 
         # Prediction Head
-        head_nf = config.hidden_size * patch_num
         self.head = Flatten_Head(
                 multivariate_head=config.multivariate_head,
                 n_vars=config.n_series,
-                nf=head_nf,
+                nf=config.hidden_size * patch_num,
                 h=config.h,
                 c_out=config.c_out,
                 head_dropout=config.head_dropout,
             )
 
-    def forward(self, x):
-        B, C, L = x.shape
+    def forward(self, x_enc):
+        batch_size, n_channels, seq_len = x_enc.shape
 
-        # if self.use_norm:
-        #     means = x.mean(-1, keepdim=True).detach()
-        #     x = x - means
-        #     stdev = torch.sqrt(
-        #         torch.var(x, dim=-1, keepdim=True, unbiased=False) + 1e-5)
-        #     x /= stdev
-        if self.revin: #Used default neuralforecast RevIN to simplicity/reduce modules
-            x = x.permute(0, 2, 1) #[bs x seq_len x nvars]
-            x = self.revin_layer(x, "norm")
-            x = x.permute(0, 2, 1) #[bs x nvars x seq_len]
-    
+        #  Normalization (applied over axis=1)
+        if self.revin:
+            x_enc = x_enc.permute(0, 2, 1) # [batch_size x seq_len x n_channel]
+            x_enc = self.revin_layer(x_enc, "norm")
+            x_enc = x_enc.permute(0, 2, 1) # [batch_size x n_channel x seq_len]
+        
         # Patching
-        # x = x.unfold(
-        #     dimension=-1, size=self.input_token_len, step=self.input_token_len) # [B, C, N, P]
         if self.padding_patch == "end":
-            x = self.padding_patch_layer(x)
-        x = self.tokenizer(x=x) # [batch_size x n_channels x n_patch x patch_len]
+            x_enc = self.padding_patch_layer(x_enc) 
+        x_enc = self.tokenizer(x=x_enc) # [batch_size x n_channels x n_patch x patch_len]
 
-        embed_out = self.W_P(x) # [B, C, N, D]
-        embed_out += self.W_pos(embed_out) # [B, C, N, D]
-        embed_out = self.dropout(embed_out) # [B, C, N, D]
+        # Embeddings
+        x_enc = self.W_P(x_enc) # [batch_size x n_channels x n_patch x d_model]
+        x_enc += self.W_pos(x_enc) # [batch_size x n_channels x n_patch x d_model]
+        x_enc = self.dropout(x_enc)
 
         # Encoder
-        embed_out = embed_out.reshape(B, C * self.patch_num, -1) # [B, C * N, D]
-        embed_out, attns = self.blocks(embed_out, n_vars=C, n_tokens=self.patch_num)
+        x_enc = x_enc.reshape(batch_size, n_channels * self.patch_num, -1) # [batch_size x n_channels * n_patch x d_model]
+        enc_out, attns = self.blocks(x_enc, n_vars=n_channels, n_tokens=self.patch_num) # [batch_size x n_channels * n_patch, d_model]
 
         # Decoder
         # dec_out = self.head(embed_out)  # [B, C * N, P]
         # dec_out = dec_out.reshape(B, C, N, -1).reshape(B, C, -1)  # [B, C, N * P * c_out]
-        embed_out = embed_out.reshape(
-            (-1, C, self.patch_num, self.hidden_size)) # [batch_size, n_channels, n_patch, d_model]
-        dec_out = self.head(embed_out) # [batch_size, n_channels, h * c_out]
+        enc_out = enc_out.reshape(
+            (batch_size, n_channels, self.patch_num, self.hidden_size)) # [batch_size, n_channels, n_patch, d_model]
+        dec_out = self.head(enc_out) # [batch_size, n_channels, h * c_out]
 
-        # if self.use_norm:
-        #     dec_out = dec_out * stdev + means
         if self.revin:
             dec_out = dec_out.permute(0, 2, 1)
             dec_out = self.revin_layer(dec_out, "denorm")
@@ -172,34 +164,29 @@ class TimerXL(BaseModel):
         layerwise_beta: bool = True,
         channelwise_beta: bool = False,
         transformer_backbone: str = "google/t5-efficient-tiny",
-        transformer_type: str = "encoder_only",
-        randomly_initialize_backbone: bool = True,
         n_layers: int = 4,
-        num_decoder_layers: int = 0,
         n_heads: int = 16,
         hidden_size: int = 128,
-        linear_hidden_size: int = 128,
+        linear_hidden_size: int = 256,
         d_k: int = 32,
         d_v: int = 32,
-        dropout: float = 0.1,
+        dropout: float = 0.0,
         head_dropout: float = 0.0,
         patch_len: int = 16,
         stride: int = 8,
-        use_rope: bool = False,
+        revin: bool = True,
+        revin_affine: bool = False,
+        revin_subtract_last: bool = True,
         mlpmixer_hidden_size: int = 128,
         mlpmixer_n_layers: int = 3,
         mlpmixer_dropout: float = 0.1,
         multivariate_head: bool = False,
         pe_type: str = "sincos",
         learn_pe: bool = False,
-        use_pca_adapter: bool = False,
-        pca_n_series: int = 2,
         padding_patch="end",
         start_padding_enabled=False,
         step_size: int = 1,
         scaler_type: str = "identity",
-        revin: str = True,
-        revin_affine: str = False,
         activation: str = "gelu",
         random_seed: int = 1,
         drop_last_loader: bool = False,
@@ -256,12 +243,16 @@ class TimerXL(BaseModel):
             **trainer_kwargs
             )
 
+        # Enforce correct patch_len, regardless of user input
+        patch_len = min(input_size + stride, patch_len)
+
         config = {key: value for key, value in self.hparams.items() 
                   if key != 'loss'
                  }
         config['c_out'] = self.loss.outputsize_multiplier
-
+        config['patch_len'] = patch_len
         config = SimpleNamespace(**config)
+    
         self.h = h
         self.n_series = n_series
         self.model = timerxl_backbone(config)
@@ -270,9 +261,6 @@ class TimerXL(BaseModel):
         x = windows_batch[
             "insample_y"
         ]  #   [batch_size (B), input_size (L), n_series (N)]
-        #hist_exog = windows_batch["hist_exog"]  #   [B, hist_exog_size (X), L, N]
-        #futr_exog = windows_batch["futr_exog"]  #   [B, futr_exog_size (F), L + h, N]
-        #stat_exog = windows_batch["stat_exog"]  #   [N, stat_exog_size (S)]
 
         batch_size = x.shape[0]
         x = x.permute(0, 2, 1) # [batch_size (B), n_series (N), input_size (L)]

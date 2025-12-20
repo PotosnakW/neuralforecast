@@ -30,10 +30,11 @@ class crossformer_backbone(nn.Module):
         self.revin = config.revin
 
         if config.revin:
-            self.revin_layer = RevINMultivariate(num_features=config.n_series, 
-                                                 affine=config.revin_affine,
-                                                 subtract_last=False,
-                                                )
+            self.revin_layer = RevINMultivariate(
+                num_features=config.n_series, 
+                affine=config.revin_affine,
+                subtract_last=config.revin_subtract_last,
+            )
 
         self.padding_patch = config.padding_patch
         patch_num = int((config.input_size - config.patch_len) / config.stride + 1)
@@ -89,34 +90,35 @@ class crossformer_backbone(nn.Module):
             d_v=config.d_v,
         )
 
-    def forward(self, x):
-        B, N, L = x.shape
-        # Normalization 
+    def forward(self, x_enc):
+        batch_size, n_channels, seq_len = x_enc.shape
+    
+        # Normalization (applied over axis=1)
         if self.revin:
-            x = x.permute(0, 2, 1) #[bs x seq_len x nvars]
-            x = self.revin_layer(x, "norm")
-            x = x.permute(0, 2, 1) #[bs x nvars x seq_len]
-        
+            x_enc = x_enc.permute(0, 2, 1) # [batch_size x seq_len x n_channel]
+            x_enc = self.revin_layer(x_enc, "norm")
+            x_enc = x_enc.permute(0, 2, 1) # [batch_size x n_channel x seq_len]
+    
         # Patching
         if self.padding_patch == "end":
-            x = self.padding_patch_layer(x)
-        x = self.tokenizer(x=x) # [batch_size x n_channels x n_patch x patch_len]
+            x_enc = self.padding_patch_layer(x_enc) 
+        x_enc = self.tokenizer(x=x_enc) # [batch_size x n_channels x n_patch x patch_len]
 
         # Embeddings
-        x = self.W_P(x) # [batch_size x n_channels x n_patch x d_model]
-        pos_enc = self.W_pos(x)
-        x += pos_enc # [batch_size x n_channels x n_patch x d_model]
+        x_enc = self.W_P(x_enc) # [batch_size x n_channels x n_patch x d_model]
+        pos_enc = self.W_pos(x_enc)
+        x_enc += pos_enc # [batch_size x n_channels x n_patch x d_model]
         #x = self.pre_norm(x) Crossformer add this. Remove to align multivariate transformer architectures for comparison
-        
+
         # Encoder
-        enc_out = self.encoder(x)
+        enc_out = self.encoder(x_enc)
 
         # Decoder
-        dec_in = repeat(pos_enc, 'b ts l d -> (B b) (S ts) l d', B=B, S=self.n_series)
+        dec_in = repeat(pos_enc, 'b ts l d -> (B b) (S ts) l d', B=batch_size, S=n_channels)
         dec_out = self.decoder(dec_in, enc_out)  # (B, output_patch_len * c_out, N)
-        dec_out = dec_out.view(B, -1, self.c_out, N)  # (B, output_patch_len, c_out, N)
+        dec_out = dec_out.view(batch_size, -1, self.c_out, n_channels)  # (B, output_patch_len, c_out, N)
         dec_out = dec_out[:, :self.h, :, :]  # [B, h, c_out, N]
-        dec_out = dec_out.view(B, self.h * self.c_out, N)  # [B, h*c_out, N]
+        dec_out = dec_out.view(batch_size, self.h * self.c_out, n_channels)  # [B, h*c_out, N]
         dec_out = dec_out.permute(0, 2, 1)  # [B, N, h*c_out]
 
         # denorm
@@ -225,8 +227,9 @@ class Crossformer(BaseModel):
         start_padding_enabled=False,
         step_size: int = 1,
         scaler_type: str = "identity",
-        revin: str = True,
-        revin_affine: str = False,
+        revin: bool = True,
+        revin_affine: bool = False,
+        revin_subtract_last: bool = True,
         random_seed: int = 1,
         drop_last_loader: bool = False,
         alias: Optional[str] = None,
@@ -295,9 +298,6 @@ class Crossformer(BaseModel):
         x = windows_batch[
             "insample_y"
         ]  #   [batch_size (B), input_size (L), n_series (N)]
-        #hist_exog = windows_batch["hist_exog"]  #   [B, hist_exog_size (X), L, N]
-        #futr_exog = windows_batch["futr_exog"]  #   [B, futr_exog_size (F), L + h, N]
-        #stat_exog = windows_batch["stat_exog"]  #   [N, stat_exog_size (S)]
         
         batch_size = x.shape[0]
         x_enc = x.permute(0, 2, 1) # [batch_size (B), n_series (N), input_size (L)]

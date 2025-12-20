@@ -275,7 +275,6 @@ class QueryKeyProjection(nn.Module):
         )
 
     def forward(self, query, key, query_id, kv_id):
-        print(f"query shape: {query.shape}, split_sizes: {self.split_sizes}")
         if self.partial_factor is not None:
             queries = list(query.split(self.split_sizes, dim=-1))
             keys = list(key.split(self.split_sizes, dim=-1))

@@ -17,9 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class Long_Forecaster(nn.Module): 
-
     def __init__(self, config):
-
         super().__init__()
 
         self.hidden_size = config.hidden_size
