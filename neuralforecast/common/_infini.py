@@ -17,13 +17,13 @@ class ScaledDotProductAttention(nn.Module):
     def __init__(
         self,
         config,
+        d_k,
         d_v,
     ):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.n_heads = config.n_heads
-        self.head_dim = config.hidden_size // config.n_heads
-        self.scale = self.head_dim ** -0.5
+        self.scale = d_k ** -0.5
         self.attn_dropout = nn.Dropout(config.attn_dropout)
         self.res_attention = config.res_attention
         self.inner_dim = config.n_heads * d_v
@@ -42,9 +42,9 @@ class ScaledDotProductAttention(nn.Module):
         Scaled Dot-Product Attention.
         
         Input shape:
-            q: [bs x n_heads x seq_len x d_k]
-            k: [bs x n_heads x d_k x seq_len]  (transposed)
-            v: [bs x n_heads x seq_len x d_v]
+            q: [bs * n_channels x seq_len x n_heads x d_k]
+            k: [bs * n_channels x seq_len x n_heads x d_k]
+            v: [bs * n_channels x seq_len x n_heads x d_v]
             prev            : [bs x n_heads x q_len x seq_len]
             key_padding_mask: [bs x seq_len]
             attn_mask       : [1 x seq_len x seq_len]
@@ -55,6 +55,10 @@ class ScaledDotProductAttention(nn.Module):
         """
 
         batch_size = q.shape[0]
+
+        q = q.transpose(1, 2)  # [bs x n_heads x seq_len x d_k]
+        k = k.permute(0, 2, 3, 1)  # [bs x n_heads x d_k x seq_len]
+        v = v.transpose(1, 2)  # [bs x n_heads x seq_len x d_v]
         
         # Scaled MatMul (q, k) - compute attention scores
         attn_scores = torch.matmul(q, k) * self.scale  # Vaswani et al. scaling
@@ -102,10 +106,11 @@ class InfiniScaledDotProductAttention(ScaledDotProductAttention):
     def __init__(
         self,
         config,
+        d_k,
         d_v,
         beta: Optional[torch.tensor] = None,
     ):
-        super().__init__(config=config, d_v=d_v)
+        super().__init__(config=config, d_k=d_k, d_v=d_v)
 
         self.elu = nn.ELU()
         
@@ -189,7 +194,7 @@ class InfiniScaledDotProductAttention(ScaledDotProductAttention):
 
         return memory_matrix_summed, z_excluded
 
-    def _retrieve_from_memory(self, query_states, memory_matrix, z_excluded):
+    def retrieve_from_memory(self, query_states, memory_matrix, z_excluded):
         sigma_q = self.elu(query_states) + 1.0  # [B, C, H, P, D]
         numerator = sigma_q @ memory_matrix         # [B, C, H, P, D]
         denominator = (sigma_q @ z_excluded) + 1e-6 # [B, C, H, P, 1]
@@ -228,9 +233,9 @@ class InfiniScaledDotProductAttention(ScaledDotProductAttention):
         Scaled Dot-Product Attention with memory mechanism.
         
         Input shape (with channels):
-            q: [bs x n_channels x n_heads x seq_len x d_k]
-            k: [bs x n_channels x n_heads x d_k x seq_len]  (transposed)
-            v: [bs x n_channels x n_heads x seq_len x d_v]
+            q: [bs * n_channels x seq_len x n_heads x d_k]
+            k: [bs * n_channels x seq_len x n_heads x d_k]
+            v: [bs * n_channels x seq_len x n_heads x d_v]
             n_channels: int
             prev            : [bs x n_heads x q_len x seq_len]
             key_padding_mask: [bs x seq_len]
@@ -241,14 +246,24 @@ class InfiniScaledDotProductAttention(ScaledDotProductAttention):
             attn_weights: [bs x n_channels x n_heads x seq_len x seq_len]
         """
 
-        batch_size = q.shape[0]
-        n_channels = q.shape[1]
+        batch_size = q.shape[0] // n_channels
+        seq_len = q.shape[1]
+
+        q = q.view(batch_size, n_channels, seq_len, self.n_heads, -1)
+        q = q.transpose(2, 3).contiguous()  # [bs x n_channels x n_heads x seq_len x d_k]
+            
+        k = k.view(batch_size, n_channels, seq_len, self.n_heads, -1)
+        k = k.permute(0, 1, 3, 4, 2).contiguous()  # [bs x n_channels x n_heads x d_k x seq_len]
+            
+        v = v.view(batch_size, n_channels, seq_len, self.n_heads, -1)
+        v = v.transpose(2, 3).contiguous()  # [bs x n_channels x n_heads x seq_len x d_v]
         
         # Scaled MatMul (q, k) - compute attention scores
         attn_scores = torch.matmul(q, k) * self.scale  # Vaswani et al. scaling
 
         # Add pre-softmax attention scores from the previous layer (optional)
         if prev is not None:
+            prev = prev.view(batch_size, n_channels, self.n_heads, seq_len, seq_len)
             attn_scores = attn_scores + prev
         
         # Apply attention mask (optional)
@@ -286,6 +301,7 @@ class InfiniScaledDotProductAttention(ScaledDotProductAttention):
 
         output = output.transpose(2, 3).contiguous()  # [bs x n_channels x seq_len x n_heads x d_v]
         output = output.view(batch_size*n_channels, -1, self.inner_dim)  # [bs*n_channels x seq_len x n_heads*d_v]
+        attn_weights = attn_weights.view(batch_size*n_channels, self.n_heads, seq_len, seq_len)
 
         if self.res_attention:
             return output, attn_weights, attn_scores
@@ -331,12 +347,14 @@ class MultiheadAttention(nn.Module):
         if config.infini_mixer_type.lower() in ['betas', 'mlp', 'mlp_query']:
             self.sdp_attn = InfiniScaledDotProductAttention(
                 config=config,
+                d_k=self.d_k,
                 d_v=self.d_v,
                 beta=beta,
             )
         elif config.infini_mixer_type == 'none':
             self.sdp_attn = ScaledDotProductAttention(
                 config=config,
+                d_k=self.d_k,
                 d_v=self.d_v,
             )
         else:
@@ -382,33 +400,12 @@ class MultiheadAttention(nn.Module):
             K = Q
         if V is None:
             V = Q
-    
-        use_channels = n_channels > 1
         
         # Linear projections and split into multiple heads
         q_s = self.W_Q(Q).view(batch_size, -1, self.n_heads, self.d_k)  # [bs x seq_len x n_heads x d_k]
         k_s = self.W_K(K).view(batch_size, -1, self.n_heads, self.d_k)  # [bs x seq_len x n_heads x d_k]
         v_s = self.W_V(V).view(batch_size, -1, self.n_heads, self.d_v)  # [bs x seq_len x n_heads x d_v]
-        
-        if use_channels and self.infini_mixer_type != 'none':
-            # Reshape for multi-channel processing (Infini-attention)
-            seq_len = q_s.size(1)
-            batch_size_orig = batch_size // n_channels
-            
-            q_s = q_s.view(batch_size_orig, n_channels, seq_len, self.n_heads, self.d_k)
-            q_s = q_s.transpose(2, 3).contiguous()  # [bs x n_channels x n_heads x seq_len x d_k]
-            
-            k_s = k_s.view(batch_size_orig, n_channels, seq_len, self.n_heads, self.d_k)
-            k_s = k_s.permute(0, 1, 3, 4, 2).contiguous()  # [bs x n_channels x n_heads x d_k x seq_len]
-            
-            v_s = v_s.view(batch_size_orig, n_channels, seq_len, self.n_heads, self.d_v)
-            v_s = v_s.transpose(2, 3).contiguous()  # [bs x n_channels x n_heads x seq_len x d_v]
-        else:
-            # Standard transformer format (vanilla attention or no channels)
-            q_s = q_s.transpose(1, 2)  # [bs x n_heads x seq_len x d_k]
-            k_s = k_s.permute(0, 2, 3, 1)  # [bs x n_heads x d_k x seq_len]
-            v_s = v_s.transpose(1, 2)  # [bs x n_heads x seq_len x d_v]
-            
+
         # Apply Scaled Dot-Product Attention (multiple heads)
         if self.res_attention:
             output, attn_weights, attn_scores = self.sdp_attn(

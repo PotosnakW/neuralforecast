@@ -308,9 +308,9 @@ class T5InfiniAttention(T5Attention):
     
     def _update_memory_matrix_allchannels(self, key_states, value_states, n_channels):
         sigma_k = self.elu(key_states) + 1.0  # [batch_size, n_channels, n_heads, n_patch, dim]
-        sigma_k_transposed = sigma_k.transpose(-2, -1) # [batch_size, n_channels, n_heads, dim, n_patch]
+        sigma_k_T = sigma_k.transpose(-2, -1) # [batch_size, n_channels, n_heads, dim, n_patch]
 
-        memory_matrix = torch.matmul(sigma_k_transposed, value_states).sum(dim=1).unsqueeze(1) # [batch_size, 1, n_heads, dim, dim] sum over channels then unsqueeze to enable broadcasting over channels
+        memory_matrix = torch.matmul(sigma_k_T, value_states).sum(dim=1).unsqueeze(1) # [batch_size, 1, n_heads, dim, dim] sum over channels then unsqueeze to enable broadcasting over channels
         
         z = sigma_k.sum(dim=-2).unsqueeze(-1).sum(dim=1) # [batch_size, n_heads, dim, 1] sum over sequence length and channels
         z = z.unsqueeze(dim=1) # [batch_size, 1, n_heads, dim, 1]
@@ -831,30 +831,34 @@ class T5Stack(T5Stack):
             )
 
         if self.config.is_decoder:
-            attention_mask = create_causal_mask(
-                config=self.config,
-                input_embeds=inputs_embeds,
-                attention_mask=attention_mask,
-                cache_position=cache_position,
-                past_key_values=past_key_values.self_attention_cache
-                if isinstance(past_key_values, EncoderDecoderCache)
-                else past_key_values,
-            )
+            raise NotImplementedError('config.is_decoder is not supported.')
+            # attention_mask = create_causal_mask(
+            #     config=self.config,
+            #     input_embeds=inputs_embeds,
+            #     attention_mask=attention_mask,
+            #     cache_position=cache_position,
+            #     past_key_values=past_key_values.self_attention_cache
+            #     if isinstance(past_key_values, EncoderDecoderCache)
+            #     else past_key_values,
+            #)
         else:
-            attention_mask = create_bidirectional_mask(
-                config=self.config,
-                input_embeds=inputs_embeds,
-                attention_mask=attention_mask,
-            )
+            assert attention_mask is not None
+            attention_mask = attention_mask
+            # attention_mask = create_bidirectional_mask(
+            #     config=self.config,
+            #     input_embeds=inputs_embeds,
+            #     attention_mask=attention_mask,
+            # )
 
         encoder_extended_attention_mask = None
         if self.is_decoder and encoder_hidden_states is not None:
-            encoder_extended_attention_mask = create_bidirectional_mask(
-                config=self.config,
-                input_embeds=inputs_embeds,
-                attention_mask=encoder_attention_mask,
-                encoder_hidden_states=encoder_hidden_states,
-            )
+            raise NotImplementedError('config.is_decoder is not supported.')
+            # encoder_extended_attention_mask = create_bidirectional_mask(
+            #     config=self.config,
+            #     input_embeds=inputs_embeds,
+            #     attention_mask=encoder_attention_mask,
+            #     encoder_hidden_states=encoder_hidden_states,
+            # )
 
         all_hidden_states = () if output_hidden_states else None
         all_attentions = () if output_attentions else None
@@ -934,14 +938,14 @@ class T5Model(T5Model):
         encoder_config = copy.deepcopy(config)
         encoder_config.is_decoder = False
         encoder_config.use_cache = False
-        encoder_config.is_encoder_decoder = False
-        self.encoder = T5Stack(encoder_config, self.shared)
+        encoder_config.tie_encoder_decoder = False
+        self.encoder = T5Stack(encoder_config)
 
         decoder_config = copy.deepcopy(config)
         decoder_config.is_decoder = True
-        decoder_config.is_encoder_decoder = False
+        decoder_config.tie_encoder_decoder = False
         decoder_config.num_layers = config.num_decoder_layers
-        self.decoder = T5Stack(decoder_config, self.shared)
+        self.decoder = T5Stack(decoder_config)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -1080,3 +1084,4 @@ class T5Model(T5Model):
             encoder_hidden_states=encoder_outputs.hidden_states,
             encoder_attentions=encoder_outputs.attentions,
         )
+    
