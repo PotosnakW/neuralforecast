@@ -172,6 +172,7 @@ class iTransformer(BaseModel):
         h,
         input_size,
         n_series,
+        univariate=True,
         stat_exog_list=None,
         hist_exog_list=None,
         futr_exog_list=None,
@@ -254,17 +255,20 @@ class iTransformer(BaseModel):
     
         self.h = h
         self.n_series = n_series
+        self.univariate = univariate
         self.model = itransformer_backbone(config)
 
     def forward(self, windows_batch):
         x = windows_batch["insample_y"]  # [batch_size (B), input_size (L), n_series (N)]
+        B, L, N = x.shape
         
-        batch_size = x.shape[0]
+        if self.univariate:
+            x = x.permute(0, 2, 1).reshape(B*N, L, 1)  # [B, L, N] -> [B*N, L, 1]
+        
         x_enc = x.permute(0, 2, 1)  # [batch_size (B), n_series (N), input_size (L)]
-        
         forecast = self.model(x_enc=x_enc)  # [batch_size, n_series, horizon*c_out]
         
-        forecast = forecast.view(batch_size, self.n_series, self.h, -1)  # [B, N, H, C]
-        forecast = forecast.permute(0, 2, 3, 1).reshape(batch_size, self.h, -1)  # [B, H, C*N]
+        forecast = forecast.view(B, self.n_series, self.h, -1)  # [B, N, H, C]
+        forecast = forecast.permute(0, 2, 3, 1).reshape(B, self.h, -1)  # [B, H, C*N]
         
         return forecast

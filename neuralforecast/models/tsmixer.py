@@ -156,6 +156,7 @@ class TSMixer(BaseModel):
         h,
         input_size,
         n_series,
+        univariate=True,
         futr_exog_list=None,
         hist_exog_list=None,
         stat_exog_list=None,
@@ -164,6 +165,8 @@ class TSMixer(BaseModel):
         ff_dim=64,
         dropout=0.9,
         revin=True,
+        revin_affine=False,
+        revin_subtract_last=True,
         loss=MAE(),
         valid_loss=None,
         max_steps: int = 1000,
@@ -225,15 +228,25 @@ class TSMixer(BaseModel):
             **trainer_kwargs
         )
 
+        self.univariate = univariate
+
         # Reversible InstanceNormalization layer
         self.revin = revin
         if self.revin:
-            self.norm = RevINMultivariate(num_features=n_series, affine=True)
+            #self.norm = RevINMultivariate(num_features=n_series, affine=True)
+            self.norm = RevINMultivariate(
+                num_features=n_series if not univariate else 1,
+                affine=revin_affine,
+                subtract_last=revin_subtract_last,
+            )
 
         # Mixing layers
         mixing_layers = [
             MixingLayer(
-                n_series=n_series, input_size=input_size, dropout=dropout, ff_dim=ff_dim
+                n_series=n_series if not univariate else 1, 
+                input_size=input_size, 
+                dropout=dropout, 
+                ff_dim=ff_dim
             )
             for _ in range(n_block)
         ]
@@ -247,7 +260,10 @@ class TSMixer(BaseModel):
     def forward(self, windows_batch):
         # Parse batch
         x = windows_batch["insample_y"]  # x: [batch_size, input_size, n_series]
-        batch_size = x.shape[0]
+        B, L, N = x.shape
+        
+        if self.univariate:
+            x = x.permute(0, 2, 1).reshape(B*N, L, 1)  # [B, L, N] -> [B*N, L, 1]
 
         # TSMixer: InstanceNorm + Mixing layers + Dense output layer + ReverseInstanceNorm
         if self.revin:
@@ -259,8 +275,11 @@ class TSMixer(BaseModel):
         if self.revin:
             x = self.norm(x, "denorm")
 
-        x = x.reshape(
-            batch_size, self.h, self.loss.outputsize_multiplier * self.n_series
-        )
+        if self.univariate:
+            # Reshape back: [B*N, h, outputsize] -> [B, N, h, outputsize] -> [B, h, outputsize, N] -> [B, h, outputsize*N]
+            x = x.reshape(B, N, self.h, self.loss.outputsize_multiplier)
+            x = x.permute(0, 2, 3, 1).reshape(B, self.h, -1)  # [B, h, outputsize*N]
+        else:
+            x = x.reshape(B, self.h, self.loss.outputsize_multiplier * self.n_series)
 
         return x

@@ -69,6 +69,7 @@ class MLPMultivariate(BaseModel):
         h,
         input_size,
         n_series,
+        univariate=True,
         stat_exog_list=None,
         hist_exog_list=None,
         futr_exog_list=None,
@@ -137,13 +138,13 @@ class MLPMultivariate(BaseModel):
         # Architecture
         self.num_layers = num_layers
         self.hidden_size = hidden_size
+        self.univariate = univariate
 
-        input_size_first_layer = n_series * (
-            input_size
-            + self.hist_exog_size * input_size
-            + self.futr_exog_size * (input_size + h)
-            + self.stat_exog_size
-        )
+        # Calculate input size based on mode
+        if self.univariate:
+            input_size_first_layer = input_size
+        else:
+            input_size_first_layer = n_series * input_size
 
         # MultiLayer Perceptron
         layers = [
@@ -154,42 +155,44 @@ class MLPMultivariate(BaseModel):
         self.mlp = nn.ModuleList(layers)
 
         # Adapter with Loss dependent dimensions
-        self.out = nn.Linear(
-            in_features=hidden_size,
-            out_features=h * self.loss.outputsize_multiplier * n_series,
-        )
+        if self.univariate:
+            self.out = nn.Linear(
+                in_features=hidden_size,
+                out_features=h * self.loss.outputsize_multiplier,
+            )
+        else:
+            self.out = nn.Linear(
+                in_features=hidden_size,
+                out_features=h * self.loss.outputsize_multiplier * n_series,
+            )
 
     def forward(self, windows_batch):
 
         # Parse windows_batch
         x = windows_batch[
-            "insample_y"
-        ]  #   [batch_size (B), input_size (L), n_series (N)]
-        hist_exog = windows_batch["hist_exog"]  #   [B, hist_exog_size (X), L, N]
-        futr_exog = windows_batch["futr_exog"]  #   [B, futr_exog_size (F), L + h, N]
-        stat_exog = windows_batch["stat_exog"]  #   [N, stat_exog_size (S)]
-
-        # Flatten MLP inputs [B, C, L+H, N] -> [B, C * (L+H) * N]
-        # Contatenate [ Y^1_t, ..., Y^N_t | X^1_{t-L},..., X^1_{t}, ..., X^N_{t} | F^1_{t-L},..., F^1_{t+H}, ...., F^N_{t+H} | S^1, ..., S^N ]
-        batch_size = x.shape[0]
+        "insample_y"
+         ]  #   [batch_size (B), input_size (L), n_series (N)]
+    
+        B, L, N = x.shape
+        
+        if self.univariate:
+            x = x.permute(0, 2, 1).reshape(B*N, L, 1)  # [B, L, N] -> [B*N, L, 1]
+            batch_size = B * N
+        else:
+            batch_size = B
+    
+        # Flatten MLP inputs [B, L, N] -> [B, L * N]
         x = x.reshape(batch_size, -1)
-        if self.hist_exog_size > 0:
-            x = torch.cat((x, hist_exog.reshape(batch_size, -1)), dim=1)
-
-        if self.futr_exog_size > 0:
-            x = torch.cat((x, futr_exog.reshape(batch_size, -1)), dim=1)
-
-        if self.stat_exog_size > 0:
-            stat_exog = stat_exog.reshape(-1)  #   [N, S] -> [N * S]
-            stat_exog = stat_exog.unsqueeze(0).repeat(
-                batch_size, 1
-            )  #   [N * S] -> [B, N * S]
-            x = torch.cat((x, stat_exog), dim=1)
-
+        
         for layer in self.mlp:
             x = torch.relu(layer(x))
         x = self.out(x)
-
-        forecast = x.reshape(batch_size, self.h, -1)
-
+        
+        if self.univariate:
+            # Reshape back: [B*N, h*outputsize] -> [B, N, h, outputsize] -> [B, h, c_out, N] -> [B, h, c_out*N]
+            x = x.reshape(B, N, self.h, self.loss.outputsize_multiplier)
+            forecast = x.permute(0, 2, 3, 1).reshape(B, self.h, -1)  # [B, h, c_out*N]
+        else:
+            forecast = x.reshape(B, self.h, -1)  # [B, h, c_out*N]
+        
         return forecast

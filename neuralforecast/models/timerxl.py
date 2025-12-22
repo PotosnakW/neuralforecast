@@ -154,16 +154,11 @@ class TimerXL(BaseModel):
         h,
         input_size,
         n_series,
+        univariate=True,
         stat_exog_list=None,
         hist_exog_list=None,
         futr_exog_list=None,
         exclude_insample_y=False,
-        # Transformer / Mixer config
-        infini_mixer_type: str = "none",
-        infini_channel_exclusion: bool = False,
-        layerwise_beta: bool = True,
-        channelwise_beta: bool = False,
-        transformer_backbone: str = "google/t5-efficient-tiny",
         n_layers: int = 4,
         n_heads: int = 16,
         hidden_size: int = 128,
@@ -177,9 +172,6 @@ class TimerXL(BaseModel):
         revin: bool = True,
         revin_affine: bool = False,
         revin_subtract_last: bool = True,
-        mlpmixer_hidden_size: int = 128,
-        mlpmixer_n_layers: int = 3,
-        mlpmixer_dropout: float = 0.1,
         multivariate_head: bool = False,
         pe_type: str = "sincos",
         learn_pe: bool = False,
@@ -255,19 +247,23 @@ class TimerXL(BaseModel):
     
         self.h = h
         self.n_series = n_series
+        self.univariate = univariate
         self.model = timerxl_backbone(config)
 
     def forward(self, windows_batch):
         x = windows_batch[
             "insample_y"
         ]  #   [batch_size (B), input_size (L), n_series (N)]
+        B, L, N = x.shape
 
-        batch_size = x.shape[0]
+        if self.univariate:
+            x = x.permute(0, 2, 1).reshape(B*N, L, 1)  # [B, L, N] -> [B*N, L, 1]
+
         x = x.permute(0, 2, 1) # [batch_size (B), n_series (N), input_size (L)]
         forecast = self.model(x=x) # [batch_size, n_series, horizon*c_out]
 
-        forecast = forecast.view(batch_size, self.n_series, self.h, -1) # [batch_size, n_series, horizon, c_out]
-        forecast = forecast.permute(0, 2, 3, 1).reshape(batch_size, self.h, -1) # [batch_size, horizon, c_out*n_series] 
+        forecast = forecast.view(B, self.n_series, self.h, -1) # [batch_size, n_series, horizon, c_out]
+        forecast = forecast.permute(0, 2, 3, 1).reshape(B, self.h, -1) # [batch_size, horizon, c_out*n_series] 
         # output is expected in this shape. tsmixer and other neuralforecast multivariate models' decoder output is already in shape # [batch_size, horizon*c_out, n_series] so skipping to forecast.reshape(batch_size, self.h, -1) is valid for those models. 
 
         return forecast

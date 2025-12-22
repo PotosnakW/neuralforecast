@@ -204,6 +204,7 @@ class Crossformer(BaseModel):
         h,
         input_size,
         n_series,
+        univariate=True,
         stat_exog_list=None,
         hist_exog_list=None,
         futr_exog_list=None,
@@ -292,19 +293,23 @@ class Crossformer(BaseModel):
         
         self.h = h
         self.n_series = n_series
+        self.univariate = univariate
         self.model = crossformer_backbone(config)
 
     def forward(self, windows_batch):  # x: [batch, input_size]
         x = windows_batch[
             "insample_y"
         ]  #   [batch_size (B), input_size (L), n_series (N)]
-        
-        batch_size = x.shape[0]
+        B, L, N = x.shape
+
+        if self.univariate:
+            x = x.permute(0, 2, 1).reshape(B*N, L, 1)  # [B, L, N] -> [B*N, L, 1]
+
         x_enc = x.permute(0, 2, 1) # [batch_size (B), n_series (N), input_size (L)]
         forecast = self.model(x_enc)
 
-        forecast = forecast.view(batch_size, self.n_series, self.h, -1)
-        forecast = forecast.permute(0, 2, 3, 1).reshape(batch_size, self.h, -1) # [batch_size, horizon, c_out*n_series] 
+        forecast = forecast.view(B, self.n_series, self.h, -1)
+        forecast = forecast.permute(0, 2, 3, 1).reshape(B, self.h, -1) # [batch_size, horizon, c_out*n_series] 
         # output is expected in this shape. tsmixer and other neuralforecast multivariate models' decoder output is already in shape # [batch_size, horizon*c_out, n_series] so skipping to forecast.reshape(batch_size, self.h, -1) is valid for those models. 
 
         return forecast
