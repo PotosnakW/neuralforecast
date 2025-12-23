@@ -92,10 +92,10 @@ class itransformer_backbone(nn.Module):
         
         # Embedding
         x_enc = x_enc.permute(0, 2, 1)  # [B, L, N]
-        enc_in = self.enc_embedding(x_enc, None) # B L N -> B N E
+        x_enc = self.enc_embedding(x_enc, None) # B L N -> B N E
         
         # Encoding
-        enc_out, attns = self.encoder(enc_in, attn_mask=None) # B N E -> B N E
+        enc_out, attns = self.encoder(x_enc, attn_mask=None) # B N E -> B N E
         
         # Projection to forecast horizon using Flatten_Head
         # [B, N, E] -> [B, N, 1, E] -> [B, N, H*C]

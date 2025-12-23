@@ -214,7 +214,7 @@ class TSMixer(BaseModel):
             windows_batch_size=windows_batch_size,
             inference_windows_batch_size=inference_windows_batch_size,
             start_padding_enabled=start_padding_enabled,
-            training_data_availability_threshold=training_data_availability_threshold,
+            #training_data_availability_threshold=training_data_availability_threshold,
             step_size=step_size,
             scaler_type=scaler_type,
             random_seed=random_seed,

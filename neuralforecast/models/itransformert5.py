@@ -71,6 +71,7 @@ class itransformer_backbone(nn.Module):
         x_enc: [batch_size x n_series x seq_len]
         """
         batch_size, n_channels, seq_len = x_enc.shape
+        attention_mask = torch.ones(batch_size, n_channels, device=x_enc.device) # no masking, 1==available
         
         # Normalization with RevIN
         if self.revin:
@@ -80,14 +81,15 @@ class itransformer_backbone(nn.Module):
         
         # Embedding
         x_enc = x_enc.permute(0, 2, 1) # x_enc: [B, L, N]
-        enc_in = self.enc_embedding(x_enc, None) # B L N -> B N E 
+        x_enc = self.enc_embedding(x_enc, None) # B L N -> B N E 
         
         # Transformer encoding
         # B N E -> B N E
         outputs = self.encoder(
             n_channels=n_channels,
-            inputs_embeds=enc_in, 
-        )
+            inputs_embeds=x_enc, 
+            attention_mask=attention_mask, 
+        ) 
         enc_out = outputs.last_hidden_state # [B, N, E]
         
         # Projection to forecast horizon

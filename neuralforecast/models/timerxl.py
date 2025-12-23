@@ -260,7 +260,7 @@ class TimerXL(BaseModel):
             x = x.permute(0, 2, 1).reshape(B*N, L, 1)  # [B, L, N] -> [B*N, L, 1]
 
         x = x.permute(0, 2, 1) # [batch_size (B), n_series (N), input_size (L)]
-        forecast = self.model(x=x) # [batch_size, n_series, horizon*c_out]
+        forecast = self.model(x_enc=x) # [batch_size, n_series, horizon*c_out]
 
         forecast = forecast.view(B, self.n_series, self.h, -1) # [batch_size, n_series, horizon, c_out]
         forecast = forecast.permute(0, 2, 3, 1).reshape(B, self.h, -1) # [batch_size, horizon, c_out*n_series] 
