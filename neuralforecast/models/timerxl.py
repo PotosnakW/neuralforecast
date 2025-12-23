@@ -160,14 +160,14 @@ class TimerXL(BaseModel):
         futr_exog_list=None,
         exclude_insample_y=False,
         n_layers: int = 4,
-        n_heads: int = 16,
-        hidden_size: int = 128,
-        linear_hidden_size: int = 256,
+        n_heads: int = 4,
+        hidden_size: int = 256,
+        linear_hidden_size: int = 1024,
         d_k: int = 32,
         d_v: int = 32,
         dropout: float = 0.0,
         head_dropout: float = 0.0,
-        patch_len: int = 16,
+        patch_len: int = 8,
         stride: int = 8,
         revin: bool = True,
         revin_affine: bool = False,
@@ -257,12 +257,17 @@ class TimerXL(BaseModel):
         B, L, N = x.shape
 
         if self.univariate:
-            x = x.permute(0, 2, 1).reshape(B*N, L, 1)  # [B, L, N] -> [B*N, L, 1]
+            x = x.permute(2, 0, 1).reshape(N*B, L, 1)  # [B, L, N] -> [N, B, 1] -> [N*B, L, 1]
 
         x = x.permute(0, 2, 1) # [batch_size (B), n_series (N), input_size (L)]
         forecast = self.model(x_enc=x) # [batch_size, n_series, horizon*c_out]
 
-        forecast = forecast.view(B, self.n_series, self.h, -1) # [batch_size, n_series, horizon, c_out]
+        if self.univariate:
+            forecast = forecast.squeeze(1).view(N, B, self.h, self.loss.outputsize_multiplier) # [n_series, batch_size, horizon, c_out]
+            forecast = forecast.permute(1, 0, 2, 3) # [batch_size, n_series, horizon, c_out]
+        else:
+            forecast = forecast.view(B, self.n_series, self.h, -1) # [batch_size, n_series, horizon, c_out]
+       
         forecast = forecast.permute(0, 2, 3, 1).reshape(B, self.h, -1) # [batch_size, horizon, c_out*n_series] 
         # output is expected in this shape. tsmixer and other neuralforecast multivariate models' decoder output is already in shape # [batch_size, horizon*c_out, n_series] so skipping to forecast.reshape(batch_size, self.h, -1) is valid for those models. 
 

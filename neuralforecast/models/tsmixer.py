@@ -63,9 +63,7 @@ class FeatureMixing(nn.Module):
 
     def forward(self, input):
         # Get shapes
-        batch_size = input.shape[0]
-        input_size = input.shape[1]
-        n_series = input.shape[2]
+        batch_size, input_size, n_series = input.shape
 
         # Feature MLP
         x = input.reshape(batch_size, -1)  # [B, L, N] -> [B, L * N]
@@ -263,7 +261,7 @@ class TSMixer(BaseModel):
         B, L, N = x.shape
         
         if self.univariate:
-            x = x.permute(0, 2, 1).reshape(B*N, L, 1)  # [B, L, N] -> [B*N, L, 1]
+            x = x.permute(2, 0, 1).reshape(N*B, L, 1)  # [B, L, N] -> [N, B, 1] -> [N*B, L, 1]
 
         # TSMixer: InstanceNorm + Mixing layers + Dense output layer + ReverseInstanceNorm
         if self.revin:
@@ -276,8 +274,9 @@ class TSMixer(BaseModel):
             x = self.norm(x, "denorm")
 
         if self.univariate:
-            # Reshape back: [B*N, h, outputsize] -> [B, N, h, outputsize] -> [B, h, outputsize, N] -> [B, h, outputsize*N]
-            x = x.reshape(B, N, self.h, self.loss.outputsize_multiplier)
+            # Reshape back: [N*B, h, outputsize] -> [B, N, h, outputsize] -> [B, h, outputsize, N] -> [B, h, outputsize*N]
+            x = x.squeeze(-1).view(N, B, self.h, self.loss.outputsize_multiplier) # [n_series, batch_size, horizon, c_out]
+            x = x.permute(1, 0, 2, 3) # [batch_size, n_series, horizon, c_out]
             x = x.permute(0, 2, 3, 1).reshape(B, self.h, -1)  # [B, h, outputsize*N]
         else:
             x = x.reshape(B, self.h, self.loss.outputsize_multiplier * self.n_series)

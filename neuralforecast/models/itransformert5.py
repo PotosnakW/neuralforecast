@@ -178,13 +178,13 @@ class iTransformerT5(BaseModel):
         exclude_insample_y=False,
         # Transformer config
         transformer_backbone: str = "google/t5-efficient-tiny",
-        n_layers: int = 2,
-        n_heads: int = 8,
-        hidden_size: int = 512,
-        linear_hidden_size: int = 256,
+        n_layers: int = 4,
+        n_heads: int = 4,
+        hidden_size: int = 256,
+        linear_hidden_size: int = 1024,
         d_k: Optional[int] = None,
         d_v: Optional[int] = None,
-        dropout: float = 0.1,
+        dropout: float = 0.0,
         head_dropout: float = 0.0,
         multivariate_head: bool = False,
         enable_gradient_checkpointing: bool = True,
@@ -265,12 +265,17 @@ class iTransformerT5(BaseModel):
         B, L, N = x.shape
 
         if self.univariate:
-            x = x.permute(0, 2, 1).reshape(B*N, L, 1)  # [B, L, N] -> [B*N, L, 1]
+            x = x.permute(2, 0, 1).reshape(N*B, L, 1)  # [B, L, N] -> [N, B, 1] -> [N*B, L, 1]
         
         x_enc = x.permute(0, 2, 1)  # [batch_size (B), n_series (N), input_size (L)]
-        forecast = self.model(x_enc=x_enc)  # [batch_size, horizon*c_out, n_series]
+        forecast = self.model(x_enc=x_enc)  # [batch_size, n_series, horizon*c_out]
+
+        if self.univariate:
+            forecast = forecast.squeeze(1).view(N, B, self.h, self.loss.outputsize_multiplier) # [n_series, batch_size, horizon, c_out]
+            forecast = forecast.permute(1, 0, 2, 3) # [batch_size, n_series, horizon, c_out]
+        else:
+            forecast = forecast.view(B, self.n_series, self.h, -1)  # [B, N, H, C]
     
-        forecast = forecast.view(B, self.n_series, self.h, -1)  # [B, N, H, C]
         forecast = forecast.permute(0, 2, 3, 1).reshape(B, self.h, -1)  # [B, H, C*N]
 
         return forecast

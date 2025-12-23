@@ -176,7 +176,7 @@ class MLPMultivariate(BaseModel):
         B, L, N = x.shape
         
         if self.univariate:
-            x = x.permute(0, 2, 1).reshape(B*N, L, 1)  # [B, L, N] -> [B*N, L, 1]
+            x = x.permute(2, 0, 1).reshape(N*B, L, 1)  # [B, L, N] -> [N, B, 1] -> [N*B, L, 1]
             batch_size = B * N
         else:
             batch_size = B
@@ -189,8 +189,9 @@ class MLPMultivariate(BaseModel):
         x = self.out(x)
         
         if self.univariate:
-            # Reshape back: [B*N, h*outputsize] -> [B, N, h, outputsize] -> [B, h, c_out, N] -> [B, h, c_out*N]
-            x = x.reshape(B, N, self.h, self.loss.outputsize_multiplier)
+            # Reshape back: [N*B, h*outputsize] -> [B, N, h, outputsize] -> [B, h, c_out, N] -> [B, h, c_out*N]
+            x = x.view(N, B, self.h, self.loss.outputsize_multiplier)
+            x = x.permute(1, 0, 2, 3)  # [B, N, h, outputsize]
             forecast = x.permute(0, 2, 3, 1).reshape(B, self.h, -1)  # [B, h, c_out*N]
         else:
             forecast = x.reshape(B, self.h, -1)  # [B, h, c_out*N]
