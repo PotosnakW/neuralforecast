@@ -187,7 +187,6 @@ class iTransformerT5(BaseModel):
         dropout: float = 0.0,
         head_dropout: float = 0.0,
         multivariate_head: bool = False,
-        enable_gradient_checkpointing: bool = True,
         revin: bool = True,
         revin_affine: bool = False,
         revin_subtract_last: bool = True,
@@ -274,7 +273,7 @@ class iTransformerT5(BaseModel):
             forecast = forecast.squeeze(1).view(N, B, self.h, self.loss.outputsize_multiplier) # [n_series, batch_size, horizon, c_out]
             forecast = forecast.permute(1, 0, 2, 3) # [batch_size, n_series, horizon, c_out]
         else:
-            forecast = forecast.view(B, self.n_series, self.h, -1)  # [B, N, H, C]
+            forecast = forecast.view(B, self.n_series, self.h, self.loss.outputsize_multiplier)  # [B, N, H, C]
     
         forecast = forecast.permute(0, 2, 3, 1).reshape(B, self.h, -1)  # [B, H, C*N]
 

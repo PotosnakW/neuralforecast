@@ -83,7 +83,7 @@ class itransformer_backbone(nn.Module):
         """
         x_enc: [batch_size x n_series x seq_len]
         """
-        batch_size, n_series, seq_len = x_enc.shape
+        batch_size, n_channels, seq_len = x_enc.shape
     
         if self.revin:
             x_enc = x_enc.permute(0, 2, 1)  # [B, L, N]
@@ -272,7 +272,7 @@ class iTransformer(BaseModel):
             forecast = forecast.squeeze(1).view(N, B, self.h, self.loss.outputsize_multiplier) # [n_series, batch_size, horizon, c_out]
             forecast = forecast.permute(1, 0, 2, 3) # [batch_size, n_series, horizon, c_out]
         else:
-            forecast = forecast.view(B, self.n_series, self.h, -1)  # [B, N, H, C]
+            forecast = forecast.view(B, self.n_series, self.h, self.loss.outputsize_multiplier)  # [B, N, H, C]
     
         forecast = forecast.permute(0, 2, 3, 1).reshape(B, self.h, -1)  # [B, H, C*N]
         
