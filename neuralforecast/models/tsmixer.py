@@ -261,7 +261,7 @@ class TSMixer(BaseModel):
         B, L, N = x.shape
         
         if self.univariate:
-            x = x.permute(2, 0, 1).reshape(N*B, L, 1)  # [B, L, N] -> [N, B, 1] -> [N*B, L, 1]
+            x = x.permute(2, 0, 1).reshape(N*B, L, 1)  # [B, L, N] -> [N, B, L] -> [N*B, L, 1]
 
         # TSMixer: InstanceNorm + Mixing layers + Dense output layer + ReverseInstanceNorm
         if self.revin:

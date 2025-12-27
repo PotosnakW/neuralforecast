@@ -257,7 +257,7 @@ class TimerXL(BaseModel):
         B, L, N = x.shape
 
         if self.univariate:
-            x = x.permute(2, 0, 1).reshape(N*B, L, 1)  # [B, L, N] -> [N, B, 1] -> [N*B, L, 1]
+            x = x.permute(2, 0, 1).reshape(N*B, L, 1)  # [B, L, N] -> [N, B, L] -> [N*B, L, 1]
 
         x = x.permute(0, 2, 1) # [batch_size (B), n_series (N), input_size (L)]
         forecast = self.model(x_enc=x) # [batch_size, n_series, horizon*c_out]
