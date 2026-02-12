@@ -4,7 +4,7 @@ import subprocess
 from multiprocessing import Process
 from datetime import datetime
 
-# Configuration
+
 DATASET_NAMES = [
     'simglucose',
     'iowa_ihop_smex_windspeed',
@@ -28,11 +28,11 @@ DATASET_NAMES = [
     'solar/H',
     'solar/W',
 ]
-GPU_INDICES = [1, 0, 2, 3]  # Specify which GPUs to use
+GPU_INDICES = [0, 1, 2, 3]  # Specify which GPUs to use
 RANDOM_SEEDS = [1, 2, 3, 4, 5]
-FILE_NAME = 'train_models' # Must use 'train_models_pca for experiment_name in ['vanilla_pca_t5tiny', 'vanilla_ica_t5tiny']
-EXPERIMENT_NAME = 'infini_layerwise_t5tiny' #'vanilla_t5tiny'
-SAVE_DIR = '../icml_exp_results' # CHANGE TO YOUR WORKING DIRECTORY
+FILE_NAME = 'train_models' # Must use 'train_models_pca for experiment_name in ['vanilla_pca_t5tiny']
+EXPERIMENT_NAME = 'vanilla_t5tiny' # CHANGE TO SPECIFY EXPERIMENT
+SAVE_DIR = '../exp_results' # CHANGE TO YOUR WORKING DIRECTORY
 GIFT_EVAL_DIR = "../GiftEval" # CHANGE TO YOUR GIFT EVAL DIRECTORY
 CONDA_DIR = f'/home/miniconda3' #TODO CHANGE TO YOUR CONDA DIRECTORY
 

@@ -1,12 +1,7 @@
 import copy
 
 from neuralforecast.auto import AutoiTransformerT5, AutoiTransformer, AutoTSMixer, AutoMLPMultivariate, AutoMOMENT, AutoPatchTSTMultivariate, AutoTimerXL, AutoCrossformer, AutoMOMENTFAST
-from neuralforecast.losses.pytorch import MAE #, MQLoss
-
-import ray
-# from ray import tune
-# from ray.tune.search.hyperopt import HyperOptSearch
-ray.init(_temp_dir="/raid/wpotosna/ray")
+from neuralforecast.losses.pytorch import MAE
 
 import optuna
 
@@ -46,7 +41,7 @@ def get_models(args):
         'step_size': 4000,
         'gamma': 0.5
     }
-    loss = MAE() #MQLoss(level=level)
+    loss = MAE()
 
     if args.experiment_name == 'vanilla_t5tiny':
         vanilla_config = {
@@ -191,66 +186,6 @@ def get_models(args):
             ),
         ]
 
-    elif args.experiment_name == 'vanilla_ica_t5tiny':
-        vanilla_config = {
-            'input_size': args.input_size,
-            'n_series': args.n_series,
-            'patch_len': patch_len,
-            'stride': stride,
-            'max_steps': max_steps,
-            'val_check_steps': val_check_steps,
-            'windows_batch_size': windows_batch_size,
-            'inference_windows_batch_size': inference_windows_batch_size,
-            #'transformer_backbone': transformer_backbone,
-            'hidden_size': hidden_size,
-            'linear_hidden_size': linear_hidden_size,
-            'n_heads': n_heads,
-            'd_k': d_k,
-            'd_v': d_v,
-            'n_layers': n_layers,
-            'pe_type': pe_type,
-            'learn_pe': learn_pe,
-            'dropout': dropout,
-            'head_dropout': head_dropout,
-            'revin': revin,
-            'revin_affine': revin_affine,
-            'revin_subtract_last': revin_subtract_last,
-            'padding_patch': padding_patch,
-            'infini_mixer_type': 'none',
-            'multivariate_head': multivariate_head,
-            'learning_rate': learning_rate,
-            'early_stop_patience_steps': early_stop_patience_steps,
-            'batch_size': batch_size,
-            'valid_batch_size': batch_size,
-            'scaler_type': scaler_type,
-            'lr_scheduler': lr_scheduler,
-            'lr_scheduler_kwargs': lr_scheduler_kwargs,
-            'random_seed': args.random_seed,
-        }
-
-        models = [
-            AutoMOMENT(
-                h=args.h,
-                config=vanilla_config,
-                loss=loss,
-                search_alg=None,
-                num_samples=args.num_samples,
-                cpus=20,
-                n_series=args.n_series,
-                alias='AutoMOMENT_vanilla_ica'
-            ),
-            AutoPatchTSTMultivariate(
-                h=args.h,
-                config=vanilla_config,
-                loss=loss,
-                search_alg=None,
-                num_samples=args.num_samples,
-                cpus=20,
-                n_series=args.n_series,
-                alias='AutoPatchTSTMultivariate_vanilla_ica'
-            ),
-        ]
-
     elif args.experiment_name == 'infini_mlpmixer_t5tiny':
         def mlpmixer_ciexcl_config(trial):
             return {
@@ -335,17 +270,17 @@ def get_models(args):
             }
         
         models = [
-            # AutoMOMENT(
-            #     h=args.h,
-            #     config=mlpmixer_ciexcl_config,
-            #     loss=loss,
-            #     search_alg=optuna.samplers.TPESampler(seed=0),
-            #     backend='optuna',
-            #     num_samples=5, #args.num_samples,
-            #     cpus=20,
-            #     n_series=args.n_series,
-            #     alias='AutoMOMENT_mlpmixer_ciexcl'
-            # ),
+            AutoMOMENT(
+                h=args.h,
+                config=mlpmixer_ciexcl_config,
+                loss=loss,
+                search_alg=optuna.samplers.TPESampler(seed=0),
+                backend='optuna',
+                num_samples=5, #args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoMOMENT_mlpmixer_ciexcl'
+            ),
             AutoMOMENT(
                 h=args.h,
                 config=mlpmixer_ciincl_config,
@@ -357,17 +292,17 @@ def get_models(args):
                 n_series=args.n_series,
                 alias='AutoMOMENT_mlpmixer_ciincl'
             ),
-            # AutoPatchTSTMultivariate(
-            #     h=args.h,
-            #     config=mlpmixer_ciexcl_config,
-            #     loss=loss,
-            #     search_alg=optuna.samplers.TPESampler(seed=0),
-            #     backend='optuna',
-            #     num_samples=5, #args.num_samples,
-            #     cpus=20,
-            #     n_series=args.n_series,
-            #     alias='AutoPatchTSTMultivariate_mlpmixer_ciexcl'
-            # ),
+            AutoPatchTSTMultivariate(
+                h=args.h,
+                config=mlpmixer_ciexcl_config,
+                loss=loss,
+                search_alg=optuna.samplers.TPESampler(seed=0),
+                backend='optuna',
+                num_samples=5, #args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoPatchTSTMultivariate_mlpmixer_ciexcl'
+            ),
             AutoPatchTSTMultivariate(
                 h=args.h,
                 config=mlpmixer_ciincl_config,
@@ -465,17 +400,17 @@ def get_models(args):
             }
         
         models = [
-            # AutoMOMENT(
-            #     h=args.h,
-            #     config=mlpquerymixer_ciexcl_config,
-            #     loss=loss,
-            #     search_alg=optuna.samplers.TPESampler(seed=0),
-            #     backend='optuna',
-            #     num_samples=5, #args.num_samples,
-            #     cpus=20,
-            #     n_series=args.n_series,
-            #     alias='AutoMOMENT_mlpquerymixer_ciexcl'
-            # ),
+            AutoMOMENT(
+                h=args.h,
+                config=mlpquerymixer_ciexcl_config,
+                loss=loss,
+                search_alg=optuna.samplers.TPESampler(seed=0),
+                backend='optuna',
+                num_samples=5, #args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoMOMENT_mlpquerymixer_ciexcl'
+            ),
             AutoMOMENT(
                 h=args.h,
                 config=mlpquerymixer_ciincl_config,
@@ -487,17 +422,17 @@ def get_models(args):
                 n_series=args.n_series,
                 alias='AutoMOMENT_mlpquerymixer_ciincl'
             ),
-            # AutoPatchTSTMultivariate(
-            #     h=args.h,
-            #     config=mlpquerymixer_ciexcl_config,
-            #     loss=loss,
-            #     search_alg=optuna.samplers.TPESampler(seed=0),
-            #     backend='optuna',
-            #     num_samples=5, #args.num_samples,
-            #     cpus=20,
-            #     n_series=args.n_series,
-            #     alias='AutoPatchTSTMultivariate_mlpquerymixer_ciexcl'
-            # ),
+            AutoPatchTSTMultivariate(
+                h=args.h,
+                config=mlpquerymixer_ciexcl_config,
+                loss=loss,
+                search_alg=optuna.samplers.TPESampler(seed=0),
+                backend='optuna',
+                num_samples=5, #args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoPatchTSTMultivariate_mlpquerymixer_ciexcl'
+            ),
             AutoPatchTSTMultivariate(
                 h=args.h,
                 config=mlpquerymixer_ciincl_config,
@@ -856,7 +791,7 @@ def get_models(args):
         ]
 
     elif args.experiment_name == 'multivariateMLP_baseline':
-        config1 = {
+        config = {
             'input_size': args.input_size,
             'n_series': args.n_series,
             'max_steps': max_steps,
@@ -873,26 +808,13 @@ def get_models(args):
             'lr_scheduler': lr_scheduler,
             'lr_scheduler_kwargs': lr_scheduler_kwargs,
             'random_seed': args.random_seed,
-            'univariate': True,
+            'univariate': False,
         }
-       
-        config2 = copy.deepcopy(config1)
-        config2['univariate'] = False
 
         models = [
             AutoMLPMultivariate(
                 h=args.h, 
-                config=config1,
-                loss=loss,
-                search_alg=None, 
-                num_samples=args.num_samples,
-                cpus=20,
-                n_series=args.n_series,
-                alias='AutoMLPMultivariate_univariate'
-                ),
-            AutoMLPMultivariate(
-                h=args.h, 
-                config=config2,
+                config=config,
                 loss=loss,
                 search_alg=None,
                 num_samples=args.num_samples,
@@ -903,7 +825,7 @@ def get_models(args):
         ]
 
     elif args.experiment_name == 'tsmixer_baseline':
-        config1 = {
+        config = {
             'input_size': args.input_size,
             'n_series': args.n_series,
             'max_steps': max_steps,
@@ -924,26 +846,13 @@ def get_models(args):
             'lr_scheduler': lr_scheduler,
             'lr_scheduler_kwargs': lr_scheduler_kwargs,
             'random_seed': args.random_seed,
-            'univariate': True,
+            'univariate': False,
         }
-
-        config2 = copy.deepcopy(config1)
-        config2['univariate'] = False
     
         models=[
             AutoTSMixer(
                 h=args.h, 
-                config=config1,
-                loss=loss,
-                search_alg=None, #HyperOptSearch(),
-                num_samples=args.num_samples,
-                cpus=20,
-                n_series=args.n_series,
-                alias='AutoTSMixer_univariate'
-            ),
-            AutoTSMixer(
-                h=args.h, 
-                config=config2,
+                config=config,
                 loss=loss,
                 search_alg=None,
                 num_samples=args.num_samples,
@@ -954,7 +863,7 @@ def get_models(args):
         ]
         
     elif args.experiment_name == 'itransformer_baseline':
-        config1 = {
+        config = {
             'input_size': args.input_size,
             'n_series': args.n_series,
             'max_steps': max_steps,
@@ -982,26 +891,13 @@ def get_models(args):
             'lr_scheduler': lr_scheduler,
             'lr_scheduler_kwargs': lr_scheduler_kwargs,
             'random_seed': args.random_seed,
-            'univariate': True,
+            'univariate': False,
         }
-
-        config2 = copy.deepcopy(config1)
-        config2['univariate'] = False
     
         models=[
             AutoiTransformer(
                 h=args.h, 
-                config=config1,
-                loss=loss,
-                search_alg=None,
-                num_samples=args.num_samples,
-                cpus=20,
-                n_series=args.n_series,
-                alias='AutoiTransformer_univariate'
-            ),
-            AutoiTransformer(
-                h=args.h, 
-                config=config2,
+                config=config,
                 loss=loss,
                 search_alg=None,
                 num_samples=args.num_samples,
@@ -1011,17 +907,7 @@ def get_models(args):
             ),
             AutoiTransformerT5(
                 h=args.h, 
-                config=config1,
-                loss=loss,
-                search_alg=None,
-                num_samples=args.num_samples,
-                cpus=20,
-                n_series=args.n_series,
-                alias='AutoiTransformerT5_univariate'
-            ),
-            AutoiTransformerT5(
-                h=args.h, 
-                config=config2,
+                config=config,
                 loss=loss,
                 search_alg=None,
                 num_samples=args.num_samples,
@@ -1032,7 +918,7 @@ def get_models(args):
         ]
 
     elif args.experiment_name == 'timerxl_baseline':
-        config1 = {
+        config = {
             'input_size': args.input_size,
             'n_series': args.n_series,
             'patch_len': patch_len,
@@ -1064,26 +950,13 @@ def get_models(args):
             'lr_scheduler': lr_scheduler,
             'lr_scheduler_kwargs': lr_scheduler_kwargs,
             'random_seed': args.random_seed,
-            'univariate': True,
+            'univariate': False,
         }
-
-        config2 = copy.deepcopy(config1)
-        config2['univariate'] = False
 
         models=[
             AutoTimerXL(
                 h=args.h, 
-                config=config1,
-                loss=loss,
-                search_alg=None,
-                num_samples=args.num_samples,
-                cpus=20,
-                n_series=args.n_series,
-                alias='AutoTimerXL_univariate'
-            ),
-            AutoTimerXL(
-                h=args.h, 
-                config=config2,
+                config=config,
                 loss=loss,
                 search_alg=None,
                 num_samples=args.num_samples,
@@ -1094,7 +967,7 @@ def get_models(args):
         ]
 
     elif args.experiment_name == 'crossformer_baseline':
-        config1 = {
+        config = {
             'input_size': args.input_size,
             'n_series': args.n_series,
             'patch_len': patch_len,
@@ -1125,33 +998,20 @@ def get_models(args):
             'lr_scheduler': lr_scheduler,
             'lr_scheduler_kwargs': lr_scheduler_kwargs,
             'random_seed': args.random_seed,
-            'univariate': True,
+            'univariate': False,
         }
-
-        config2 = copy.deepcopy(config1)
-        config2['univariate'] = False
 
         models=[
             AutoCrossformer(
-                h=args.h, 
-                config=config1,
-                loss=loss,
-                search_alg=None,
-                num_samples=args.num_samples,
-                cpus=20,
-                n_series=args.n_series,
-                alias='AutoCrossformer_univariate'
-            ),
-        AutoCrossformer(
-                h=args.h, 
-                config=config2,
-                loss=loss,
-                search_alg=None,
-                num_samples=args.num_samples,
-                cpus=20,
-                n_series=args.n_series,
-                alias='AutoCrossformer_multivariate'
-            ),
+                    h=args.h, 
+                    config=config,
+                    loss=loss,
+                    search_alg=None,
+                    num_samples=args.num_samples,
+                    cpus=20,
+                    n_series=args.n_series,
+                    alias='AutoCrossformer_multivariate'
+                ),
         ]
 
     elif args.experiment_name == 'statsforecast':
@@ -1170,14 +1030,14 @@ def get_models(args):
         elif args.freq == 'Y':
             season_length = 1
         elif args.freq == 'T' or args.freq == 'min':
-            season_length = 60  # or 1440 for daily pattern
+            season_length = 60 
         elif args.freq == 'S':
-            season_length = 60  # or 3600 for hourly pattern
+            season_length = 60 
         else:
-            season_length = 1  # No seasonality
+            season_length = 1
 
-        models = [AutoETS(season_length = season_length),
-                  #AutoARIMA(season_length = season_length)        
+        models = [
+            AutoETS(season_length = season_length),   
         ]
 
     else:

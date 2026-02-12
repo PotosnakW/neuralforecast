@@ -2,14 +2,15 @@
 ____
 ![Model Plot](method.png)
 
-We propose MICA (Multivariate Infini Compressive Attention), a memory-efficient attention-based forecasting architecture for multivariate time series. MICA adapts Infini-Attention’s linear attention mechanism from context compression to channel compression, enabling computationally efficient cross-channel architecture component that scales linearly with sequence length and channel count. 
+We propose MICA (Multivariate Infini Compressive Attention), a memory-efficient attention-based forecasting architecture for multivariate time series. MICA adapts compressive memory techniques with linear attention, originally developed for long-context language models, from context com- pression to channel compression, enabling a computationally efficient cross-channel architecture component that scales linearly in both time and memory with sequence length and channel count.
 
 <h4><u>Sections:</u></h4>
 
 1. [Environment Setup](#Environment-Setup)
 2. [Download Datasets](#Download-Datasets)
-3. [Run Experiments](#Run-Experiments)
-4. [Experiment Catalog](#Experiment-Catalog)
+3. [Train Experiment Models and Get Forecasts](#Run-Experiments)
+4. [Evaluate Forecasts](#Eval-Fcsts)
+5. [Experiment Catalog](#Experiment-Catalog)
 
 
 ## Environment Setup
@@ -23,6 +24,7 @@ git clone <anonymous>
 cd ./neuralforecast
 git checkout remotes/origin/moment_infini
 pip install -e .
+cd ./mica
 pip install -r mica_requirements.txt
 
 ```
@@ -49,14 +51,11 @@ SMEX02: Automated Weather Observing System (AWOS) Iowa 1-min Data ([link](https:
 
 IHOP_2002: Automated Weather Observing System (AWOS) Iowa 1-min Data ([link](https://data.eol.ucar.edu/dataset/77.099))
 
-Change the folder names to `iowa_PLOWS_data`, `iowa_SMEX02_data`, and `iowa_IHOP_data`.
+Change the folder names to `iowa_PLOWS_data`, `iowa_SMEX02_data`, and `iowa_IHOP_data`, respectively. Move these dataset folders to the ./mica folder.
 
 
 ```bash
-cd ~/long_context_tsfms/preprocessing
-
-# before running the following scripts
-# modify "data_dir=..." variable to point to the downloaded folders
+cd ~/neuralforecast/mica/preprocessing
 python preprocess_iowa_IHOP_SMEX02_datasets.py
 python preprocess_iowa_PLOWS_dataset.py
 ```
@@ -65,12 +64,12 @@ python preprocess_iowa_PLOWS_dataset.py
 ### 3. Preprocess Simglucose Dataset
 
 ```bash
-git clone <anonymous>
+git clone git@github.com:PotosnakW/simglucose.git
 cd ~/simglucose
 git checkout remotes/origin/harrison_benedict_eqn
 pip install -e .
 
-cd ~/long_context_tsfms/preprocessing
+cd ~/neuralforecast/mica/preprocessing
 python preprocess_simglucose_dataset.py
 ```
 
@@ -78,7 +77,7 @@ python preprocess_simglucose_dataset.py
 
 ### 1. Configure Experiment Settings
 
-Open `launch_exp.py` in the `training` folder and modify the following parameters:
+Open `launch_exp.py` in the `./mica/training` folder and modify the following parameters:
 
 #### Set Output Directory
 ```python
@@ -123,6 +122,14 @@ GPU_INDICES = [0, 1, 2, 3]  # Update this based on your available GPU resources
 python3 launch_experiments.py # This file automatically  creates tmux sessions, distributes, and launches the experiments among gpus based on the dataset and random_seed combinations.
 ```
 
+
+## Evaluate Forecasts
+Specify the experiment name and the GiftEval repo path within the command to evaluate forecast results:
+
+```
+cd ~/neuralforecast/mica/training/
+python -m forecast_error --experiment_name t5tiny_vanilla --GIFT_EVAL_path /home/GiftEval
+```
 
 
 ## Experiment Catalog
@@ -171,28 +178,17 @@ Standard attention baseline:
 #### 8. Vanilla T5-Tiny with PCA (`vanilla_pca_t5tiny`)
 - Vanilla attention with PCA preprocessing (univariate head)
 
-
 #### 9. Multivariate MLP (`multivariateMLP_baseline`)
-- Univariate mode (first dimension: `n_channels * windows_batch_size`)
-- Multivariate mode (first dimension: `windows_batch_size`, last dimension: `n_channels`)
 
 #### 10. TSMixer (`tsmixer_baseline`)
-- Univariate mode
-- Multivariate mode
 
 #### 11. iTransformer (`itransformer_baseline`)
 Standard and T5-based variants:
-- iTransformer univariate
-- iTransformer multivariate
-- iTransformerT5 univariate
-- iTransformerT5 multivariate
+- iTransformer
+- iTransformerT5
 
 #### 12. Timer-XL (`timerxl_baseline`)
-- Univariate mode
-- Multivariate mode
 
 #### 13. Crossformer (`crossformer_baseline`)
-- Univariate mode
-- Multivariate mode
 
 #### 14. AutoETS (`AutoETS`)

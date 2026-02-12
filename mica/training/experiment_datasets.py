@@ -42,12 +42,12 @@ gifteval_eval_dataset_names = [
  'jena_weather/H',
  'kdd_cup_2018_with_missing/D',
  'kdd_cup_2018_with_missing/H',
-# 'm4_daily',
-#  'm4_hourly',
-#  'm4_monthly',
-#  'm4_quarterly',
-#  'm4_weekly',
-#  'm4_yearly',
+ 'm4_daily',
+ 'm4_hourly',
+ 'm4_monthly',
+ 'm4_quarterly',
+ 'm4_weekly',
+ 'm4_yearly',
  'restaurant',
  'saugeenday/D',
  'saugeenday/M',
@@ -61,182 +61,6 @@ gifteval_eval_dataset_names = [
  'us_births/M',
  'us_births/W'
 ]
-
-gifteval_pretrain_dataset_names = [
- 'BEIJING_SUBWAY_30MIN',
- 'HZMETRO',
- 'LOS_LOOP',
- 'PEMS03',
- 'PEMS04',
- 'PEMS07',
- 'PEMS08',
- 'PEMS_BAY',
- 'Q-TRAFFIC',
- 'README.md',
- 'SHMETRO',
- 'alibaba_cluster_trace_2018',
- 'australian_electricity_demand',
- 'azure_vm_traces_2017',
- 'bdg-2_bear',
- 'bdg-2_fox',
- 'bdg-2_panther',
- 'bdg-2_rat',
- 'beijing_air_quality',
- 'bitcoin_with_missing',
- 'borealis',
- 'borg_cluster_data_2011',
- 'buildings_900k',
- 'bull',
- 'cdc_fluview_ilinet',
- 'cdc_fluview_who_nrevss',
- 'china_air_quality',
- 'cif_2016_12',
- 'cif_2016_6',
- 'cmip6_1850',
- 'cmip6_1855',
- 'cmip6_1860',
- 'cmip6_1865',
- 'cmip6_1870',
- 'cmip6_1875',
- 'cmip6_1880',
- 'cmip6_1885',
- 'cmip6_1890',
- 'cmip6_1895',
- 'cmip6_1900',
- 'cmip6_1905',
- 'cmip6_1910',
- 'cmip6_1915',
- 'cmip6_1920',
- 'cmip6_1925',
- 'cmip6_1930',
- 'cmip6_1935',
- 'cmip6_1940',
- 'cmip6_1945',
- 'cmip6_1950',
- 'cmip6_1955',
- 'cmip6_1960',
- 'cmip6_1965',
- 'cmip6_1970',
- 'cmip6_1975',
- 'cmip6_1980',
- 'cmip6_1985',
- 'cmip6_1990',
- 'cmip6_1995',
- 'cmip6_2000',
- 'cmip6_2005',
- 'cmip6_2010',
- 'cockatoo',
- 'covid19_energy',
- 'covid_mobility',
- 'elecdemand',
- 'elf',
- 'era5_1989',
- 'era5_1990',
- 'era5_1991',
- 'era5_1992',
- 'era5_1993',
- 'era5_1994',
- 'era5_1995',
- 'era5_1996',
- 'era5_1997',
- 'era5_1998',
- 'era5_1999',
- 'era5_2000',
- 'era5_2001',
- 'era5_2002',
- 'era5_2003',
- 'era5_2004',
- 'era5_2005',
- 'era5_2006',
- 'era5_2007',
- 'era5_2008',
- 'era5_2009',
- 'era5_2010',
- 'era5_2011',
- 'era5_2012',
- 'era5_2013',
- 'era5_2014',
- 'era5_2015',
- 'era5_2016',
- 'era5_2017',
- 'era5_2018',
- 'extended_web_traffic_with_missing',
- 'favorita_sales',
- 'favorita_transactions',
- 'fred_md',
- 'gfc12_load',
- 'gfc14_load',
- 'gfc17_load',
- 'godaddy',
- 'hog',
- 'ideal',
- 'kaggle_web_traffic_weekly',
- 'kdd2022',
- 'largest_2017',
- 'largest_2018',
- 'largest_2019',
- 'largest_2020',
- 'largest_2021',
- 'lcl',
- 'london_smart_meters_with_missing',
-#  'm1_monthly',
-#  'm1_quarterly',
-#  'm1_yearly',
-#  'm5',
-#  'monash_m3_monthly',
-#  'monash_m3_other',
-#  'monash_m3_quarterly',
-#  'monash_m3_yearly',
- 'nn5_daily_with_missing',
- 'nn5_weekly',
- 'oikolab_weather',
- 'pdb',
- 'pedestrian_counts',
- 'project_tycho',
- 'residential_load_power',
- 'residential_pv_power',
- 'rideshare_with_missing',
- 'sceaux',
- 'smart',
- 'solar_power',
- 'spain',
- 'subseasonal',
- 'subseasonal_precip',
- 'sunspot_with_missing',
- 'taxi_30min',
- 'tourism_monthly',
- 'tourism_quarterly',
- 'tourism_yearly',
- 'traffic_hourly',
- 'traffic_weekly',
- 'uber_tlc_daily',
- 'uber_tlc_hourly',
- 'weather',
- 'vehicle_trips_with_missing',
- 'wiki-rolling_nips',
- 'wind_farms_with_missing',
- 'wind_power'
-]
-
-gluonts_datasets = {
-    # M1 Competition
-    'm1_monthly': {'freq': 'M', 'prediction_length': 18},
-    'm1_quarterly': {'freq': 'Q', 'prediction_length': 8},
-    'm1_yearly': {'freq': 'A', 'prediction_length': 6},
-    # M3 Competition
-    'm3_monthly': {'freq': 'M', 'prediction_length': 18},
-    'm3_quarterly': {'freq': 'Q', 'prediction_length': 8},
-    'm3_yearly': {'freq': 'A', 'prediction_length': 6},
-    #'m3_other': {'freq': 'Q', 'prediction_length': 8}, # check how frequench is handled
-    # M4 Competition
-    'm4_hourly': {'freq': 'H', 'prediction_length': 48},
-    'm4_daily': {'freq': 'D', 'prediction_length': 14},
-    'm4_weekly': {'freq': 'W', 'prediction_length': 13},
-    'm4_monthly': {'freq': 'M', 'prediction_length': 18},
-    'm4_quarterly': {'freq': 'Q', 'prediction_length': 8},
-    'm4_yearly': {'freq': 'A', 'prediction_length': 6},
-}
-
 
 
 def get_datasets(args):
@@ -423,48 +247,6 @@ def preprocess_gifteval_dataset_for_neuralforecast(
     print('n_series length:', df_expanded.shape[0]/df_expanded.unique_id.unique().shape[0])
     
     return df_expanded
-
-def gluonts_to_long_dataframe(dataset_name="m4_yearly", split='train'):
-    """
-    Convert GluonTS dataset to long-format pandas DataFrame
-    
-    Parameters:
-    -----------
-    dataset_name : str
-        Name of the dataset (e.g., 'm4_yearly', 'm4_quarterly')
-    split : str
-        'train' or 'test'
-    
-    Returns:
-    --------
-    pd.DataFrame with columns: ['unique_id', 'ds', 'y']
-    """
-    from gluonts.dataset.repository.datasets import get_dataset
-    dataset = get_dataset(dataset_name)
-    data = dataset.train if split == 'train' else dataset.test
-    
-    all_series = []
-    for idx, entry in enumerate(data):
-        item_id = entry.get('item_id', entry.get('id', f'series_{idx}'))
-
-        start = entry['start']
-        target = entry['target']
-
-        date_range = pd.date_range(
-            start=start.to_timestamp(), 
-            periods=len(target), 
-            freq=start.freq
-        )
-        series_df = pd.DataFrame({
-            'unique_id': item_id,
-            'ds': date_range,
-            'y': target
-        })
-        all_series.append(series_df)
-    
-    df_long = pd.concat(all_series, ignore_index=True)
-    
-    return df_long
 
 def decorrelate_data(df, val_size, test_size, method='pca', **kwargs):
     n_series = df['unique_id'].nunique()

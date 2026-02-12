@@ -227,6 +227,7 @@ def parse_args():
     desc = "evaluation"
     parser = argparse.ArgumentParser(description=desc)
     parser.add_argument('--experiment_name', type=str, help='experiment name')
+    parser.add_argument('--GIFT_EVAL_path', type=str, help='GIFTEVAL repo path')
 
     return parser.parse_args()
 
@@ -236,10 +237,10 @@ if __name__ == '__main__':
     if args is None:
         exit()
 
-    os.environ['GIFT_EVAL'] = '/home/scratch/wpotosna/GiftEval'
-
     if args.experiment_name not in experiment_names:
         raise Exception('experiment name not included.')
+    
+    os.environ['GIFT_EVAL'] = args.GIFT_EVAL_path
     
     if args.experiment_name == 'statsforecast':
         random_seeds = [1]

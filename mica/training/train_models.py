@@ -23,8 +23,9 @@ def main(args):
     os.makedirs(args.save_path, exist_ok=True)
     
     models = get_models(args)
-    fcst = NeuralForecast(freq=freq,
-                          models=models,
+    fcst = NeuralForecast(
+        freq=freq,
+        models=models,
     )
 
     fcst_df = fcst.cross_validation(
