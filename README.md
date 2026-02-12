@@ -64,7 +64,7 @@ python preprocess_iowa_PLOWS_dataset.py
 ### 3. Preprocess Simglucose Dataset
 
 ```bash
-git clone git@github.com:PotosnakW/simglucose.git
+git clone git@github.com:{anon}/simglucose.git
 cd ~/simglucose
 git checkout remotes/origin/harrison_benedict_eqn
 pip install -e .
