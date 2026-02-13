@@ -1,5 +1,9 @@
 # MICA: Multivariate Infini Compressive Attention for Time Series Forecasting
 ____
+
+![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+
 ![Model Plot](method.png)
 
 We propose MICA (Multivariate Infini Compressive Attention), a memory-efficient attention-based forecasting architecture for multivariate time series. MICA adapts compressive memory techniques with linear attention, originally developed for long-context language models, from context com- pression to channel compression, enabling a computationally efficient cross-channel architecture component that scales linearly in both time and memory with sequence length and channel count.
@@ -11,6 +15,8 @@ We propose MICA (Multivariate Infini Compressive Attention), a memory-efficient 
 3. [Train Experiment Models and Get Forecasts](#Run-Experiments)
 4. [Evaluate Forecasts](#Eval-Fcsts)
 5. [Experiment Catalog](#Experiment-Catalog)
+6. [Reference](#Reference)
+
 
 
 ## Environment Setup
@@ -73,7 +79,7 @@ cd ~/neuralforecast/mica/preprocessing
 python preprocess_simglucose_dataset.py
 ```
 
-## Run Experiments
+## Train Experiment Models and Get Forecasts
 
 ### 1. Configure Experiment Settings
 
@@ -122,6 +128,40 @@ GPU_INDICES = [0, 1, 2, 3]  # Update this based on your available GPU resources
 python3 launch_experiments.py # This file automatically  creates tmux sessions, distributes, and launches the experiments among gpus based on the dataset and random_seed combinations.
 ```
 
+After running experiments, results will be saved in your `SAVE_DIR`:
+```
+SAVE_DIR/
+├── {EXPERIMENT_NAME}/
+│   ├── {DATASET_NAME}/
+│   │   ├── rs1_ishm2_h{HORIZON}/
+│   │   │   ├── {model_name}.ckpt
+│   │   │   └── forecast.csv
+│   │   ├── rs2_ishm2_h{HORIZON}/
+│   │   ├── rs3_ishm2_h{HORIZON}/
+│   │   ├── rs4_ishm2_h{HORIZON}/
+│   │   └── rs5_ishm2_h{HORIZON}/
+│   └── ...
+```
+
+**Example:**
+```
+SAVE_DIR/
+├── vanilla_t5tiny/
+│   ├── ett1_D/
+│   │   ├── rs1_ishm2_h96/
+│   │   │   ├── AutoMOMENT_vanilla_0.ckpt
+│   │   │   ├── AutoMOMENT_vanilla_headmixer_0.ckpt
+│   │   │   ├── AutoPatchTSTMultivariate_vanilla_0.ckpt
+│   │   │   ├── AutoPatchTSTMultivariate_vanilla_headmixer_0.ckpt
+│   │   │   └── forecast.csv
+│   │   ├── rs2_ishm2_h96/
+│   │   └── ...
+│   └── Weather/
+│       └── ...
+```
+
+**Note:** `rs{1-5}` indicates 5 random seed runs per dataset/horizon combination. Each run contains checkpoints for all model variants tested.
+
 
 ## Evaluate Forecasts
 Specify the experiment name and the GiftEval repo path within the command to evaluate forecast results:
@@ -134,61 +174,32 @@ python -m forecast_error --experiment_name t5tiny_vanilla --GIFT_EVAL_path /home
 
 ## Experiment Catalog
 
-Experiment names are shown in parantheses. Use these names for the EXPERIMENT_NAME parameter in `launch_exp.py`.
+| Category | Experiment Name | Gating Mechanism | Channel Exclusion | Head Type |
+|----------|----------------|------------------|-------------------|-----------|
+| **Infini Variants** | `infini_mlpmixer_t5tiny` | MLP-based | ✓ / ✗ | - |
+| | `infini_mlpquerymixer_t5tiny` | MLP + Query | ✓ / ✗ | - |
+| | `infini_layerwise_t5tiny` | Layer-specific β | ✓ / ✗ | - |
+| | `infini_layerwise_channelwise_t5tiny` | Layer + Channel β | ✓ / ✗ | - |
+| | `infini_channelwise_t5tiny` | Channel-specific β | ✓ / ✗ | - |
+| | `infini_t5tiny` | Shared β | ✓ / ✗ | - |
+| **Baselines** | `vanilla_t5tiny` | Standard attention | - | Uni / Multi |
+| | `vanilla_pca_t5tiny` | Standard + PCA | - | Univariate |
+| | `multivariateMLP_baseline` | - | - | - |
+| | `tsmixer_baseline` | - | - | - |
+| | `itransformer_baseline` | - | - | - |
+| | `timerxl_baseline` | - | - | - |
+| | `crossformer_baseline` | - | - | - |
+| | `AutoETS` | Statistical | - | - |
 
-### Infini-Attention Variants
+**Note:** ✓ = with channel exclusion, ✗ = without channel exclusion
 
-#### 1. Infini MLP-Mixer (`infini_mlpmixer_t5tiny`)
-Infini-attention with MLP-based gating:
-- With channel exclusion
-- Without channel exclusion
 
-#### 2. Infini MLP-Query-Mixer (`infini_mlpquerymixer_t5tiny`)
-Enhanced MLP gating incorporating query information:
-- With channel exclusion
-- Without channel exclusion
+## Citation
 
-#### 3. Infini Layer-Wise (`infini_layerwise_t5tiny`)
-Beta gating with layer-specific parameters:
-- With channel exclusion
-- Without channel exclusion
-
-#### 4. Infini Layer-Wise Channel-Wise (`infini_layerwise_channelwise_t5tiny`)
-Beta gating with layer and channel-specific parameters:
-- With channel exclusion
-- Without channel exclusion
-
-#### 5. Infini Channel-Wise (`infini_channelwise_t5tiny`)
-Simplified gating with shared beta across channels:
-- With channel exclusion
-- Without channel exclusion
-
-#### 6. Infini Shared Beta (`infini_t5tiny`)
-Simplified gating with shared beta across layers and channels:
-- With channel exclusion
-- Without channel exclusion
-
-### Baseline Models
-
-#### 7. Vanilla T5-Tiny (`vanilla_t5tiny`)
-Standard attention baseline:
-- Univariate head implementation
-- Multivariate head implementation
-
-#### 8. Vanilla T5-Tiny with PCA (`vanilla_pca_t5tiny`)
-- Vanilla attention with PCA preprocessing (univariate head)
-
-#### 9. Multivariate MLP (`multivariateMLP_baseline`)
-
-#### 10. TSMixer (`tsmixer_baseline`)
-
-#### 11. iTransformer (`itransformer_baseline`)
-Standard and T5-based variants:
-- iTransformer
-- iTransformerT5
-
-#### 12. Timer-XL (`timerxl_baseline`)
-
-#### 13. Crossformer (`crossformer_baseline`)
-
-#### 14. AutoETS (`AutoETS`)
+If you use MICA in your research, please cite:
+```bibtex
+@article{mica2024,
+  title={{MICA}: Multivariate Infini Compressive Attention for Time Series Forecasting},
+  author={Willa Potosnak and Nina {\.Z}ukowska and Micha{\l} Wili{\'n}ski and Dan Howarth and Ignacy St{\k{e}}pka and Mononito Goswami and Artur Dubrawski},
+  year={2026}
+}
