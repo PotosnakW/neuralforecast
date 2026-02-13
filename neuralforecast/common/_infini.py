@@ -167,32 +167,22 @@ class InfiniScaledDotProductAttention(ScaledDotProductAttention):
         z = z.unsqueeze(dim=1) # [batch_size, 1, n_heads, dim, 1]
         
         return memory_matrix, z
-    
+
     def _update_memory_matrix_channelexl(self, key_states, value_states, n_channels):
-        # σ_k = elu(k) + 1
-        sigma_k = self.elu(key_states) + 1.0  # [B, C, H, P, D]
-        sigma_k_T = sigma_k.transpose(-2, -1)  # [B, C, H, D, P]
+        sigma_k = self.elu(key_states) + 1.0  # [batch_size, n_channels, n_heads, n_patch, dim]
+        sigma_k_T = sigma_k.transpose(-2, -1) # [batch_size, n_channels, n_heads, dim, n_patch]
 
-        # Compute per-channel memory matrices
-        memory_matrix = torch.matmul(sigma_k_T, value_states)  # [B, C, H, D, D]
+        C = key_states.shape(1)
+        memory_matrix = torch.matmul(sigma_k_T, value_states).sum(dim=1).unsqueeze(1) # [batch_size, 1, n_heads, dim, dim] sum over channels then unsqueeze to enable broadcasting over channels
+        memory_matrix = memory_matrix.expand(-1, C, -1, -1, -1) # [batch_size, n_channels, n_heads, dim, dim]
+        memory_matrix -= torch.matmul(sigma_k_T, value_states) # [batch_size, n_channels, n_heads, dim, dim]
 
-        # Build exclusion mask
-        channel_mask = torch.ones(n_channels, n_channels, device=sigma_k.device)
-        channel_mask.fill_diagonal_(0)  # 0 for the excluded channel
-        channel_mask = channel_mask.view(1, n_channels, n_channels, 1, 1, 1)
+        z = sigma_k.sum(dim=-2).unsqueeze(-1).sum(dim=1) # [batch_size, n_heads, dim, 1] sum over sequence length and channels
+        z = z.unsqueeze(dim=1)  # [batch_size, 1, n_heads, dim, 1]
+        z = z.expand(-1, C, -1, -1, -1)  # [batch_size, n_channels, n_heads, dim, 1]
+        z -= sigma_k.sum(dim=-2).unsqueeze(-1)  # [batch_size, n_channels, n_heads, dim, 1]
 
-        # Exclude each channel from memory_matrix
-        memory_matrix_exp = memory_matrix.unsqueeze(1)  # [B, 1, C, H, D, D]
-        memory_matrix_masked = memory_matrix_exp * channel_mask  # [B, C, C, H, D, D]
-        memory_matrix_summed = memory_matrix_masked.sum(dim=2)   # [B, C, H, D, D]
-
-        # ---- Compute z_excluded (matching the exclusion logic) ----
-        sigma_k_sum = sigma_k.sum(dim=-2)  # sum over patch dim -> [B, C, H, D]
-        sigma_k_exp = sigma_k_sum.unsqueeze(1)  # [B, 1, C, H, D]
-        sigma_k_masked = sigma_k_exp * channel_mask.squeeze(-1)  # [B, C, C, H, D]
-        z_excluded = sigma_k_masked.sum(dim=2).unsqueeze(-1)  # [B, C, H, D, 1]
-
-        return memory_matrix_summed, z_excluded
+        return memory_matrix, z
 
     def retrieve_from_memory(self, query_states, memory_matrix, z_excluded):
         sigma_q = self.elu(query_states) + 1.0  # [B, C, H, P, D]
