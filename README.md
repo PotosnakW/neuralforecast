@@ -192,14 +192,3 @@ python -m forecast_error --experiment_name t5tiny_vanilla --GIFT_EVAL_path /home
 | | `AutoETS` | Statistical | - | - |
 
 **Note:** ✓ = with channel exclusion, ✗ = without channel exclusion
-
-
-## Citation
-
-If you use MICA in your research, please cite:
-```bibtex
-@article{mica2024,
-  title={{MICA}: Multivariate Infini Compressive Attention for Time Series Forecasting},
-  author={Willa Potosnak and Nina {\.Z}ukowska and Micha{\l} Wili{\'n}ski and Dan Howarth and Ignacy St{\k{e}}pka and Mononito Goswami and Artur Dubrawski},
-  year={2026}
-}
