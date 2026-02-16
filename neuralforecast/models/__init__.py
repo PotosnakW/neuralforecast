@@ -3,7 +3,7 @@ __all__ = ['RNN', 'GRU', 'LSTM', 'TCN', 'DeepAR', 'DilatedRNN',
            'TFT', 'VanillaTransformer', 'Informer', 'Autoformer', 'PatchTST', 'FEDformer',
            'StemGNN', 'HINT', 'TimesNet', 'TimeLLM', 'TSMixer', 'TSMixerx', 'MLPMultivariate',
            'iTransformer', 'BiTCN', 'TiDE', 'DeepNPTS', 'SOFTS', 'TimeMixer', 'KAN', 'RMoK',
-           'TimeXer', 'MOMENT', 'iTransformerT5', 'PatchTSTMultivariate', 'TimerXL', 'Crossformer',
+           'TimeXer', 'MOMENT', 'iTransformerT5', 'PatchTSTMultivariate', 'TimerXL', 'Crossformer', 'Chronos2'
            ]
 
 from .rnn import RNN
@@ -46,3 +46,4 @@ from .crossformer import Crossformer
 from .patchtstmultivariate import PatchTSTMultivariate
 from .timerxl import TimerXL
 from .momentfast import MOMENTFAST
+from .chronos2 import Chronos2

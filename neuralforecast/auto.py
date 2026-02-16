@@ -6,7 +6,7 @@ __all__ = ['AutoRNN', 'AutoLSTM', 'AutoGRU', 'AutoTCN', 'AutoDeepAR', 'AutoDilat
            'AutoVanillaTransformer', 'AutoInformer', 'AutoAutoformer', 'AutoFEDformer', 'AutoPatchTST',
            'AutoiTransformer', 'AutoTimeXer', 'AutoTimesNet', 'AutoStemGNN', 'AutoHINT', 'AutoTSMixer', 'AutoTSMixerx',
            'AutoMLPMultivariate', 'AutoSOFTS', 'AutoTimeMixer', 'AutoRMoK', 'AutoMOMENT', 'AutoiTransformerT5', 'AutoTimerXL', 'AutoCrossformer',
-           'AutoMOMENTFAST',]
+           'AutoMOMENTFAST', 'AutoChronos2']
 
 # %% ../nbs/models.ipynb 2
 from os import cpu_count
@@ -61,6 +61,7 @@ from .models.patchtstmultivariate import PatchTSTMultivariate
 from .models.timerxl import TimerXL
 from .models.crossformer import Crossformer
 from .models.momentfast import MOMENTFAST
+from .models.chronos2 import Chronos2
 
 from .losses.pytorch import MAE, MQLoss, DistributionLoss
 
@@ -2993,3 +2994,86 @@ class AutoMOMENTFAST(BaseAuto):
             config = cls._ray_config_to_optuna(config)
 
         return config
+
+
+class AutoChronos2(BaseAuto):
+
+    default_config = {
+        "univariate": False,
+        "cpus": cpu_count(),
+        "n_series": None,
+        "alias": None,
+        "batch_size": 64,
+        "random_seed": 1,
+    }
+
+    def __init__(
+        self,
+        h,
+        n_series,
+        loss=MAE(),
+        valid_loss=None,
+        config=None,
+        search_alg=BasicVariantGenerator(random_state=1),
+        num_samples=1,
+        refit_with_val=False,
+        cpus=cpu_count(),
+        gpus=torch.cuda.device_count(),
+        verbose=False,
+        alias=None,
+        backend="ray",
+        callbacks=None,
+    ):
+
+        if backend == "optuna":
+            raise Exception("Optuna is not supported for AutoChronos2.")
+
+        if config is None:
+            config = self.get_default_config(
+                h=h,
+                backend=backend,
+                n_series=n_series,
+                cpus=cpus,
+                alias=alias,
+            )
+        else:
+            config["n_series"] = n_series
+            config["cpus"] = cpus
+            config["alias"] = alias
+
+        super(AutoChronos2, self).__init__( # Trainer not used for Chronos2, but we want to keep the same interface for consistency
+            cls_model=Chronos2,
+            h=h,
+            loss=loss,
+            valid_loss=valid_loss,
+            config=config,
+            search_alg=search_alg,
+            num_samples=num_samples,
+            refit_with_val=refit_with_val,
+            cpus=cpus,
+            gpus=gpus,
+            verbose=verbose,
+            alias=alias,
+            backend=backend,
+            callbacks=callbacks,
+        )
+
+    @classmethod
+    def get_default_config(cls, h, backend, n_series=None, cpus=None, alias=None):
+        if backend == "optuna":
+            raise Exception("Optuna is not supported for AutoChronos2.")
+
+        config = cls.default_config.copy()
+        config["n_series"] = n_series
+        config["cpus"] = cpus if cpus is not None else cpu_count()
+        config["alias"] = alias
+        return config
+
+    def fit(
+        self,
+        *args,
+        **kwargs,
+    ):
+        self.model = self.cls_model(**self.config) # we need to define the model and not use the trainer for Chronos2, as we zero-shot it
+        self.model.val_size = kwargs['val_size'] if 'val_size' in kwargs else 0
+        self.model.test_size = kwargs['test_size'] if 'test_size' in kwargs else 0
