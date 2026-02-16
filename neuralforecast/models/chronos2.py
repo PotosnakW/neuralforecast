@@ -39,7 +39,7 @@ class Chronos2(BaseModel):
         batch_size: int = 64,
         valid_batch_size: Optional[int] = None,
         windows_batch_size: int = 64,
-        inference_windows_batch_size: Optional[int] = None,
+        inference_windows_batch_size: Optional[int] = 1_024,
         start_padding_enabled: bool = False,
         step_size: int = 1,
         scaler_type: str = "identity",
@@ -99,16 +99,17 @@ class Chronos2(BaseModel):
             top_p=self.top_p,
         )
         self.quantiles = self.pipeline.model.quantiles.tolist()
+        
 
     def _median_forecast(self, x_enc: torch.Tensor) -> torch.Tensor:
         input_device = x_enc.device
         x_enc_cpu = x_enc.detach().to(device="cpu", dtype=torch.float32).contiguous()
 
         forecast = self.pipeline.predict(x_enc_cpu, prediction_length=self.h)
-        forecast = torch.vstack(forecast)
+        forecast = torch.stack(forecast, dim=0)
         median_idx = self.quantiles.index(0.5) if 0.5 in self.quantiles else len(self.quantiles) // 2
-        
-        return forecast[:, median_idx, :].to(input_device)
+
+        return forecast[:, :, median_idx, :].to(input_device)
 
     def forward(self, windows_batch, **kwargs):
         x = windows_batch["insample_y"]  # [B, L, N]
@@ -118,11 +119,11 @@ class Chronos2(BaseModel):
         
         if self.univariate:
             x_uni = x.permute(0, 2, 1).reshape(B * N, 1, -1) #[N, B, L]
-            y_uni = self._median_forecast(x_uni).squeeze(-1)  # [B*N, H]
+            y_uni = self._median_forecast(x_uni).squeeze(1)  # [B*N, H]
             forecast = y_uni.reshape(B, N, self.h).permute(0, 2, 1)
             return forecast.reshape(B, self.h, -1)
 
         x_enc = x.permute(0, 2, 1).contiguous()  # [B, N, L]
-        y = self._median_forecast(x_enc)  # [B*N, H] 
-        return y.reshape(B, self.h, -1)
+        y = self._median_forecast(x_enc)  # [B, N, H]
+        return y.permute(0, 2, 1).contiguous().reshape(B, self.h, -1)
     

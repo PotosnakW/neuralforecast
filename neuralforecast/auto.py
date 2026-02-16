@@ -3075,3 +3075,5 @@ class AutoChronos2(BaseAuto):
         **kwargs,
     ):
         self.model = self.cls_model(**self.config) # we need to define the model and not use the trainer for Chronos2, as we zero-shot it
+        self.model.val_size = kwargs['val_size'] if 'val_size' in kwargs else 0
+        self.model.test_size = kwargs['test_size'] if 'test_size' in kwargs else 0
