@@ -1,6 +1,6 @@
 import copy
 
-from neuralforecast.auto import AutoiTransformerT5, AutoiTransformer, AutoTSMixer, AutoMLPMultivariate, AutoMOMENT, AutoPatchTSTMultivariate, AutoTimerXL, AutoCrossformer, AutoMOMENTFAST
+from neuralforecast.auto import AutoiTransformerT5, AutoiTransformer, AutoTSMixer, AutoMLPMultivariate, AutoMOMENT, AutoPatchTSTMultivariate, AutoTimerXL, AutoCrossformer, AutoChronos2
 from neuralforecast.losses.pytorch import MAE
 
 import optuna
@@ -1015,7 +1015,7 @@ def get_models(args):
         ]
 
     elif args.experiment_name == 'statsforecast':
-        from statsforecast.models import AutoETS, AutoARIMA
+        from statsforecast.models import AutoETS
 
         if args.freq == 'H':
             season_length = 24
@@ -1038,6 +1038,37 @@ def get_models(args):
 
         models = [
             AutoETS(season_length = season_length),   
+        ]
+
+    elif args.experiment_name == 'chronos2.0_baseline':
+        config1 = {
+            'input_size': args.input_size,
+            'n_series': args.n_series,
+            'max_steps': max_steps,
+            'val_check_steps': val_check_steps,
+            "top_k": 1,              # Always pick most likely value
+            "top_p": 1.0,            # Doesn't matter when top_k=1
+            "univariate": True,
+        }
+
+        config2 = copy.deepcopy(config1)
+        config2['univariate'] = False
+
+        models=[
+            AutoChronos2(
+                h=args.h,
+                config=config1,
+                cpus=20,
+                n_series=args.n_series,
+                alias='Chronos_univariate',
+            ),
+            AutoChronos2(
+                h=args.h,
+                config=config2,
+                cpus=20,
+                n_series=args.n_series,
+                alias='Chronos_multivariate'
+            ),
         ]
 
     else:

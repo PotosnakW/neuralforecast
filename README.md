@@ -92,7 +92,7 @@ SAVE_DIR = "/path/to/your/output/directory"  # Change this to your desired outpu
 
 #### Set file name
 ```python
-FILE_NAME = "train_models"  # train_models used for all experiments except 'vanilla_pca_t5tiny' and 'vanilla_ica_t5tiny' which use "train_models_pca".
+FILE_NAME = "train_models" FILE_NAME = "train_models"  # train_models used for all experiments except 'vanilla_pca_t5tiny' and 'vanilla_ica_t5tiny' which use "train_models_pca" or 'chronos2.0_baselin' which uses "zeroshot_models"
 ```
 
 #### Set Experiment Name
