@@ -32,7 +32,12 @@ git checkout remotes/origin/moment_infini
 pip install -e .
 cd ./mica
 pip install -r mica_requirements.txt
+```
 
+
+### 2. Install Chronos2.0 (zero-shot forecasting baseline)
+```bash
+pip install chronos-forecasting
 ```
 
 

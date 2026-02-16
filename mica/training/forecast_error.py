@@ -178,7 +178,7 @@ def get_results_df(results_dir, dataset_names, experiment_name, random_seeds):
     return all_datasets_df
 
 
-results_dir = '/zfsauton/project/public/dhowarth/icml26_mvts/icml_exp_results'
+results_dir = '../exp_results'
 
 dataset_names = [
     'simglucose',
