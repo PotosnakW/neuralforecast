@@ -45,5 +45,4 @@ from .itransformert5 import iTransformerT5
 from .crossformer import Crossformer
 from .patchtstmultivariate import PatchTSTMultivariate
 from .timerxl import TimerXL
-from .momentfast import MOMENTFAST
 from .chronos2 import Chronos2

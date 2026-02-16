@@ -73,7 +73,6 @@ from neuralforecast.models import (
     Crossformer,
     PatchTSTMultivariate,
     TimerXL,
-    MOMENTFAST,
     Chronos2,
 )
 from .common._base_auto import BaseAuto, MockTrial
@@ -217,8 +216,6 @@ MODEL_FILENAME_DICT = {
     "autotimerxl": TimerXL,
     "crossformer": Crossformer,
     "autocrossformer": Crossformer,
-    "momentfast": MOMENTFAST,
-    "automomentfast": MOMENTFAST,
     "chronos2": Chronos2
 }
 
