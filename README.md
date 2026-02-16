@@ -8,6 +8,10 @@ ____
 
 We propose MICA (Multivariate Infini Compressive Attention), a memory-efficient attention-based forecasting architecture for multivariate time series. MICA adapts compressive memory techniques with linear attention, originally developed for long-context language models, from context com- pression to channel compression, enabling a computationally efficient cross-channel architecture component that scales linearly in both time and memory with sequence length and channel count.
 
+We implement our method and various baselines within the open-source neuralforecast repository [1], leveraging its available models and standardized training infrastructure for consistent benchmarking.
+
+1. Olivares, K. G., Challú, C., Garza, F., Canseco, M. M., and Dubrawski, A. NeuralForecast: User friendly state-of-the-art neural forecasting models. PyCon Salt Lake City, Utah, US 2022, 2022.
+
 <h4><u>Sections:</u></h4>
 
 1. [Environment Setup](#Environment-Setup)
@@ -24,11 +28,11 @@ We propose MICA (Multivariate Infini Compressive Attention), a memory-efficient 
 ### 1. Create and Activate Conda Environment
 ```bash
 conda create -n neuralforecast python=3.11.0
-conda activate neuralforecast
+conda activate neuralforecast 
 
-git clone <anonymous>
+git clone <repo>
 cd ./neuralforecast
-git checkout remotes/origin/moment_infini
+git checkout remotes/origin/mica
 pip install -e .
 cd ./mica
 pip install -r mica_requirements.txt
