@@ -113,17 +113,15 @@ class Chronos2(BaseModel):
 
     def forward(self, windows_batch, **kwargs):
         x = windows_batch["insample_y"]  # [B, L, N]
-        
-        #   [batch_size (B), input_size (L), n_series (N)]
         B, L, N = x.shape
         
         if self.univariate:
-            x_uni = x.permute(0, 2, 1).reshape(B * N, 1, -1) #[N, B, L]
-            y_uni = self._median_forecast(x_uni).squeeze(1)  # [B*N, H]
-            forecast = y_uni.reshape(B, N, self.h).permute(0, 2, 1)
-            return forecast.reshape(B, self.h, -1)
+            x_uni = x.permute(2, 0, 1).reshape(N * B, 1, L) #[N*B, 1, L]
+            y_uni = self._median_forecast(x_uni).squeeze(1) # [N*B, H]
+            forecast = y_uni.reshape(N, B, self.h).permute(1, 2, 0) # [B, H, N]
+            return forecast
 
         x_enc = x.permute(0, 2, 1).contiguous()  # [B, N, L]
-        y = self._median_forecast(x_enc)  # [B, N, H]
-        return y.permute(0, 2, 1).contiguous().reshape(B, self.h, -1)
-    
+        forecast = self._median_forecast(x_enc)  # [B, N, H]
+        forecast = forecast.permute(0, 2, 1).contiguous() # [B, H, N]
+        return forecast

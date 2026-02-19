@@ -39,12 +39,6 @@ pip install -r mica_requirements.txt
 ```
 
 
-### 2. Install Chronos2.0 (zero-shot forecasting baseline)
-```bash
-pip install chronos-forecasting
-```
-
-
 ## Download Datasets
 
 ### 1. Download GiftEval Datasets

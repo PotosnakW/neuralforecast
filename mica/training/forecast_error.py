@@ -195,7 +195,6 @@ dataset_names = [
     'ett2/D',
     'ett2/W',
     'covid_deaths',
-    'LOOP_SEATTLE/H',
     'LOOP_SEATTLE/D',
     'electricity/H',
     'electricity/D',
@@ -220,6 +219,7 @@ experiment_names = [
     'timerxl_baseline',
     'tsmixer_baseline',
     'statsforecast',
+    'chronos2.0_baseline',
 ]
 
 
@@ -242,7 +242,7 @@ if __name__ == '__main__':
     
     os.environ['GIFT_EVAL'] = args.GIFT_EVAL_path
     
-    if args.experiment_name == 'statsforecast':
+    if args.experiment_name in ['statsforecast', 'chronos2.0_baseline']:
         random_seeds = [1]
     else:
         random_seeds = [1, 2, 3, 4, 5]

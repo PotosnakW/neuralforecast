@@ -7,7 +7,7 @@ import pandas as pd
 
 from torch.optim.lr_scheduler import StepLR
 from neuralforecast.losses.pytorch import MAE
-from neuralforecast.models import MOMENT, PatchTSTMultivariate, Crossformer, iTransformer, iTransformerT5, TimerXL, MLPMultivariate, TSMixer
+from neuralforecast.models import MOMENT, PatchTSTMultivariate, Crossformer, iTransformer, iTransformerT5, TimerXL, MLPMultivariate, TSMixer, Chronos2
 
 
 def get_model_size(model):
@@ -151,7 +151,6 @@ def analyze_model(model, inp, with_backward=False, display=False,
 
     results = {
         'gflops': flops,
-       # 'total_params': num_params,
         'trainable_params': trainable_params,
         'inference_speed': ms,
     }
@@ -166,6 +165,10 @@ def get_table(models, inp):
         print(model[0])
         model[1].to(device)  # Move model to GPU
         results = analyze_model(model[1], inp=inp, with_backward=False)
+
+        if model[0] == 'Chronos-2':
+            results['trainable_params'] = 120.0
+
         model_params[model[0]] = results
 
         # Clear GPU cache between models
@@ -174,8 +177,6 @@ def get_table(models, inp):
 
     model_params_df = pd.DataFrame(model_params).T
     model_params_df = model_params_df.round(3)
-    # for col in ['gflops', 'trainable_params', 'inference_speed']: #'total_params',
-    #     model_params_df[col] = format_with_increase(model_params_df[col])
     model_params_df.index.name = 'model' 
     model_params_df.reset_index(inplace=True, drop=False)
 
@@ -388,11 +389,20 @@ def get_model_config(args, model_type='moment'):
             # Multivariate
             'univariate': False,  # Set to False for multivariate mode
         }
+    
+    elif model_type == 'chronos2':
+        config = {
+            **common_config,
+            # Architecture
+            "top_k": 1,              # Always pick most likely value
+            "top_p": 1.0,            # Doesn't matter when top_k=1
+            'univariate': False,  # Set to False for multivariate mode
+        }
         
     else:
         raise ValueError(f"Unknown model_type: {model_type}. Choose from: "
                         f"['moment', 'patchtst', 'itransformer', 'itransformert5', "
-                        f"'crossformer', 'timerxl', 'tsmixer', 'mlpmultivariate']")
+                        f"'crossformer', 'timerxl', 'tsmixer', 'mlpmultivariate', 'chronos2']")
     
     return config
 
@@ -407,22 +417,16 @@ args = Args()
 
 config_mp = get_model_config(args, model_type='moment')
 
-config_mp_headmixer = deepcopy(config_mp)
-config_mp_headmixer['multivariate_head'] = True
-
-config_mp_infini_layerwise = deepcopy(config_mp)
-config_mp_infini_layerwise['infini_mixer_type'] = 'mlp_query'
-config_mp_infini_layerwise['layerwise_beta'] = False
-config_mp_infini_layerwise['channelwise_beta'] = False
+config_mp_infini = deepcopy(config_mp)
+config_mp_infini['infini_mixer_type'] = 'mlp_query'
+config_mp_infini['layerwise_beta'] = False
+config_mp_infini['channelwise_beta'] = False
 
 patchtst_vanilla = PatchTSTMultivariate(h=args.h, **config_mp)
-patchtst_headmixer = PatchTSTMultivariate(h=args.h, **config_mp_headmixer)
-patchtst_infini_layerwise = PatchTSTMultivariate(h=args.h, **config_mp_infini_layerwise)
+patchtst_infini = PatchTSTMultivariate(h=args.h, **config_mp_infini)
 
 moment_vanilla = MOMENT(h=args.h, **config_mp)
-moment_headmixer = MOMENT(h=args.h, **config_mp_headmixer)
-moment_infini_layerwise = MOMENT(h=args.h, **config_mp_infini_layerwise)
-
+moment_infini = MOMENT(h=args.h, **config_mp_infini)
 
 config_itransformer = get_model_config(args, model_type='itransformer')
 itransformer = iTransformer(h=args.h, **config_itransformer)
@@ -440,6 +444,9 @@ tsmixer = TSMixer(h=args.h, **config_tsmixer)
 config_mlp = get_model_config(args, model_type='mlpmultivariate')
 mlp = MLPMultivariate(h=args.h, **config_mlp)
 
+config_chronos2 = get_model_config(args, model_type='chronos2')
+chronos2 = Chronos2(h=args.h, **config_chronos2)
+
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
@@ -450,17 +457,16 @@ inp = {
 }
 
 models = {
-    'PatchTST MICA (MLP w/ Query)': patchtst_infini_layerwise,
-    'Moment MICA (MLP w/ Query)': moment_infini_layerwise,
+    'PatchTST MICA (MLP w/ Query)': patchtst_infini,
+    'Moment MICA (MLP w/ Query)': moment_infini,
     'iTransformer': itransformer, 
     'iTransformer-T5': itransformert5, 
     'Crossformer': crossformer,
     'Timer-XL': timerxl,
     'TSMixer': tsmixer,
-    'MLP': mlp
+    'MLP': mlp,
+    'Chronos-2': chronos2,
 }
-
-
 
 table = get_table(models, inp)
 table.to_csv('./flops_baseline_table.csv', index=False)
