@@ -86,32 +86,6 @@ def get_datasets(args):
         test_size = int(dataset.prediction_length*dataset.windows)
         freq = dataset.freq
 
-    elif args.dataset_name in gifteval_pretrain_dataset_names:
-        to_univariate = False  # Whether to convert the data to univariate
-        term = "short"  # Term of the dataset
-        dataset = Dataset(name=args.dataset_name, term=term, to_univariate=to_univariate)
-
-        df = preprocess_gifteval_dataset_for_neuralforecast(args.dataset_name, 
-                                                                  dataset_type='train',
-        )
-        h = dataset.prediction_length
-        val_size = dataset.prediction_length
-        test_size = int(dataset.prediction_length*dataset.windows)
-        freq = dataset.freq
-
-    elif args.dataset_name in gluonts_datasets.keys():
-        df_train = gluonts_to_long_dataframe(args.dataset_name, split='train')
-        df_test = gluonts_to_long_dataframe(args.dataset_name, split='test')
-
-        df = pd.concat([df_train, df_test], axis=0)
-        df.sort_values(by=['unique_id', 'ds'], ascending=True, inplace=True)
-        df = df.drop_duplicates(subset=["unique_id", "ds"], keep="last")
-
-        h = gluonts_datasets[args.dataset_name]['prediction_length']
-        val_size = gluonts_datasets[args.dataset_name]['prediction_length']
-        test_size = int(h*2-1) # Enable n_windows=h for rolling window predictions
-        freq = gluonts_datasets[args.dataset_name]['freq']
-
     elif args.dataset_name == 'simglucose':
         df = pd.read_csv('../datasets/simglucose_90_days.csv')
         h = 6
@@ -136,20 +110,6 @@ def get_datasets(args):
         val_size = 3744 #13 days (10% of data)
         test_size = 3744 #13 days (10% of data)
         freq = '5min'
-        
-    elif args.dataset_name == 'wind_global_hourly':
-        df = pd.read_csv('../datasets/wind_global_hourly.csv')
-        h = 24
-        val_size = 1752 # 1755 Timer-XL val size
-        test_size = 3504 #3509 Timer-XL test size
-        freq = 'H'
-        
-    elif args.dataset_name == 'temp_global_hourly':
-        df = pd.read_csv('../datasets/temp_global_hourly.csv')
-        h = 24
-        val_size = 1752 # 1755 Timer-XL val size
-        test_size = 3504 #3509 Timer-XL test size
-        freq = 'H'
 
     elif args.dataset_name == 'synthetic_windspeed':
         df = pd.read_csv('../datasets/synthetic_windgust_dataset.csv')
