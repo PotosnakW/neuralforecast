@@ -37,7 +37,7 @@ EXPERIMENT_NAMES = [
     #'chronos2.0_baseline'
 ]
 GPU_INDICES = [0, 1, 2, 3]
-RANDOM_SEEDS = [1]#, 2, 3, 4, 5]
+RANDOM_SEEDS = [1, 2, 3, 4, 5]
 FILE_NAME = 'train_models'
 SAVE_DIR = '../exp_results'
 GIFT_EVAL_DIR = '../GiftEval'
