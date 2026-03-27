@@ -1015,7 +1015,6 @@ def get_models(args):
         ]
 
     elif args.experiment_name == 'timemixer_baseline':
-        import math
         config = {
             'input_size': args.input_size,
             'n_series': args.n_series,
