@@ -271,6 +271,8 @@ class TimeMixer(BaseModel):
     `down_sampling_method`: str, down sampling method [avg, max, conv].<br>
     `use_norm`: bool, whether to normalize or not.<br>
         `decoder_input_size_multiplier`: float = 0.5.<br>
+    `revin_affine`
+    `revin_subtract_last`
     `loss`: PyTorch module, instantiated train loss class from [losses collection](https://nixtla.github.io/neuralforecast/losses.pytorch.html).<br>
     `valid_loss`: PyTorch module=`loss`, instantiated valid loss class from [losses collection](https://nixtla.github.io/neuralforecast/losses.pytorch.html).<br>
     `max_steps`: int=1000, maximum number of training steps.<br>
@@ -327,7 +329,9 @@ class TimeMixer(BaseModel):
         down_sampling_layers: int = 1,
         down_sampling_window: int = 2,
         down_sampling_method: str = "avg",
-        use_norm: bool = True,
+        revin: bool = True,
+        revin_affine: bool = False,
+        revin_subtract_last: bool = False,
         decoder_input_size_multiplier: float = 0.5,
         loss=MAE(),
         valid_loss=None,
@@ -400,7 +404,9 @@ class TimeMixer(BaseModel):
         self.dropout = dropout
         self.top_k = top_k
 
-        self.use_norm = use_norm
+        self.revin = revin
+        self.revin_affine = revin_affine
+        self.revin_subtract_last = revin_subtract_last
 
         self.use_future_temporal_feature = 0
         if futr_exog_list is not None:
@@ -447,7 +453,10 @@ class TimeMixer(BaseModel):
         self.normalize_layers = torch.nn.ModuleList(
             [
                 RevIN(
-                    self.enc_in, affine=True, non_norm=False if self.use_norm else True
+                    self.enc_in, 
+                    affine=self.revin_affine, 
+                    subtract_last=self.revin_subtract_last,
+                    non_norm=False if self.revin else True
                 )
                 for i in range(self.down_sampling_layers + 1)
             ]

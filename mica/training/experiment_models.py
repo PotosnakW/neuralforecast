@@ -1,6 +1,6 @@
 import copy
 
-from neuralforecast.auto import AutoiTransformerT5, AutoiTransformer, AutoTSMixer, AutoMLPMultivariate, AutoMOMENT, AutoPatchTSTMultivariate, AutoTimerXL, AutoCrossformer, AutoChronos2
+from neuralforecast.auto import AutoiTransformerT5, AutoiTransformer, AutoTSMixer, AutoMLPMultivariate, AutoMOMENT, AutoPatchTSTMultivariate, AutoTimerXL, AutoCrossformer, AutoTimeMixer, AutoChronos2
 from neuralforecast.losses.pytorch import MAE
 
 import optuna
@@ -1011,6 +1011,52 @@ def get_models(args):
                     cpus=20,
                     n_series=args.n_series,
                     alias='AutoCrossformer_multivariate'
+                ),
+        ]
+
+    elif args.experiment_name == 'timemixer_baseline':
+        import math
+        config = {
+            'input_size': args.input_size,
+            'n_series': args.n_series,
+            'max_steps': max_steps,
+            'val_check_steps': val_check_steps,
+            'windows_batch_size': windows_batch_size,
+            'inference_windows_batch_size': inference_windows_batch_size,
+            'd_model': hidden_size,
+            'd_ff': linear_hidden_size,
+            'e_layers': n_layers,
+            'decomp_method': 'moving_avg',
+            'down_sampling_method': 'avg',
+            'down_sampling_layers': 1,
+            'down_sampling_window': 2, 
+            'moving_avg': args.h // 2,
+            'top_k': 5,
+            'dropout': dropout,
+            'revin': revin,
+            'revin_affine': revin_affine,
+            'revin_subtract_last': revin_subtract_last,
+            'learning_rate': learning_rate,
+            'early_stop_patience_steps': early_stop_patience_steps,
+            'batch_size': batch_size,
+            'valid_batch_size': batch_size,
+            'scaler_type': scaler_type,
+            'lr_scheduler': lr_scheduler,
+            'lr_scheduler_kwargs': lr_scheduler_kwargs,
+            'random_seed': args.random_seed,
+            'channel_independence': 0 # channel-dependence
+        }
+
+        models=[
+            AutoTimeMixer(
+                    h=args.h, 
+                    config=config,
+                    loss=loss,
+                    search_alg=None,
+                    num_samples=args.num_samples,
+                    cpus=20,
+                    n_series=args.n_series,
+                    alias='AutoTimeMixer_multivariate'
                 ),
         ]
 

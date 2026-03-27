@@ -26,21 +26,22 @@ DATASET_NAMES = [
     'solar/W',
 ]
 EXPERIMENT_NAMES = [
-    'vanilla_t5tiny',
-    'infini_mlpquerymixer_t5tiny',
-    'multivariateMLP_baseline',
-    'itransformer_baseline',
-    'crossformer_baseline',
-    'timerxl_baseline',
-    'tsmixer_baseline',
+    # 'vanilla_t5tiny',
+    # 'infini_mlpquerymixer_t5tiny',
+    # 'multivariateMLP_baseline',
+    # 'itransformer_baseline',
+    # 'crossformer_baseline',
+    # 'timerxl_baseline',
+    # 'tsmixer_baseline',
+    'timemixer_baseline',
     #'chronos2.0_baseline'
 ]
 GPU_INDICES = [0, 1, 2, 3]
-RANDOM_SEEDS = [1, 2, 3, 4, 5]
+RANDOM_SEEDS = [1]#, 2, 3, 4, 5]
 FILE_NAME = 'train_models'
 SAVE_DIR = '../exp_results'
 GIFT_EVAL_DIR = '../GiftEval'
-CONDA_DIR = '/home/miniconda3'
+CONDA_DIR = '/home/wpotosna/miniconda3'
 
 
 def run_experiment(gpu_id, experiment_name, dataset_name, random_seed):
