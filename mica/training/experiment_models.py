@@ -1106,7 +1106,7 @@ def get_models(args):
             ),
         ]
 
-    elif args.experiment_name == 'infini_mlpquerymixer_t5tiny_learnable_weights':
+    elif args.experiment_name == 'infini_mlpquerymixer_t5tiny_static_weights':
         def mlpquerymixer_ciincl_config(trial):
             return {
                 'input_size': args.input_size,
@@ -1148,7 +1148,7 @@ def get_models(args):
                 'lr_scheduler_kwargs': lr_scheduler_kwargs,
                 'random_seed': args.random_seed,
             }
-        
+
         models = [
             AutoPatchTSTMultivariate(
                 h=args.h,
@@ -1159,11 +1159,11 @@ def get_models(args):
                 num_samples=5, #args.num_samples,
                 cpus=20,
                 n_series=args.n_series,
-                alias='AutoPatchTSTMultivariate_mlpquerymixer_lw_ciincl'
+                alias='AutoPatchTSTMultivariate_mlpquerymixer_sw_ciincl'
             ),
         ]
 
-    elif args.experiment_name == 'infini_mlpquerymixer_t5tiny_query_weights':
+    elif args.experiment_name == 'infini_mlpquerymixer_t5tiny_dynamic_weights':
         def mlpquerymixer_ciincl_config(trial):
             return {
                 'input_size': args.input_size,
@@ -1216,7 +1216,7 @@ def get_models(args):
                 num_samples=5, #args.num_samples,
                 cpus=20,
                 n_series=args.n_series,
-                alias='AutoPatchTSTMultivariate_mlpquerymixer_qw_ciincl'
+                alias='AutoPatchTSTMultivariate_mlpquerymixer_dw_ciincl'
             ),
         ]
 

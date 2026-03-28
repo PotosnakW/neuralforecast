@@ -6,23 +6,23 @@ from datetime import datetime
 
 
 DATASET_NAMES = [
-    'simglucose',
-    'iowa_ihop_smex_windspeed',
-    'iowa_plows_windspeed',
-    'LOOP_SEATTLE/D',
+    # 'simglucose',
+    # 'iowa_ihop_smex_windspeed',
+    # 'iowa_plows_windspeed',
+    #'LOOP_SEATTLE/D',
     'M_DENSE/D',
-    'M_DENSE/H',
+    #'M_DENSE/H',
     'covid_deaths',
     'ett1/D',
-    'ett1/H',
+    #'ett1/H',
     'ett1/W',
     'ett2/D',
-    'ett2/H',
+    #'ett2/H',
     'ett2/W',
     'jena_weather/D',
     'jena_weather/H',
     'solar/D',
-    'solar/H',
+    #'solar/H',
     'solar/W',
 ]
 EXPERIMENT_NAMES = [
@@ -35,14 +35,14 @@ EXPERIMENT_NAMES = [
     # 'tsmixer_baseline',
     #'timemixer_baseline',
     #'chronos2.0_baseline',
-    'infini_mlpquerymixer_t5tiny_learnable_weights',
-    'infini_mlpquerymixer_t5tiny_query_weights',
+   'infini_mlpquerymixer_t5tiny_static_weights',
+   'infini_mlpquerymixer_t5tiny_dynamic_weights',
 ]
 GPU_INDICES = [0, 1, 2, 3]
 RANDOM_SEEDS = [1, 2, 3, 4, 5]
 FILE_NAME = 'train_models'
 SAVE_DIR = '../exp_results'
-GIFT_EVAL_DIR = '../GiftEval'
+GIFT_EVAL_DIR = '/home/wpotosna/GiftEval'
 CONDA_DIR = '/home/wpotosna/miniconda3'
 
 
