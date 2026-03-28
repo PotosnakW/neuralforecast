@@ -33,8 +33,10 @@ EXPERIMENT_NAMES = [
     # 'crossformer_baseline',
     # 'timerxl_baseline',
     # 'tsmixer_baseline',
-    'timemixer_baseline',
-    #'chronos2.0_baseline'
+    #'timemixer_baseline',
+    #'chronos2.0_baseline',
+    'infini_mlpquerymixer_t5tiny_learnable_weights',
+    'infini_mlpquerymixer_t5tiny_query_weights',
 ]
 GPU_INDICES = [0, 1, 2, 3]
 RANDOM_SEEDS = [1, 2, 3, 4, 5]

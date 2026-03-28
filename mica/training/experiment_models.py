@@ -1106,6 +1106,120 @@ def get_models(args):
             ),
         ]
 
+    elif args.experiment_name == 'infini_mlpquerymixer_t5tiny_learnable_weights':
+        def mlpquerymixer_ciincl_config(trial):
+            return {
+                'input_size': args.input_size,
+                'n_series': args.n_series,
+                'patch_len': patch_len,
+                'stride': stride,
+                'max_steps': max_steps,
+                'val_check_steps': val_check_steps,
+                'windows_batch_size': windows_batch_size,
+                'inference_windows_batch_size': inference_windows_batch_size,
+                #'transformer_backbone': transformer_backbone,
+                'hidden_size': hidden_size,
+                'linear_hidden_size': linear_hidden_size,
+                'n_heads': n_heads,
+                'd_k': d_k,
+                'd_v': d_v,
+                'n_layers': n_layers,
+                'pe_type': pe_type,
+                'learn_pe': learn_pe,
+                'dropout': dropout,
+                'head_dropout': head_dropout,
+                'revin': revin,
+                'revin_affine': revin_affine,
+                'revin_subtract_last': revin_subtract_last,
+                'padding_patch': padding_patch,
+                'infini_mixer_type': 'mlp_query',
+                'infini_channel_weight_type': 'static',
+                'infini_channel_exclusion': False,
+                'mlpmixer_hidden_size': trial.suggest_categorical('mlpmixer_hidden_size', [128, 256, 384, 512]),
+                'mlpmixer_n_layers': trial.suggest_categorical('mlpmixer_n_layers', [2, 3, 4]),
+                'mlpmixer_dropout': trial.suggest_categorical('mlpmixer_dropout', [0.0, 0.1, 0.2]),
+                'multivariate_head': multivariate_head,
+                'learning_rate': learning_rate,
+                'early_stop_patience_steps': early_stop_patience_steps,
+                'batch_size': batch_size,
+                'valid_batch_size': batch_size,
+                'scaler_type': scaler_type,
+                'lr_scheduler': lr_scheduler,
+                'lr_scheduler_kwargs': lr_scheduler_kwargs,
+                'random_seed': args.random_seed,
+            }
+        
+        models = [
+            AutoPatchTSTMultivariate(
+                h=args.h,
+                config=mlpquerymixer_ciincl_config,
+                loss=loss,
+                search_alg=optuna.samplers.TPESampler(seed=0),
+                backend='optuna',
+                num_samples=5, #args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoPatchTSTMultivariate_mlpquerymixer_lw_ciincl'
+            ),
+        ]
+
+    elif args.experiment_name == 'infini_mlpquerymixer_t5tiny_query_weights':
+        def mlpquerymixer_ciincl_config(trial):
+            return {
+                'input_size': args.input_size,
+                'n_series': args.n_series,
+                'patch_len': patch_len,
+                'stride': stride,
+                'max_steps': max_steps,
+                'val_check_steps': val_check_steps,
+                'windows_batch_size': windows_batch_size,
+                'inference_windows_batch_size': inference_windows_batch_size,
+                #'transformer_backbone': transformer_backbone,
+                'hidden_size': hidden_size,
+                'linear_hidden_size': linear_hidden_size,
+                'n_heads': n_heads,
+                'd_k': d_k,
+                'd_v': d_v,
+                'n_layers': n_layers,
+                'pe_type': pe_type,
+                'learn_pe': learn_pe,
+                'dropout': dropout,
+                'head_dropout': head_dropout,
+                'revin': revin,
+                'revin_affine': revin_affine,
+                'revin_subtract_last': revin_subtract_last,
+                'padding_patch': padding_patch,
+                'infini_mixer_type': 'mlp_query',
+                'infini_channel_weight_type': 'dynamic',
+                'infini_channel_exclusion': False,
+                'mlpmixer_hidden_size': trial.suggest_categorical('mlpmixer_hidden_size', [128, 256, 384, 512]),
+                'mlpmixer_n_layers': trial.suggest_categorical('mlpmixer_n_layers', [2, 3, 4]),
+                'mlpmixer_dropout': trial.suggest_categorical('mlpmixer_dropout', [0.0, 0.1, 0.2]),
+                'multivariate_head': multivariate_head,
+                'learning_rate': learning_rate,
+                'early_stop_patience_steps': early_stop_patience_steps,
+                'batch_size': batch_size,
+                'valid_batch_size': batch_size,
+                'scaler_type': scaler_type,
+                'lr_scheduler': lr_scheduler,
+                'lr_scheduler_kwargs': lr_scheduler_kwargs,
+                'random_seed': args.random_seed,
+            }
+        
+        models = [
+            AutoPatchTSTMultivariate(
+                h=args.h,
+                config=mlpquerymixer_ciincl_config,
+                loss=loss,
+                search_alg=optuna.samplers.TPESampler(seed=0),
+                backend='optuna',
+                num_samples=5, #args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoPatchTSTMultivariate_mlpquerymixer_qw_ciincl'
+            ),
+        ]
+
     else:
         raise ValueError(
             f"Unknown experiment name: {args.experiment_name}. "
