@@ -1029,7 +1029,7 @@ def get_models(args):
             'down_sampling_method': 'avg',
             'down_sampling_layers': 1,
             'down_sampling_window': 2, 
-            'moving_avg': args.h // 2,
+            'moving_avg': 7,
             'top_k': 5,
             'dropout': dropout,
             'revin': revin,
