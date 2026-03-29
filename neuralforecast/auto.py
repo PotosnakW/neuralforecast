@@ -6,7 +6,7 @@ __all__ = ['AutoRNN', 'AutoLSTM', 'AutoGRU', 'AutoTCN', 'AutoDeepAR', 'AutoDilat
            'AutoVanillaTransformer', 'AutoInformer', 'AutoAutoformer', 'AutoFEDformer', 'AutoPatchTST',
            'AutoiTransformer', 'AutoTimeXer', 'AutoTimesNet', 'AutoStemGNN', 'AutoHINT', 'AutoTSMixer', 'AutoTSMixerx',
            'AutoMLPMultivariate', 'AutoSOFTS', 'AutoTimeMixer', 'AutoRMoK', 'AutoMOMENT', 'AutoiTransformerT5', 'AutoTimerXL', 'AutoCrossformer',
-           'AutoMOMENTFAST',]
+           'AutoMOMENTFAST', 'AutoCycleNet',]
 
 # %% ../nbs/models.ipynb 2
 from os import cpu_count
@@ -32,6 +32,7 @@ from .models.nbeatsx import NBEATSx
 from .models.nhits import NHITS
 from .models.dlinear import DLinear
 from .models.nlinear import NLinear
+from .models.cyclenet import CycleNet
 from .models.tide import TiDE
 from .models.deepnpts import DeepNPTS
 
@@ -60,7 +61,7 @@ from .models.itransformert5 import iTransformerT5
 from .models.patchtstmultivariate import PatchTSTMultivariate
 from .models.timerxl import TimerXL
 from .models.crossformer import Crossformer
-from .models.momentfast import MOMENTFAST
+# from .models.momentfast import MOMENTFAST
 
 from .losses.pytorch import MAE, MQLoss, DistributionLoss
 
@@ -946,6 +947,76 @@ class AutoNLinear(BaseAuto):
 
         super(AutoNLinear, self).__init__(
             cls_model=NLinear,
+            h=h,
+            loss=loss,
+            valid_loss=valid_loss,
+            config=config,
+            search_alg=search_alg,
+            num_samples=num_samples,
+            refit_with_val=refit_with_val,
+            cpus=cpus,
+            gpus=gpus,
+            verbose=verbose,
+            alias=alias,
+            backend=backend,
+            callbacks=callbacks,
+        )
+
+    @classmethod
+    def get_default_config(cls, h, backend, n_series=None):
+        config = cls.default_config.copy()
+        config["input_size"] = tune.choice(
+            [h * x for x in config["input_size_multiplier"]]
+        )
+        config["step_size"] = tune.choice([1, h])
+        del config["input_size_multiplier"]
+        if backend == "optuna":
+            config = cls._ray_config_to_optuna(config)
+
+        return config
+
+# %% ../nbs/models.ipynb 64
+class AutoCycleNet(BaseAuto):
+
+    default_config = {
+        "input_size_multiplier": [1, 2, 3, 4, 5],
+        "h": None,
+        "cycle_len": tune.choice([24, 48, 96, 168]),
+        "model_type": tune.choice(["linear", "mlp"]),
+        "d_model": tune.choice([32, 64, 128]),
+        "use_revin": tune.choice([True, False]),
+        "learning_rate": tune.loguniform(1e-4, 1e-1),
+        "scaler_type": tune.choice([None, "robust", "standard", "identity"]),
+        "max_steps": tune.quniform(lower=500, upper=1500, q=100),
+        "batch_size": tune.choice([32, 64, 128, 256]),
+        "windows_batch_size": tune.choice([128, 256, 512, 1024]),
+        "loss": None,
+        "random_seed": tune.randint(lower=1, upper=20),
+    }
+
+    def __init__(
+        self,
+        h,
+        loss=MAE(),
+        valid_loss=None,
+        config=None,
+        search_alg=BasicVariantGenerator(random_state=1),
+        num_samples=10,
+        refit_with_val=False,
+        cpus=cpu_count(),
+        gpus=torch.cuda.device_count(),
+        verbose=False,
+        alias=None,
+        backend="ray",
+        callbacks=None,
+    ):
+
+        # Define search space, input/output sizes
+        if config is None:
+            config = self.get_default_config(h=h, backend=backend)
+
+        super(AutoCycleNet, self).__init__(
+            cls_model=CycleNet,
             h=h,
             loss=loss,
             valid_loss=valid_loss,
