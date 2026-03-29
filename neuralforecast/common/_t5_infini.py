@@ -249,6 +249,19 @@ class T5InfiniAttention(T5Attention):
         else:
             self._update_memory_matrix = self._update_memory_matrix_allchannels
 
+        # Select channel weight type:
+        if config.infini_channel_weight_type == 'uniform':
+            self._compute_channel_weights = self._compute_uniform_channel_weights
+        elif config.infini_channel_weight_type == 'static':
+            self.channel_weights = nn.Parameter(torch.ones(1, config.n_series, config.n_heads, 1, 1))
+            self._compute_channel_weights = self._compute_static_channel_weights
+        elif config.infini_channel_weight_type == 'dynamic':
+            self.channel_attn = nn.Linear(config.d_kv, 1)
+            self._compute_channel_weights = self._compute_query_channel_weights
+        else:
+            raise ValueError(f"infini_channel_weight_type '{config.infini_channel_weight_type}' not recognized. "
+                    f"Use 'uniform', 'static', or 'dynamic'.")
+
         if config.infini_mixer_type.lower() == 'betas':
             self.mixing_gate = self.beta_mixing_gate
             if beta is not None:
@@ -306,30 +319,46 @@ class T5InfiniAttention(T5Attention):
         values = values.permute([2, 0, 1]).unsqueeze(0).unsqueeze(0)  # shape (1, 1, num_heads, query_length, key_length) --> NEW: added dimension=1 for n_channels
         return values
     
-    def _update_memory_matrix_allchannels(self, key_states, value_states, n_channels):
-        sigma_k = self.elu(key_states) + 1.0  # [batch_size, n_channels, n_heads, n_patch, dim]
-        sigma_k_T = sigma_k.transpose(-2, -1) # [batch_size, n_channels, n_heads, dim, n_patch]
-
-        memory_matrix = torch.matmul(sigma_k_T, value_states).sum(dim=1).unsqueeze(1) # [batch_size, 1, n_heads, dim, dim] sum over channels then unsqueeze to enable broadcasting over channels
-        
-        z = sigma_k.sum(dim=-2).unsqueeze(-1).sum(dim=1) # [batch_size, n_heads, dim, 1] sum over sequence length and channels
-        z = z.unsqueeze(dim=1) # [batch_size, 1, n_heads, dim, 1]
-        
-        return memory_matrix, z
+    def _compute_uniform_channel_weights(self, query_states):
+        return torch.ones(1, 1, 1, 1, 1, device=query_states.device)
     
-    def _update_memory_matrix_channelexl(self, key_states, value_states, n_channels):
+    def _compute_static_channel_weights(self, query_states):
+        return torch.softmax(self.channel_weights, dim=1)  # [1, C, H, 1, 1]
+    
+    def _compute_query_channel_weights(self, query_states):
+        # query_states: [B, C, H, P, D]
+        q_pooled = query_states.mean(dim=3)   # [B, C, H, D]
+        scores = self.channel_attn(q_pooled)  # [B, C, H, 1]
+        return torch.softmax(scores, dim=1).unsqueeze(-1)  # [B, C, H, 1, 1]
+
+    def _update_memory_matrix_allchannels(self, key_states, value_states, query_states, n_channels):
+        w = self._compute_channel_weights(query_states)
         sigma_k = self.elu(key_states) + 1.0  # [batch_size, n_channels, n_heads, n_patch, dim]
         sigma_k_T = sigma_k.transpose(-2, -1) # [batch_size, n_channels, n_heads, dim, n_patch]
 
-        C = key_states.shape(1)
-        memory_matrix = torch.matmul(sigma_k_T, value_states).sum(dim=1).unsqueeze(1) # [batch_size, 1, n_heads, dim, dim] sum over channels then unsqueeze to enable broadcasting over channels
-        memory_matrix = memory_matrix.expand(-1, C, -1, -1, -1) # [batch_size, n_channels, n_heads, dim, dim]
-        memory_matrix -= torch.matmul(sigma_k_T, value_states) # [batch_size, n_channels, n_heads, dim, dim]
+        memory_matrix = torch.matmul(sigma_k_T, value_states) # [B, C, H, D, D]
+        memory_matrix = (w * memory_matrix).sum(dim=1, keepdim=True) # [batch_size, 1, n_heads, dim, dim] sum over channels
+        
+        z = sigma_k.sum(dim=-2).unsqueeze(-1)
+        z = (w * z).sum(dim=1, keepdim=True) # [batch_size, n_heads, dim, 1] sum over sequence length and channels
+    
+        return memory_matrix, z
 
-        z = sigma_k.sum(dim=-2).unsqueeze(-1).sum(dim=1) # [batch_size, n_heads, dim, 1] sum over sequence length and channels
-        z = z.unsqueeze(dim=1)  # [batch_size, 1, n_heads, dim, 1]
+    def _update_memory_matrix_channelexl(self, key_states, value_states, query_states, n_channels):
+        w = self._compute_channel_weights(query_states)
+        sigma_k = self.elu(key_states) + 1.0  # [batch_size, n_channels, n_heads, n_patch, dim]
+        sigma_k_T = sigma_k.transpose(-2, -1) # [batch_size, n_channels, n_heads, dim, n_patch]
+
+        C = key_states.shape[1]
+        memory_matrix = torch.matmul(sigma_k_T, value_states)
+        memory_matrix = (w * memory_matrix).sum(dim=1, keepdim=True) # [batch_size, 1, n_heads, dim, dim] sum over channels
+        memory_matrix = memory_matrix.expand(-1, C, -1, -1, -1) # [batch_size, n_channels, n_heads, dim, dim]
+        memory_matrix -= w * torch.matmul(sigma_k_T, value_states) # [batch_size, n_channels, n_heads, dim, dim]
+
+        z = sigma_k.sum(dim=-2).unsqueeze(-1)
+        z = (w * z).sum(dim=1, keepdim=True) # [batch_size, n_heads, dim, 1] sum over sequence length and channels
         z = z.expand(-1, C, -1, -1, -1)  # [batch_size, n_channels, n_heads, dim, 1]
-        z -= sigma_k.sum(dim=-2).unsqueeze(-1)  # [batch_size, n_channels, n_heads, dim, 1]
+        z -= w * sigma_k.sum(dim=-2).unsqueeze(-1)  # [batch_size, n_channels, n_heads, dim, 1]
 
         return memory_matrix, z
 
@@ -479,8 +508,17 @@ class T5InfiniAttention(T5Attention):
         attn_output = torch.matmul(attn_weights, value_states) # [batch_size, n_channels, n_heads, n_patch, dim]
 
         # Infini attention computation across channels
-        memory_matrix, z = self._update_memory_matrix(key_states, value_states, n_channels)
-        A_mem = self.retrieve_from_memory(query_states, memory_matrix, z)
+        memory_matrix, z = self._update_memory_matrix(
+            key_states=key_states, 
+            value_states=value_states, 
+            query_states=query_states, 
+            n_channels=n_channels,
+        )
+        A_mem = self.retrieve_from_memory(
+            query_states=query_states,
+            memory_matrix=memory_matrix,
+            z=z,
+        )
 
         # Channel mixing
         attn_output = self.mixing_gate(
