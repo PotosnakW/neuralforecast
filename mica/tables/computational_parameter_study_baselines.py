@@ -407,10 +407,24 @@ def get_model_config(args, model_type='moment'):
     return config
 
 
+# class Args:
+#     n_series = 7       # Weather/ETT typical
+#     h = 48             # Standard horizon
+#     input_size = 96
+#     windows_batch_size = 1
+# args = Args()
+
+# class Args:
+#     n_series = 323     # Loop-Seattle
+#     h = 30             # Standard horizon
+#     input_size = 60
+#     windows_batch_size = 1
+# args = Args()
+
 class Args:
-    n_series = 7       # Weather/ETT typical
+    n_series = 600       # Weather/ETT typical
     h = 48             # Standard horizon
-    input_size = 96   # Standard lookback (or 512)
+    input_size = 96
     windows_batch_size = 1
 args = Args()
 
@@ -469,4 +483,4 @@ models = {
 }
 
 table = get_table(models, inp)
-table.to_csv('./flops_baseline_table.csv', index=False)
+table.to_csv(f'./flops_baseline_table_n{args.n_series}.csv', index=False)

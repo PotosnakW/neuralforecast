@@ -120,7 +120,7 @@ class InfiniScaledDotProductAttention(ScaledDotProductAttention):
         else:
             self._update_memory_matrix = self._update_memory_matrix_allchannels
 
-        # Select channel aggregation weight type:
+        # Select channel weight type:
         if config.infini_channel_weight_type == 'uniform':
             self._compute_channel_weights = self._compute_uniform_channel_weights
         elif config.infini_channel_weight_type == 'static':

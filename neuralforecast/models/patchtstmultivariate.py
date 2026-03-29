@@ -396,6 +396,7 @@ class PatchTSTMultivariate(BaseModel):
         exclude_insample_y=False,
         # Transformer / Mixer config
         infini_mixer_type: str = "none",
+        infini_channel_weight_type: str = "uniform",
         infini_channel_exclusion: bool = False,
         layerwise_beta: bool = True,
         channelwise_beta: bool = False,
