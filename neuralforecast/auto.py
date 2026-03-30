@@ -977,22 +977,101 @@ class AutoNLinear(BaseAuto):
 
 # %% ../nbs/models.ipynb 64
 class AutoCycleNet(BaseAuto):
+    """Automatic hyperparameter search for :class:`~neuralforecast.models.cyclenet.CycleNet`.
 
+    **Ray** (`backend='ray'`): search space lives in ``default_config`` (Ray ``tune.*`` objects).
+
+    **Optuna** (`backend='optuna'`): you must pass a callable ``config(trial) -> dict``.
+    For the paper's validation protocol use :meth:`appendix_b3_optuna_config` (Appendix B.3,
+    PDF https://arxiv.org/pdf/2409.18479.pdf). Optuna cannot reuse the Ray dict verbatim.
+    """
+
+    # Ray Tune space aligned with CycleNet Appendix B.3 where a single global default makes sense.
+    # Override ``cycle_len`` / ``use_revin`` / ``batch_size`` per benchmark (Table 1, Solar RevIN).
     default_config = {
         "input_size_multiplier": [1, 2, 3, 4, 5],
         "h": None,
-        "cycle_len": tune.choice([24, 48, 96, 168]),
+        "cycle_len": 24,
+        "cycle_index_col": "cycle_idx",
         "model_type": tune.choice(["linear", "mlp"]),
-        "d_model": tune.choice([32, 64, 128]),
-        "use_revin": tune.choice([True, False]),
-        "learning_rate": tune.loguniform(1e-4, 1e-1),
-        "scaler_type": tune.choice([None, "robust", "standard", "identity"]),
-        "max_steps": tune.quniform(lower=500, upper=1500, q=100),
-        "batch_size": tune.choice([32, 64, 128, 256]),
-        "windows_batch_size": tune.choice([128, 256, 512, 1024]),
+        "d_model": 512,
+        "use_revin": True,
+        "learning_rate": tune.choice([0.002, 0.005, 0.01]),
+        "scaler_type": "robust",
+        "max_steps": 5000,
+        "val_check_steps": 50,
+        "early_stop_patience_steps": 5,
+        "batch_size": 256,
+        "valid_batch_size": 256,
+        "windows_batch_size": 1024,
+        "inference_windows_batch_size": 1024,
         "loss": None,
-        "random_seed": tune.randint(lower=1, upper=20),
+        "random_seed": tune.randint(lower=1, upper=1000),
     }
+
+    @staticmethod
+    def appendix_b3_optuna_config(
+        model_type,
+        *,
+        cycle_len,
+        input_size,
+        dataset_name,
+        n_series,
+        max_steps,
+        val_check_steps,
+        windows_batch_size,
+        inference_windows_batch_size,
+        scaler_type,
+        lr_scheduler,
+        lr_scheduler_kwargs,
+        random_seed,
+    ):
+        """Build ``config(trial)`` for Optuna following CycleNet Appendix B.3.
+
+        Tuned on validation: learning rate in ``{0.002, 0.005, 0.01}``.
+        Fixed: patience 5, MLP ``d_model=512``, batch 256 (ETT/Weather) or 64 (others) capped by
+        ``n_series``, RevIN off when ``dataset_name`` indicates Solar, ``cycle_len`` as W.
+
+        References: https://arxiv.org/pdf/2409.18479.pdf (Appendix B.3), official repo RCF model.
+        """
+        ds = str(dataset_name or "").lower()
+        if "ett" in ds or "weather" in ds:
+            bs_cap = 256
+        else:
+            bs_cap = 64
+        batch_size = min(int(bs_cap), max(1, int(n_series)))
+        use_revin = "solar" not in ds
+
+        def config(trial):
+            lr = trial.suggest_categorical(
+                "learning_rate", [0.002, 0.005, 0.01]
+            )
+            out = {
+                "input_size": int(input_size),
+                "cycle_len": int(cycle_len),
+                "cycle_index_col": "cycle_idx",
+                "model_type": model_type,
+                "use_revin": use_revin,
+                "max_steps": max_steps,
+                "val_check_steps": val_check_steps,
+                "windows_batch_size": windows_batch_size,
+                "inference_windows_batch_size": inference_windows_batch_size,
+                "learning_rate": lr,
+                "early_stop_patience_steps": 5,
+                "batch_size": batch_size,
+                "valid_batch_size": batch_size,
+                "scaler_type": scaler_type,
+                "lr_scheduler": lr_scheduler,
+                "lr_scheduler_kwargs": lr_scheduler_kwargs,
+                "random_seed": random_seed,
+            }
+            if model_type == "mlp":
+                out["d_model"] = 512
+            else:
+                out["d_model"] = 64
+            return out
+
+        return config
 
     def __init__(
         self,
@@ -1011,7 +1090,12 @@ class AutoCycleNet(BaseAuto):
         callbacks=None,
     ):
 
-        # Define search space, input/output sizes
+        if config is None and backend == "optuna":
+            raise ValueError(
+                "AutoCycleNet(..., backend='optuna') requires an explicit `config` callable. "
+                "Use AutoCycleNet.appendix_b3_optuna_config(...) for Appendix B.3, or pass your own "
+                "trial -> dict function."
+            )
         if config is None:
             config = self.get_default_config(h=h, backend=backend)
 
