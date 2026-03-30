@@ -73,7 +73,7 @@ from neuralforecast.models import (
     Crossformer,
     PatchTSTMultivariate,
     TimerXL,
-    MOMENTFAST,
+    # MOMENTFAST,
 )
 from .common._base_auto import BaseAuto, MockTrial
 from neuralforecast.utils import (
@@ -216,8 +216,8 @@ MODEL_FILENAME_DICT = {
     "autotimerxl": TimerXL,
     "crossformer": Crossformer,
     "autocrossformer": Crossformer,
-    "momentfast": MOMENTFAST,
-    "automomentfast": MOMENTFAST,
+    # "momentfast": MOMENTFAST,
+    # "automomentfast": MOMENTFAST,
 }
 
 # %% ../nbs/core.ipynb 8
