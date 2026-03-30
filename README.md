@@ -1,6 +1,50 @@
 # MICA: Multivariate Infini Compressive Attention for Time Series Forecasting
 ____
 
+## 📋 Rebuttal Materials
+
+
+**Table 1**: Weighted channels ablation study: Comparison of uniform (U), static (S), and dynamic (D) channel weighting variants against the PatchTST vanilla baseline. Values are MAE averaged over 5 random seeds with standard deviation in parentheses. **Bold** = best, <u>Underlined</u> = second-best.
+
+| **Dataset** | **Freq.** | **Vanilla** | **MICA (U)** | **MICA (S)** | **MICA (D)** |
+|---|---|---|---|---|---|
+| COVID Deaths | D | 141.437 (43.419) | <u>135.718</u> (40.678) | **130.176** (27.018) | 143.915 (86.827) |
+| Jena Weather | H | 9.911 (0.225) | 9.543 (0.298) | <u>9.517</u> (0.176) | **9.476** (0.223) |
+| | D | 14.005 (0.185) | **13.799** (0.328) | 13.944 (0.260) | <u>13.889</u> (0.382) |
+| M-DENSE | D | 53.723 (0.236) | <u>51.959</u> (0.203) | 52.078 (0.302) | **51.594** (1.182) |
+| ETT1 | D | **155.534** (2.508) | <u>157.871</u> (2.663) | 159.448 (2.065) | 158.186 (1.721) |
+| | W | 1003.563 (29.109) | <u>959.206</u> (42.454) | **938.360** (22.515) | 965.903 (27.555) |
+| ETT2 | D | 260.281 (11.639) | <u>254.152</u> (5.445) | **253.327** (5.868) | 255.058 (9.701) |
+| | W | 3016.452 (686.651) | **2249.077** (188.625) | 2436.890 (214.840) | <u>2324.161</u> (157.982) |
+| Solar | D | 258.389 (1.663) | **252.718** (1.232) | 254.602 (1.290) | <u>252.852</u> (2.516) |
+| | W | 1127.889 (20.369) | **1058.990** (38.140) | 1067.190 (25.051) | <u>1060.330</u> (46.974) |
+| **Average Rank** | | 3.6 | **1.7** | 2.4 | 2.3 |
+
+<br>
+
+**Table 2**: TimeMixer Results.
+
+
+<br>
+
+**Table 3**: Longer context ablation study: Values are MAE averaged over 5 random seeds with standard deviation in parentheses. Blue results indicate lower forecast error of MICA compared with the univariate model counterpart. 
+| **Dataset** | **Freq.** | **MOMENT Baseline** | **MOMENT-MICA** | **PatchTST Baseline** | **PatchTST-MICA** |
+|---|---|---|---|---|---|
+| M-DENSE | D | 48.705 (0.772) | 50.247 (0.765) | 55.009 (0.475) | <span style="color:blue">52.655 (1.624)</span> |
+| Jena Weather | H | 10.205 (0.121) | <span style="color:blue">9.536 (0.086)</span> | 10.432 (0.183) | <span style="color:blue">9.930 (0.208)</span> |
+| | D | 11.438 (0.249) | 12.890 (0.905) | 12.363 (0.293) | 12.504 (0.133) |
+| ETT1 | D | 163.611 (2.754) | <span style="color:blue">158.836 (4.332)</span> | 157.270 (1.417) | 159.723 (1.769) |
+| | W | 979.311 (14.820) | 999.862 (22.948) | 935.219 (38.262) | 947.473 (19.065) |
+| **Average Rank** | | 2.5 | 2.3 | 2.7 | 2.5 |
+
+<br>
+
+![flops](channel_scale_parameter_impact_figure.png)
+**Figure**: GFLOPs and inference speed (ms) as a function of channel count. Chronos-2 scales steeply, reaching approximately 1534 GFLOPs and 296ms inference time at C=600, compared to PatchTST-MICA and MOMENT-MICA which remain below 60 GFLOPs and under 18ms at the same channel count, representing a 25.6x reduction in computational cost and 16.4x faster inference. At C=600, Timer-XL reaches approximately 166 GFLOPs and 188ms inference time, and Crossformer reaches approximately 205 GFLOPs and 50ms inference time, compared to PatchTST-MICA and MOMENT-MICA which remain below 60 GFLOPs and under 18ms, representing a 3x computational and up to 11x inference speed advantage over these baselines.
+
+
+____
+
 ![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
