@@ -3,8 +3,37 @@ ____
 
 ## 📋 Rebuttal Materials
 
+**Table 1: New Baselines: Chronos-2 (zero-shot) and TimeMixer.** Forecasting MAE averaged over 5 random seeds. MICA results correspond to the MLP-Query Gate. **Bold** = best, <u>underlined</u> = second best, <span style="color:blue">blue</span> = MICA improves over its univariate counterpart. Average rank across datasets shown at bottom (deep learning models only).
+| Dataset | Freq. | MOMENT | MOMENT-MICA | PatchTST | PatchTST-MICA | iTransformer | iTransformer-T5 | Crossformer | Timer-XL | TSMixer | TimeMixer | MLP | Chronos-2 | AutoETS |
+|---------|-------|--------|-------------|----------|---------------|--------------|-----------------|-------------|----------|---------|-----------|-----|-----------|---------|
+| Simglucose | 5min | 5.136 | <span style="color:blue">4.347</span> | 5.593 | <span style="color:blue">4.241</span> | 4.261 | 4.446 | **4.164** | 4.662 | 6.458 | 6.670 | 8.220 | 8.835 | 9.362 |
+| COVID Deaths | D | 157.292 | <span style="color:blue">104.172</span> | 141.437 | <span style="color:blue">135.718</span> | 297.885 | 165.436 | 156.161 | 174.528 | 561.950 | 96.065 | 483.689 | <u>93.739</u> | **91.579** |
+| Iowa IHOP SMEX02 | 5min | 1.733 | <span style="color:blue">1.666</span> | 1.765 | <span style="color:blue"><u>1.662</u></span> | 1.953 | 1.694 | 1.746 | 1.939 | **1.661** | 1.710 | 1.821 | 1.776 | 1.781 |
+| Iowa PLOWS | 5min | 1.369 | <span style="color:blue"><u>1.332</u></span> | 1.382 | <span style="color:blue">**1.327**</span> | 1.517 | 1.344 | 1.358 | 1.487 | 1.334 | 1.351 | 1.479 | 1.431 | 1.405 |
+| Jena Weather | H | 9.682 | <span style="color:blue">**9.387**</span> | 9.911 | <span style="color:blue">9.543</span> | 10.794 | 10.364 | 9.503 | 10.520 | 13.941 | 13.125 | 13.483 | 9.591 | 15.030 |
+| Jena Weather | D | <u>13.155</u> | 14.907 | 14.005 | <span style="color:blue">13.799</span> | 15.057 | 13.670 | 14.484 | 14.224 | 16.538 | 15.569 | 18.853 | 13.857 | **13.057** |
+| M-DENSE | H | 92.637 | <span style="color:blue">**87.412**</span> | 95.861 | <span style="color:blue"><u>88.020</u></span> | 93.169 | 95.760 | 173.078 | 95.153 | 103.719 | 107.922 | 117.729 | 121.965 | 163.191 |
+| M-DENSE | D | 52.927 | <span style="color:blue">51.740</span> | 53.723 | <span style="color:blue">51.959</span> | 52.650 | 49.861 | 51.195 | 51.891 | 50.529 | 58.068 | 55.281 | **43.167** | 50.577 |
+| Loop-Seattle | D | 3.010 | <span style="color:blue">**2.939**</span> | 3.246 | <span style="color:blue">3.009</span> | 3.496 | 3.127 | 3.158 | 3.215 | 3.115 | 2.962 | 3.045 | <u>2.944</u> | 3.032 |
+| ETT1 | H | 5.683 | 5.851 | 5.454 | <span style="color:blue"><u>5.403</u></span> | 6.010 | 5.758 | 5.682 | 5.806 | 5.506 | 6.346 | 5.747 | **5.258** | 12.092 |
+| ETT1 | D | 157.189 | <span style="color:blue">157.090</span> | 155.534 | 157.871 | 163.198 | 168.808 | 208.948 | 154.405 | 185.805 | 162.778 | 185.507 | **144.588** | 165.377 |
+| ETT1 | W | 982.317 | 994.716 | 1003.563 | <span style="color:blue"><u>959.206</u></span> | 998.254 | 1027.069 | 1252.076 | 1000.988 | 1076.143 | 980.674 | 1190.755 | 997.564 | **874.218** |
+| ETT2 | H | 7.618 | 7.720 | 7.452 | <span style="color:blue">7.334</span> | 7.811 | 7.677 | 7.636 | 7.932 | <u>7.279</u> | 8.022 | 7.660 | **7.217** | 10.034 |
+| ETT2 | D | **228.246** | 269.353 | 260.281 | <span style="color:blue">254.152</span> | 287.942 | 282.243 | 416.306 | 248.978 | 380.410 | 271.592 | 472.509 | <u>236.354</u> | 250.327 |
+| ETT2 | W | 2868.244 | <span style="color:blue">2211.349</span> | 3016.452 | <span style="color:blue">2249.077</span> | 2870.885 | 2315.718 | 3337.477 | 2647.705 | 2645.104 | 2456.773 | 3048.120 | 2399.760 | **1597.126** |
+| Solar | H | 12.333 | 12.914 | 12.073 | 12.847 | 12.012 | 13.492 | 25.142 | **10.872** | <u>11.078</u> | 11.986 | 13.434 | 11.365 | 27.067 |
+| Solar | D | 257.150 | <span style="color:blue">240.492</span> | 258.389 | <span style="color:blue">252.718</span> | 254.190 | 277.509 | 259.512 | 250.915 | 271.532 | 299.295 | 255.307 | **231.535** | <u>237.917</u> |
+| Solar | W | 991.329 | <span style="color:blue">959.544</span> | 1127.889 | <span style="color:blue">1058.990</span> | 939.926 | 855.893 | 1014.611 | 815.778 | 812.396 | 1248.227 | **788.671** | 1283.383 | 927.811 |
+| **Avg. Rank** | | 5.500 | <u>4.389</u> | 6.944 | **3.722** | 8.167 | 6.500 | 7.833 | 6.556 | 6.833 | 7.667 | 9.278 | 4.611 | — |
 
-**Table 1**: Weighted channels ablation study: Comparison of uniform (U), static (S), and dynamic (D) channel weighting variants against the PatchTST vanilla baseline. Values are MAE averaged over 5 random seeds with standard deviation in parentheses. **Bold** = best, <u>Underlined</u> = second-best.
+<br>
+
+![flops](channel_scale_parameter_impact_figure.png)
+**Figure**: GFLOPs and inference speed (ms) as a function of channel count. Chronos-2 scales steeply, reaching approximately 1534 GFLOPs and 296ms inference time at C=600, compared to PatchTST-MICA and MOMENT-MICA which remain below 60 GFLOPs and under 18ms at the same channel count, representing a 25.6x reduction in computational cost and 16.4x faster inference. At C=600, Timer-XL reaches approximately 166 GFLOPs and 188ms inference time, and Crossformer reaches approximately 205 GFLOPs and 50ms inference time, compared to PatchTST-MICA and MOMENT-MICA which remain below 60 GFLOPs and under 18ms, representing a 3x computational and up to 11x inference speed advantage over these baselines.
+
+<br>
+
+**Table 2**: Weighted channels ablation study: Comparison of uniform (U), static (S), and dynamic (D) channel weighting variants against the PatchTST vanilla baseline. Values are MAE averaged over 5 random seeds with standard deviation in parentheses. **Bold** = best, <u>Underlined</u> = second-best.
 
 | **Dataset** | **Freq.** | **Vanilla** | **MICA (U)** | **MICA (S)** | **MICA (D)** |
 |---|---|---|---|---|---|
@@ -22,11 +51,6 @@ ____
 
 <br>
 
-**Table 2**: TimeMixer Results.
-
-
-<br>
-
 **Table 3**: Longer context ablation study: Values are MAE averaged over 5 random seeds with standard deviation in parentheses. Blue results indicate lower forecast error of MICA compared with the univariate model counterpart. 
 | **Dataset** | **Freq.** | **MOMENT Baseline** | **MOMENT-MICA** | **PatchTST Baseline** | **PatchTST-MICA** |
 |---|---|---|---|---|---|
@@ -36,11 +60,6 @@ ____
 | ETT1 | D | 163.611 (2.754) | <span style="color:blue">158.836 (4.332)</span> | 157.270 (1.417) | 159.723 (1.769) |
 | | W | 979.311 (14.820) | 999.862 (22.948) | 935.219 (38.262) | 947.473 (19.065) |
 | **Average Rank** | | 2.5 | 2.3 | 2.7 | 2.5 |
-
-<br>
-
-![flops](channel_scale_parameter_impact_figure.png)
-**Figure**: GFLOPs and inference speed (ms) as a function of channel count. Chronos-2 scales steeply, reaching approximately 1534 GFLOPs and 296ms inference time at C=600, compared to PatchTST-MICA and MOMENT-MICA which remain below 60 GFLOPs and under 18ms at the same channel count, representing a 25.6x reduction in computational cost and 16.4x faster inference. At C=600, Timer-XL reaches approximately 166 GFLOPs and 188ms inference time, and Crossformer reaches approximately 205 GFLOPs and 50ms inference time, compared to PatchTST-MICA and MOMENT-MICA which remain below 60 GFLOPs and under 18ms, representing a 3x computational and up to 11x inference speed advantage over these baselines.
 
 
 ____
