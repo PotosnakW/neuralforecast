@@ -29,11 +29,11 @@ ____
 <br>
 
 ![flops](channel_scale_parameter_impact_figure.png)
-**Figure**: GFLOPs and inference speed (ms) as a function of channel count. Chronos-2 scales steeply, reaching approximately 1534 GFLOPs and 296ms inference time at C=600, compared to PatchTST-MICA and MOMENT-MICA which remain below 60 GFLOPs and under 18ms at the same channel count, representing a 25.6x reduction in computational cost and 16.4x faster inference. At C=600, Timer-XL reaches approximately 166 GFLOPs and 188ms inference time, and Crossformer reaches approximately 205 GFLOPs and 50ms inference time, compared to PatchTST-MICA and MOMENT-MICA which remain below 60 GFLOPs and under 18ms, representing a 3x computational and up to 11x inference speed advantage over these baselines.
+**Figure**: GFLOPs and inference speed (ms) as a function of channel count ($C=[7, 600]$).
 
 <br>
 
-**Table 2**: Weighted channels ablation study: Comparison of uniform (U), static (S), and dynamic (D) channel weighting variants against the PatchTST vanilla baseline. Values are MAE averaged over 5 random seeds with standard deviation in parentheses. **Bold** = best, <u>Underlined</u> = second-best.
+**Table 2: Weighted channels ablation study.** Comparison of uniform (U), static (S), and dynamic (D) channel weighting variants against the PatchTST vanilla baseline. Values are MAE averaged over 5 random seeds with standard deviation in parentheses. **Bold** = best, <u>Underlined</u> = second-best.
 
 | **Dataset** | **Freq.** | **Vanilla** | **MICA (U)** | **MICA (S)** | **MICA (D)** |
 |---|---|---|---|---|---|
@@ -51,7 +51,7 @@ ____
 
 <br>
 
-**Table 3**: Longer context ablation study: Values are MAE averaged over 5 random seeds with standard deviation in parentheses. Blue results indicate lower forecast error of MICA compared with the univariate model counterpart. 
+**Table 3: Longer context ablation study.** Values are MAE averaged over 5 random seeds with standard deviation in parentheses. Blue results indicate lower forecast error of MICA compared with the univariate model counterpart. 
 | **Dataset** | **Freq.** | **MOMENT Baseline** | **MOMENT-MICA** | **PatchTST Baseline** | **PatchTST-MICA** |
 |---|---|---|---|---|---|
 | M-DENSE | D | 48.705 (0.772) | 50.247 (0.765) | 55.009 (0.475) | <span style="color:blue">52.655 (1.624)</span> |
