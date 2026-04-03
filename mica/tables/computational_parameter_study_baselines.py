@@ -429,10 +429,17 @@ def get_model_config(args, model_type='moment'):
 #     windows_batch_size = 1
 # args = Args()
 
+# class Args:
+#     n_series = 600       # Weather/ETT typical  counts: [7, 15, 50, 100, 150, 200, 300, 400, 500, 600]
+#     h = 48             # Standard horizon
+#     input_size = 96
+#     windows_batch_size = 1
+# args = Args()
+
 class Args:
-    n_series = 600       # Weather/ETT typical  counts: [7, 15, 50, 100, 150, 200, 300, 400, 500, 600]
+    n_series = 7       # Weather/ETT typical  counts: [7, 15, 50, 100, 150, 200, 300, 400, 500, 600]
     h = 48             # Standard horizon
-    input_size = 96
+    input_size = 1024*8 # [8*8, 16,32,64,96,128,256,312,512]
     windows_batch_size = 1
 args = Args()
 
@@ -473,7 +480,7 @@ config_chronos2 = get_model_config(args, model_type='chronos2')
 chronos2 = Chronos2(h=args.h, **config_chronos2)
 
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
 torch.manual_seed(1)
@@ -496,4 +503,4 @@ models = {
 }
 
 table = get_table(models, inp)
-table.to_csv(f'./flops_baseline_table_n{args.n_series}.csv', index=False)
+table.to_csv(f'./flops_baseline_table_n{args.n_series}_is{args.input_size}.csv', index=False)

@@ -38,6 +38,12 @@ ____
 ![flops](channel_scale_parameter_impact_log_figure.png)
 **Figure**: GFLOPs (log_10) and inference speed (ms) (log_10) as a function of channel count ($C=[7, 600]$).
 
+![flops](seqlen_scale_parameter_impact_figure.png)
+**Figure**: GFLOPs and inference speed (ms) as a function of sequence length ($C=[64, 8192]$).
+
+![flops](seqlen_scale_parameter_impact_log_figure.png)
+**Figure**: GFLOPs (log_10) and inference speed (ms) (log_10) as a function of sequence length ($C=[64, 8192]$).
+
 <br>
 
 ---
