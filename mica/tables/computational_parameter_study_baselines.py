@@ -7,7 +7,7 @@ import pandas as pd
 
 from torch.optim.lr_scheduler import StepLR
 from neuralforecast.losses.pytorch import MAE
-from neuralforecast.models import MOMENT, PatchTSTMultivariate, Crossformer, iTransformer, iTransformerT5, TimerXL, MLPMultivariate, TSMixer, Chronos2
+from neuralforecast.models import MOMENT, PatchTSTMultivariate, Crossformer, iTransformer, iTransformerT5, TimerXL, MLPMultivariate, TSMixer, TimeMixer, Chronos2
 
 
 def get_model_size(model):
@@ -126,8 +126,7 @@ def get_inference_time(model, inp, num_runs=100, warmup_runs=10, device=None):
         return ((end_time - start_time) / num_runs) * 1000  # Convert to ms
 
 
-def analyze_model(model, inp, with_backward=False, display=False, 
-                  measure_inference=True, num_runs=100, warmup_runs=10):
+def analyze_model(model, inp, with_backward=False, display=False, num_runs=100, warmup_runs=10):
     """
     Complete model analysis: FLOPs, size metrics, and inference time
     
@@ -136,7 +135,6 @@ def analyze_model(model, inp, with_backward=False, display=False,
         inp: Input tensor or tuple of tensors
         with_backward: If True, include backward pass FLOPs
         display: If True, print detailed FLOP breakdown
-        measure_inference: If True, measure inference time
         num_runs: Number of inference runs to average over
         warmup_runs: Number of warmup runs for timing
         
@@ -146,8 +144,7 @@ def analyze_model(model, inp, with_backward=False, display=False,
 
     trainable_params = get_model_size(model)
     flops = get_flops(model, inp, with_backward=with_backward, display=display)
-    if measure_inference:
-        ms = get_inference_time(model, inp, num_runs=num_runs, warmup_runs=warmup_runs)
+    ms = get_inference_time(model, inp, num_runs=num_runs, warmup_runs=warmup_runs)
 
     results = {
         'gflops': flops,
@@ -197,21 +194,6 @@ def get_table(models, inp):
 
     return model_params_df
 
-def format_with_increase(values, baseline_idx=0, decimals=3):
-    """Format values with percentage increase relative to baseline"""
-    baseline = values.iloc[baseline_idx]
-    formatted = []
-    for i, val in enumerate(values):
-        if i == baseline_idx:
-            formatted.append(f"{val:.{decimals}f}")
-        else:
-            pct_change = ((val - baseline) / baseline) * 100
-            if pct_change >= 0:
-                formatted.append(f"{val:.{decimals}f} ($\\uparrow {pct_change:.1f}\\%$)")
-            else:
-                formatted.append(f"{val:.{decimals}f} ($\\downarrow {abs(pct_change):.1f}\\%$)")
-    return formatted
-
 def get_model_config(args, model_type='moment'):
     """
     Create configuration dict for different model types.
@@ -227,6 +209,9 @@ def get_model_config(args, model_type='moment'):
     
     # Common training parameters
     common_config = {
+        'hist_exog_list': None,
+        'futr_exog_list': None,
+        'stat_exog_list': None,
         'input_size': args.input_size,
         'n_series': args.n_series,
         'max_steps': 12000,
@@ -276,6 +261,7 @@ def get_model_config(args, model_type='moment'):
             'multivariate_head': False,
             # MICA/Infini
             'infini_mixer_type': 'none',
+            'infini_channel_weight_type': 'uniform',
             'infini_channel_exclusion': False,
             'layerwise_beta': True,
             'channelwise_beta': False,
@@ -379,6 +365,28 @@ def get_model_config(args, model_type='moment'):
             # Multivariate
             'univariate': False,  # Set to False for multivariate mode
         }
+
+    elif model_type == 'timemixer':
+        config = {
+            **common_config,
+            # Architecture
+            'd_model': 256,
+            'd_ff': 1024,
+            'e_layers': 4,
+            'decomp_method': 'moving_avg',
+            'down_sampling_method': 'avg',
+            'down_sampling_layers': 1,
+            'down_sampling_window': 2, 
+            'moving_avg': 7,
+            'top_k': 5,
+            'dropout': 0.0,
+            # RevIN
+            'revin': True,
+            'revin_affine': False,
+            'revin_subtract_last': False,
+            # Multivariate
+            'channel_independence': 0, # channel-dependence
+        }
         
     elif model_type == 'mlpmultivariate':
         config = {
@@ -402,7 +410,7 @@ def get_model_config(args, model_type='moment'):
     else:
         raise ValueError(f"Unknown model_type: {model_type}. Choose from: "
                         f"['moment', 'patchtst', 'itransformer', 'itransformert5', "
-                        f"'crossformer', 'timerxl', 'tsmixer', 'mlpmultivariate', 'chronos2']")
+                        f"'crossformer', 'timerxl', 'tsmixer', 'timemixer', 'mlpmultivariate', 'chronos2']")
     
     return config
 
@@ -422,7 +430,7 @@ def get_model_config(args, model_type='moment'):
 # args = Args()
 
 class Args:
-    n_series = 600       # Weather/ETT typical
+    n_series = 600       # Weather/ETT typical  counts: [7, 15, 50, 100, 150, 200, 300, 400, 500, 600]
     h = 48             # Standard horizon
     input_size = 96
     windows_batch_size = 1
@@ -455,6 +463,9 @@ timerxl = TimerXL(h=args.h, **config_timerxl)
 config_tsmixer = get_model_config(args, model_type='tsmixer')
 tsmixer = TSMixer(h=args.h, **config_tsmixer)
 
+config_timemixer = get_model_config(args, model_type='timemixer')
+timemixer = TimeMixer(h=args.h, **config_timemixer)
+
 config_mlp = get_model_config(args, model_type='mlpmultivariate')
 mlp = MLPMultivariate(h=args.h, **config_mlp)
 
@@ -465,6 +476,7 @@ chronos2 = Chronos2(h=args.h, **config_chronos2)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
+torch.manual_seed(1)
 inp = {
     'insample_y': torch.randn(args.windows_batch_size, args.input_size, args.n_series).to(device),
     'insample_mask': torch.ones(args.windows_batch_size, args.input_size, args.n_series).to(device),
@@ -478,6 +490,7 @@ models = {
     'Crossformer': crossformer,
     'Timer-XL': timerxl,
     'TSMixer': tsmixer,
+    'TimeMixer': timemixer,
     'MLP': mlp,
     'Chronos-2': chronos2,
 }

@@ -664,9 +664,9 @@ class TimeMixer(BaseModel):
 
     def forward(self, windows_batch):
         insample_y = windows_batch["insample_y"]
-        futr_exog = windows_batch["futr_exog"]
 
         if self.futr_exog_size > 0:
+            futr_exog = windows_batch["futr_exog"]
             x_mark_enc = futr_exog[:, :, : self.input_size, :]
             x_mark_dec = futr_exog[:, :, -(self.label_len + self.h) :, :]
         else:

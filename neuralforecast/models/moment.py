@@ -75,6 +75,7 @@ class Long_Forecaster(nn.Module):
             configs.transformer_backbone)
 
         setattr(model_config, 'infini_mixer_type', configs.infini_mixer_type)
+        setattr(model_config, 'infini_channel_weight_type', configs.infini_channel_weight_type)
         setattr(model_config, 'infini_channel_exclusion', configs.infini_channel_exclusion)
         setattr(model_config, 'layerwise_beta', configs.layerwise_beta)
         setattr(model_config, 'channelwise_beta', configs.channelwise_beta)
@@ -226,6 +227,7 @@ class MOMENT(BaseModel):
         exclude_insample_y=False,
         # Transformer / Mixer config
         infini_mixer_type: str = "none",
+        infini_channel_weight_type: str = "uniform",
         infini_channel_exclusion: bool = False,
         layerwise_beta: bool = True,
         channelwise_beta: bool = False,

@@ -362,10 +362,10 @@ class T5InfiniAttention(T5Attention):
 
         return memory_matrix, z
 
-    def retrieve_from_memory(self, query_states, memory_matrix, z_excluded):
+    def retrieve_from_memory(self, query_states, memory_matrix, z):
         sigma_q = self.elu(query_states) + 1.0  # [B, C, H, P, D]
         numerator = sigma_q @ memory_matrix         # [B, C, H, P, D]
-        denominator = (sigma_q @ z_excluded) + 1e-6 # [B, C, H, P, 1]
+        denominator = (sigma_q @ z) + 1e-6 # [B, C, H, P, 1]
         A_mem = numerator / denominator             # [B, C, H, P, D]
     
         return A_mem

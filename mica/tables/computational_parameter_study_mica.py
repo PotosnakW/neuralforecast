@@ -288,19 +288,19 @@ def format_with_increase(values, baseline_idx=0, decimals=3):
                 formatted.append(f"{val:.{decimals}f} ($\\downarrow {abs(pct_change):.1f}\\%$)")
     return formatted
 
-# class Args:
-#     n_series = 7       # Weather/ETT typical
-#     h = 48             # Standard horizon
-#     input_size = 96   # Standard lookback (or 512)
-#     windows_batch_size = 1
-# args = Args()
-
 class Args:
-    n_series = 323     # Loop-Seattle
-    h = 30             # Standard horizon
-    input_size = 60
+    n_series = 7       # Weather/ETT typical
+    h = 48             # Standard horizon
+    input_size = 96   # Standard lookback (or 512)
     windows_batch_size = 1
 args = Args()
+
+# class Args:
+#     n_series = 323     # Loop-Seattle
+#     h = 30             # Standard horizon
+#     input_size = 60
+#     windows_batch_size = 1
+# args = Args()
 
 config = get_model_config(args)
 
@@ -355,6 +355,7 @@ moment_infini_mlpquery = MOMENT(h=args.h, **config_infini_mlpquery)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
+torch.manual_seed(1)
 inp = {
     'insample_y': torch.randn(args.windows_batch_size, args.input_size, args.n_series).to(device),
     'insample_mask': torch.ones(args.windows_batch_size, args.input_size, args.n_series).to(device),
