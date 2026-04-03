@@ -28,8 +28,19 @@ ____
 
 <br>
 
+---
+
+<br>
+
 ![flops](channel_scale_parameter_impact_figure.png)
 **Figure**: GFLOPs and inference speed (ms) as a function of channel count ($C=[7, 600]$).
+
+![flops](channel_scale_parameter_impact_log_figure.png)
+**Figure**: GFLOPs (log_10) and inference speed (ms) (log_10) as a function of channel count ($C=[7, 600]$).
+
+<br>
+
+---
 
 <br>
 
@@ -48,6 +59,10 @@ ____
 | Solar | D | 258.389 (1.663) | **252.718** (1.232) | 254.602 (1.290) | <u>252.852</u> (2.516) |
 | | W | 1127.889 (20.369) | **1058.990** (38.140) | 1067.190 (25.051) | <u>1060.330</u> (46.974) |
 | **Average Rank** | | 3.6 | **1.7** | 2.4 | 2.3 |
+
+<br>
+
+---
 
 <br>
 
