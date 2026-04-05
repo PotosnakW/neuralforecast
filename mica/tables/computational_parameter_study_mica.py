@@ -174,8 +174,8 @@ def get_table(models, inp):
 
     model_params_df = pd.DataFrame(model_params).T
     model_params_df = model_params_df.round(3)
-    for col in ['gflops', 'trainable_params', 'inference_speed']:
-        model_params_df[col] = format_with_increase(model_params_df[col])
+    #for col in ['gflops', 'trainable_params', 'inference_speed']:
+    #    model_params_df[col] = format_with_increase(model_params_df[col])
     model_params_df.index.name = 'model' 
     model_params_df.reset_index(inplace=True, drop=False)
 
@@ -296,6 +296,13 @@ class Args:
 args = Args()
 
 # class Args:
+#     n_series = 150      # Weather/ETT typical  counts: [7, 15, 50, 100, 150, 200, 300, 400, 500, 600]
+#     h = 48             # Standard horizon
+#     input_size = 96
+#     windows_batch_size = 1
+# args = Args()
+
+# class Args:
 #     n_series = 323     # Loop-Seattle
 #     h = 30             # Standard horizon
 #     input_size = 60
@@ -387,4 +394,4 @@ patchtst_table = get_table(patchtst_models, inp)
 moment_table = get_table(moment_models, inp)
 
 final_table = pd.concat([patchtst_table, moment_table], axis=0)
-final_table.to_csv(f'./flops_mica_table_n{args.n_series}.csv', index=False)
+final_table.to_csv(f'./flops_mica_table_n{args.n_series}_is{args.input_size}.csv', index=False)
