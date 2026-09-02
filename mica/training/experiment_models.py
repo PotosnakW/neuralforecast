@@ -23,6 +23,13 @@ def get_models(args):
     batch_size = args.n_series
     windows_batch_size = 64
     inference_windows_batch_size = 64
+    if args.dataset_name.startswith('electricity'):
+        # ECL has 321 series; batch_size == n_series is required for these multivariate
+        # models (every window already carries all channels), so windows_batch_size --
+        # how many such windows get stacked per step -- is the only free memory knob.
+        # 64 (tuned for solar's 137 series, the largest dataset run so far) OOMs at 321.
+        windows_batch_size = 8
+        inference_windows_batch_size = 8
     patch_len = 8
     stride = 8
     d_k = 32
@@ -795,6 +802,598 @@ def get_models(args):
                 cpus=20,
                 n_series=args.n_series,
                 alias='AutoPatchTSTMultivariate_infini_ciincl'
+            ),
+        ]
+
+    # ciexcl-only reruns below: after the leave-one-out memory-matrix aliasing
+    # fix (see git history 'rm redundant computation ciexl'), only the
+    # infini_channel_exclusion=True arm of each gate changed. ciincl results
+    # are unaffected, so these variants skip retraining them.
+    elif args.experiment_name == 'infini_layerwise_t5tiny_ciexcl':
+        infini_config1 = {
+            'input_size': args.input_size,
+            'n_series': args.n_series,
+            'patch_len': patch_len,
+            'stride': stride,
+            'max_steps': max_steps,
+            'val_check_steps': val_check_steps,
+            'windows_batch_size': windows_batch_size,
+            'inference_windows_batch_size': inference_windows_batch_size,
+            'hidden_size': hidden_size,
+            'linear_hidden_size': linear_hidden_size,
+            'n_heads': n_heads,
+            'd_k': d_k,
+            'd_v': d_v,
+            'n_layers': n_layers,
+            'pe_type': pe_type,
+            'learn_pe': learn_pe,
+            'dropout': dropout,
+            'head_dropout': head_dropout,
+            'revin': revin,
+            'revin_affine': revin_affine,
+            'revin_subtract_last': revin_subtract_last,
+            'padding_patch': padding_patch,
+            'infini_mixer_type': 'betas',
+            'infini_channel_weight_type': 'uniform',
+            'infini_channel_exclusion': True,
+            'layerwise_beta': True,
+            'channelwise_beta': False,
+            'multivariate_head': multivariate_head,
+            'learning_rate': learning_rate,
+            'early_stop_patience_steps': early_stop_patience_steps,
+            'batch_size': batch_size,
+            'valid_batch_size': batch_size,
+            'scaler_type': scaler_type,
+            'lr_scheduler': lr_scheduler,
+            'lr_scheduler_kwargs': lr_scheduler_kwargs,
+            'random_seed': args.random_seed,
+        }
+
+        models = [
+            AutoMOMENT(
+                h=args.h,
+                config=infini_config1,
+                loss=loss,
+                search_alg=None,
+                num_samples=args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoMOMENT_infini_layerwise_ciexcl'
+            ),
+            AutoPatchTSTMultivariate(
+                h=args.h,
+                config=infini_config1,
+                loss=loss,
+                search_alg=None,
+                num_samples=args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoPatchTSTMultivariate_infini_layerwise_ciexcl'
+            ),
+        ]
+
+    elif args.experiment_name == 'infini_layerwise_channelwise_t5tiny_ciexcl':
+        infini_config1 = {
+            'input_size': args.input_size,
+            'n_series': args.n_series,
+            'patch_len': patch_len,
+            'stride': stride,
+            'max_steps': max_steps,
+            'val_check_steps': val_check_steps,
+            'windows_batch_size': windows_batch_size,
+            'inference_windows_batch_size': inference_windows_batch_size,
+            'hidden_size': hidden_size,
+            'linear_hidden_size': linear_hidden_size,
+            'n_heads': n_heads,
+            'd_k': d_k,
+            'd_v': d_v,
+            'n_layers': n_layers,
+            'pe_type': pe_type,
+            'learn_pe': learn_pe,
+            'dropout': dropout,
+            'head_dropout': head_dropout,
+            'revin': revin,
+            'revin_affine': revin_affine,
+            'revin_subtract_last': revin_subtract_last,
+            'padding_patch': padding_patch,
+            'infini_mixer_type': 'betas',
+            'infini_channel_weight_type': 'uniform',
+            'infini_channel_exclusion': True,
+            'layerwise_beta': True,
+            'channelwise_beta': True,
+            'multivariate_head': multivariate_head,
+            'learning_rate': learning_rate,
+            'early_stop_patience_steps': early_stop_patience_steps,
+            'batch_size': batch_size,
+            'valid_batch_size': batch_size,
+            'scaler_type': scaler_type,
+            'lr_scheduler': lr_scheduler,
+            'lr_scheduler_kwargs': lr_scheduler_kwargs,
+            'random_seed': args.random_seed,
+        }
+
+        models = [
+            AutoMOMENT(
+                h=args.h,
+                config=infini_config1,
+                loss=loss,
+                search_alg=None,
+                num_samples=args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoMOMENT_infini_layerwise_channelwise_ciexcl'
+            ),
+            AutoPatchTSTMultivariate(
+                h=args.h,
+                config=infini_config1,
+                loss=loss,
+                search_alg=None,
+                num_samples=args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoPatchTSTMultivariate_infini_layerwise_channelwise_ciexcl'
+            ),
+        ]
+
+    elif args.experiment_name == 'infini_channelwise_t5tiny_ciexcl':
+        infini_config1 = {
+            'input_size': args.input_size,
+            'n_series': args.n_series,
+            'patch_len': patch_len,
+            'stride': stride,
+            'max_steps': max_steps,
+            'val_check_steps': val_check_steps,
+            'windows_batch_size': windows_batch_size,
+            'inference_windows_batch_size': inference_windows_batch_size,
+            'hidden_size': hidden_size,
+            'linear_hidden_size': linear_hidden_size,
+            'n_heads': n_heads,
+            'd_k': d_k,
+            'd_v': d_v,
+            'n_layers': n_layers,
+            'pe_type': pe_type,
+            'learn_pe': learn_pe,
+            'dropout': dropout,
+            'head_dropout': head_dropout,
+            'revin': revin,
+            'revin_affine': revin_affine,
+            'revin_subtract_last': revin_subtract_last,
+            'padding_patch': padding_patch,
+            'infini_mixer_type': 'betas',
+            'infini_channel_weight_type': 'uniform',
+            'infini_channel_exclusion': True,
+            'layerwise_beta': False,
+            'channelwise_beta': True,
+            'multivariate_head': multivariate_head,
+            'learning_rate': learning_rate,
+            'early_stop_patience_steps': early_stop_patience_steps,
+            'batch_size': batch_size,
+            'valid_batch_size': batch_size,
+            'scaler_type': scaler_type,
+            'lr_scheduler': lr_scheduler,
+            'lr_scheduler_kwargs': lr_scheduler_kwargs,
+            'random_seed': args.random_seed,
+        }
+
+        models = [
+            AutoMOMENT(
+                h=args.h,
+                config=infini_config1,
+                loss=loss,
+                search_alg=None,
+                num_samples=args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoMOMENT_infini_channelwise_ciexcl'
+            ),
+            AutoPatchTSTMultivariate(
+                h=args.h,
+                config=infini_config1,
+                loss=loss,
+                search_alg=None,
+                num_samples=args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoPatchTSTMultivariate_infini_channelwise_ciexcl'
+            ),
+        ]
+
+    elif args.experiment_name == 'infini_t5tiny_ciexcl':
+        infini_config1 = {
+            'input_size': args.input_size,
+            'n_series': args.n_series,
+            'patch_len': patch_len,
+            'stride': stride,
+            'max_steps': max_steps,
+            'val_check_steps': val_check_steps,
+            'windows_batch_size': windows_batch_size,
+            'inference_windows_batch_size': inference_windows_batch_size,
+            'hidden_size': hidden_size,
+            'linear_hidden_size': linear_hidden_size,
+            'n_heads': n_heads,
+            'd_k': d_k,
+            'd_v': d_v,
+            'n_layers': n_layers,
+            'pe_type': pe_type,
+            'learn_pe': learn_pe,
+            'dropout': dropout,
+            'head_dropout': head_dropout,
+            'revin': revin,
+            'revin_affine': revin_affine,
+            'revin_subtract_last': revin_subtract_last,
+            'padding_patch': padding_patch,
+            'infini_mixer_type': 'betas',
+            'infini_channel_weight_type': 'uniform',
+            'infini_channel_exclusion': True,
+            'layerwise_beta': False,
+            'channelwise_beta': False,
+            'multivariate_head': multivariate_head,
+            'learning_rate': learning_rate,
+            'early_stop_patience_steps': early_stop_patience_steps,
+            'batch_size': batch_size,
+            'valid_batch_size': batch_size,
+            'scaler_type': scaler_type,
+            'lr_scheduler': lr_scheduler,
+            'lr_scheduler_kwargs': lr_scheduler_kwargs,
+            'random_seed': args.random_seed,
+        }
+
+        models = [
+            AutoMOMENT(
+                h=args.h,
+                config=infini_config1,
+                loss=loss,
+                search_alg=None,
+                num_samples=args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoMOMENT_infini_ciexcl'
+            ),
+            AutoPatchTSTMultivariate(
+                h=args.h,
+                config=infini_config1,
+                loss=loss,
+                search_alg=None,
+                num_samples=args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoPatchTSTMultivariate_infini_ciexcl'
+            ),
+        ]
+
+    elif args.experiment_name == 'infini_mlpmixer_t5tiny_ciexcl':
+        def mlpmixer_ciexcl_config(trial):
+            return {
+                'input_size': args.input_size,
+                'n_series': args.n_series,
+                'patch_len': patch_len,
+                'stride': stride,
+                'max_steps': max_steps,
+                'val_check_steps': val_check_steps,
+                'windows_batch_size': windows_batch_size,
+                'inference_windows_batch_size': inference_windows_batch_size,
+                'hidden_size': hidden_size,
+                'linear_hidden_size': linear_hidden_size,
+                'n_heads': n_heads,
+                'd_k': d_k,
+                'd_v': d_v,
+                'n_layers': n_layers,
+                'pe_type': pe_type,
+                'learn_pe': learn_pe,
+                'dropout': dropout,
+                'head_dropout': head_dropout,
+                'revin': revin,
+                'revin_affine': revin_affine,
+                'revin_subtract_last': revin_subtract_last,
+                'padding_patch': padding_patch,
+                'infini_mixer_type': 'mlp',
+                'infini_channel_weight_type': 'uniform',
+                'infini_channel_exclusion': True,
+                'mlpmixer_hidden_size': trial.suggest_categorical('mlpmixer_hidden_size', [128, 256, 384, 512]),
+                'mlpmixer_n_layers': trial.suggest_categorical('mlpmixer_n_layers', [2, 3, 4]),
+                'mlpmixer_dropout': trial.suggest_categorical('mlpmixer_dropout', [0.0, 0.1, 0.2]),
+                'multivariate_head': multivariate_head,
+                'learning_rate': learning_rate,
+                'early_stop_patience_steps': early_stop_patience_steps,
+                'batch_size': batch_size,
+                'valid_batch_size': batch_size,
+                'scaler_type': scaler_type,
+                'lr_scheduler': lr_scheduler,
+                'lr_scheduler_kwargs': lr_scheduler_kwargs,
+                'random_seed': args.random_seed,
+            }
+
+        models = [
+            AutoMOMENT(
+                h=args.h,
+                config=mlpmixer_ciexcl_config,
+                loss=loss,
+                search_alg=optuna.samplers.TPESampler(seed=0),
+                backend='optuna',
+                num_samples=5, #args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoMOMENT_mlpmixer_ciexcl'
+            ),
+            AutoPatchTSTMultivariate(
+                h=args.h,
+                config=mlpmixer_ciexcl_config,
+                loss=loss,
+                search_alg=optuna.samplers.TPESampler(seed=0),
+                backend='optuna',
+                num_samples=5, #args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoPatchTSTMultivariate_mlpmixer_ciexcl'
+            ),
+        ]
+
+    elif args.experiment_name == 'infini_mlpquerymixer_t5tiny_ciexcl':
+        def mlpquerymixer_ciexcl_config(trial):
+            return {
+                'input_size': args.input_size,
+                'n_series': args.n_series,
+                'patch_len': patch_len,
+                'stride': stride,
+                'max_steps': max_steps,
+                'val_check_steps': val_check_steps,
+                'windows_batch_size': windows_batch_size,
+                'inference_windows_batch_size': inference_windows_batch_size,
+                'hidden_size': hidden_size,
+                'linear_hidden_size': linear_hidden_size,
+                'n_heads': n_heads,
+                'd_k': d_k,
+                'd_v': d_v,
+                'n_layers': n_layers,
+                'pe_type': pe_type,
+                'learn_pe': learn_pe,
+                'dropout': dropout,
+                'head_dropout': head_dropout,
+                'revin': revin,
+                'revin_affine': revin_affine,
+                'revin_subtract_last': revin_subtract_last,
+                'padding_patch': padding_patch,
+                'infini_mixer_type': 'mlp_query',
+                'infini_channel_weight_type': 'uniform',
+                'infini_channel_exclusion': True,
+                'mlpmixer_hidden_size': trial.suggest_categorical('mlpmixer_hidden_size', [128, 256, 384, 512]),
+                'mlpmixer_n_layers': trial.suggest_categorical('mlpmixer_n_layers', [2, 3, 4]),
+                'mlpmixer_dropout': trial.suggest_categorical('mlpmixer_dropout', [0.0, 0.1, 0.2]),
+                'multivariate_head': multivariate_head,
+                'learning_rate': learning_rate,
+                'early_stop_patience_steps': early_stop_patience_steps,
+                'batch_size': batch_size,
+                'valid_batch_size': batch_size,
+                'scaler_type': scaler_type,
+                'lr_scheduler': lr_scheduler,
+                'lr_scheduler_kwargs': lr_scheduler_kwargs,
+                'random_seed': args.random_seed,
+            }
+
+        models = [
+            AutoMOMENT(
+                h=args.h,
+                config=mlpquerymixer_ciexcl_config,
+                loss=loss,
+                search_alg=optuna.samplers.TPESampler(seed=0),
+                backend='optuna',
+                num_samples=5, #args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoMOMENT_mlpquerymixer_ciexcl'
+            ),
+            AutoPatchTSTMultivariate(
+                h=args.h,
+                config=mlpquerymixer_ciexcl_config,
+                loss=loss,
+                search_alg=optuna.samplers.TPESampler(seed=0),
+                backend='optuna',
+                num_samples=5, #args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoPatchTSTMultivariate_mlpquerymixer_ciexcl'
+            ),
+        ]
+
+    elif args.experiment_name == 'infini_poolmean_t5tiny':
+        # Reviewer-requested baseline: A_global = (1/C) * sum_c V^(c), replacing the
+        # query-conditioned retrieval used by 'infini_t5tiny'. Same betas gate for a
+        # like-for-like comparison against 'infini_t5tiny'.
+        poolmean_config = {
+            'input_size': args.input_size,
+            'n_series': args.n_series,
+            'patch_len': patch_len,
+            'stride': stride,
+            'max_steps': max_steps,
+            'val_check_steps': val_check_steps,
+            'windows_batch_size': windows_batch_size,
+            'inference_windows_batch_size': inference_windows_batch_size,
+            #'transformer_backbone': transformer_backbone,
+            'hidden_size': hidden_size,
+            'linear_hidden_size': linear_hidden_size,
+            'n_heads': n_heads,
+            'd_k': d_k,
+            'd_v': d_v,
+            'n_layers': n_layers,
+            'pe_type': pe_type,
+            'learn_pe': learn_pe,
+            'dropout': dropout,
+            'head_dropout': head_dropout,
+            'revin': revin,
+            'revin_affine': revin_affine,
+            'revin_subtract_last': revin_subtract_last,
+            'padding_patch': padding_patch,
+            'infini_mixer_type': 'betas',
+            'infini_memory_type': 'pool_mean',
+            'layerwise_beta': False,
+            'channelwise_beta': False,
+            'multivariate_head': multivariate_head,
+            'learning_rate': learning_rate,
+            'early_stop_patience_steps': early_stop_patience_steps,
+            'batch_size': batch_size,
+            'valid_batch_size': batch_size,
+            'scaler_type': scaler_type,
+            'lr_scheduler': lr_scheduler,
+            'lr_scheduler_kwargs': lr_scheduler_kwargs,
+            'random_seed': args.random_seed,
+        }
+
+        models = [
+            AutoMOMENT(
+                h=args.h,
+                config=poolmean_config,
+                loss=loss,
+                search_alg=None,
+                num_samples=args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoMOMENT_infini_poolmean'
+            ),
+            AutoPatchTSTMultivariate(
+                h=args.h,
+                config=poolmean_config,
+                loss=loss,
+                search_alg=None,
+                num_samples=args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoPatchTSTMultivariate_infini_poolmean'
+            ),
+        ]
+
+    elif args.experiment_name == 'infini_poolmean_mlpmixer_t5tiny':
+        # Pool-mean counterpart of 'infini_mlpmixer_t5tiny' (mlp gate).
+        def poolmean_mlpmixer_config(trial):
+            return {
+                'input_size': args.input_size,
+                'n_series': args.n_series,
+                'patch_len': patch_len,
+                'stride': stride,
+                'max_steps': max_steps,
+                'val_check_steps': val_check_steps,
+                'windows_batch_size': windows_batch_size,
+                'inference_windows_batch_size': inference_windows_batch_size,
+                #'transformer_backbone': transformer_backbone,
+                'hidden_size': hidden_size,
+                'linear_hidden_size': linear_hidden_size,
+                'n_heads': n_heads,
+                'd_k': d_k,
+                'd_v': d_v,
+                'n_layers': n_layers,
+                'pe_type': pe_type,
+                'learn_pe': learn_pe,
+                'dropout': dropout,
+                'head_dropout': head_dropout,
+                'revin': revin,
+                'revin_affine': revin_affine,
+                'revin_subtract_last': revin_subtract_last,
+                'padding_patch': padding_patch,
+                'infini_mixer_type': 'mlp',
+                'infini_memory_type': 'pool_mean',
+                'mlpmixer_hidden_size': trial.suggest_categorical('mlpmixer_hidden_size', [128, 256, 384, 512]),
+                'mlpmixer_n_layers': trial.suggest_categorical('mlpmixer_n_layers', [2, 3, 4]),
+                'mlpmixer_dropout': trial.suggest_categorical('mlpmixer_dropout', [0.0, 0.1, 0.2]),
+                'multivariate_head': multivariate_head,
+                'learning_rate': learning_rate,
+                'early_stop_patience_steps': early_stop_patience_steps,
+                'batch_size': batch_size,
+                'valid_batch_size': batch_size,
+                'scaler_type': scaler_type,
+                'lr_scheduler': lr_scheduler,
+                'lr_scheduler_kwargs': lr_scheduler_kwargs,
+                'random_seed': args.random_seed,
+            }
+
+        models = [
+            AutoMOMENT(
+                h=args.h,
+                config=poolmean_mlpmixer_config,
+                loss=loss,
+                search_alg=optuna.samplers.TPESampler(seed=0),
+                backend='optuna',
+                num_samples=5, #args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoMOMENT_poolmean_mlpmixer'
+            ),
+            AutoPatchTSTMultivariate(
+                h=args.h,
+                config=poolmean_mlpmixer_config,
+                loss=loss,
+                search_alg=optuna.samplers.TPESampler(seed=0),
+                backend='optuna',
+                num_samples=5, #args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoPatchTSTMultivariate_poolmean_mlpmixer'
+            ),
+        ]
+
+    elif args.experiment_name == 'infini_poolmean_mlpquerymixer_t5tiny':
+        # Pool-mean counterpart of 'infini_mlpquerymixer_t5tiny' (mlp_query gate).
+        def poolmean_mlpquerymixer_config(trial):
+            return {
+                'input_size': args.input_size,
+                'n_series': args.n_series,
+                'patch_len': patch_len,
+                'stride': stride,
+                'max_steps': max_steps,
+                'val_check_steps': val_check_steps,
+                'windows_batch_size': windows_batch_size,
+                'inference_windows_batch_size': inference_windows_batch_size,
+                #'transformer_backbone': transformer_backbone,
+                'hidden_size': hidden_size,
+                'linear_hidden_size': linear_hidden_size,
+                'n_heads': n_heads,
+                'd_k': d_k,
+                'd_v': d_v,
+                'n_layers': n_layers,
+                'pe_type': pe_type,
+                'learn_pe': learn_pe,
+                'dropout': dropout,
+                'head_dropout': head_dropout,
+                'revin': revin,
+                'revin_affine': revin_affine,
+                'revin_subtract_last': revin_subtract_last,
+                'padding_patch': padding_patch,
+                'infini_mixer_type': 'mlp_query',
+                'infini_memory_type': 'pool_mean',
+                'mlpmixer_hidden_size': trial.suggest_categorical('mlpmixer_hidden_size', [128, 256, 384, 512]),
+                'mlpmixer_n_layers': trial.suggest_categorical('mlpmixer_n_layers', [2, 3, 4]),
+                'mlpmixer_dropout': trial.suggest_categorical('mlpmixer_dropout', [0.0, 0.1, 0.2]),
+                'multivariate_head': multivariate_head,
+                'learning_rate': learning_rate,
+                'early_stop_patience_steps': early_stop_patience_steps,
+                'batch_size': batch_size,
+                'valid_batch_size': batch_size,
+                'scaler_type': scaler_type,
+                'lr_scheduler': lr_scheduler,
+                'lr_scheduler_kwargs': lr_scheduler_kwargs,
+                'random_seed': args.random_seed,
+            }
+
+        models = [
+            AutoMOMENT(
+                h=args.h,
+                config=poolmean_mlpquerymixer_config,
+                loss=loss,
+                search_alg=optuna.samplers.TPESampler(seed=0),
+                backend='optuna',
+                num_samples=5, #args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoMOMENT_poolmean_mlpquerymixer'
+            ),
+            AutoPatchTSTMultivariate(
+                h=args.h,
+                config=poolmean_mlpquerymixer_config,
+                loss=loss,
+                search_alg=optuna.samplers.TPESampler(seed=0),
+                backend='optuna',
+                num_samples=5, #args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoPatchTSTMultivariate_poolmean_mlpquerymixer'
             ),
         ]
 

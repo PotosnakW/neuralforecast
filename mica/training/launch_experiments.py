@@ -24,10 +24,14 @@ DATASET_NAMES = [
     'solar/D',
     'solar/H',
     'solar/W',
+    'electricity/D',
+    'electricity/H',
+    'electricity/W',
 ]
 EXPERIMENT_NAMES = [
     'vanilla_t5tiny',
     'infini_mlpquerymixer_t5tiny',
+    'infini_poolmean_mlpquerymixer_t5tiny',
     'itransformer_baseline',
     'crossformer_baseline',
     'timerxl_baseline',

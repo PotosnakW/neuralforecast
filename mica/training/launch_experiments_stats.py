@@ -22,6 +22,9 @@ DATASET_NAMES = [
     'solar/D',
     'solar/H',
     'solar/W',
+    'electricity/D',
+    'electricity/H',
+    'electricity/W',
 ]
 
 FILE_NAME = 'train_models_stats' 

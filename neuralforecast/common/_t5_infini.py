@@ -243,24 +243,34 @@ class T5InfiniAttention(T5Attention):
         
         self.elu = nn.ELU()
 
-        # Select memory update/retrieval methods based on channel exclusion
-        if config.infini_channel_exclusion:
-            self._update_memory_matrix = self._update_memory_matrix_channelexl
-        else:
-            self._update_memory_matrix = self._update_memory_matrix_allchannels
+        # Select how the cross-channel global context (A_global) is computed
+        infini_memory_type = getattr(config, 'infini_memory_type', 'retrieval')
+        if infini_memory_type == 'retrieval':
+            self._compute_a_mem = self._compute_a_mem_retrieval
 
-        # Select channel weight type:
-        if config.infini_channel_weight_type == 'uniform':
-            self._compute_channel_weights = self._compute_uniform_channel_weights
-        elif config.infini_channel_weight_type == 'static':
-            self.channel_weights = nn.Parameter(torch.ones(1, config.n_series, config.n_heads, 1, 1))
-            self._compute_channel_weights = self._compute_static_channel_weights
-        elif config.infini_channel_weight_type == 'dynamic':
-            self.channel_attn = nn.Linear(config.d_kv, 1)
-            self._compute_channel_weights = self._compute_query_channel_weights
+            # Select memory update/retrieval methods based on channel exclusion
+            if config.infini_channel_exclusion:
+                self._update_memory_matrix = self._update_memory_matrix_channelexl
+            else:
+                self._update_memory_matrix = self._update_memory_matrix_allchannels
+
+            # Select channel weight type:
+            if config.infini_channel_weight_type == 'uniform':
+                self._compute_channel_weights = self._compute_uniform_channel_weights
+            elif config.infini_channel_weight_type == 'static':
+                self.channel_weights = nn.Parameter(torch.ones(1, config.n_series, config.n_heads, 1, 1))
+                self._compute_channel_weights = self._compute_static_channel_weights
+            elif config.infini_channel_weight_type == 'dynamic':
+                self.channel_attn = nn.Linear(config.d_kv, 1)
+                self._compute_channel_weights = self._compute_query_channel_weights
+            else:
+                raise ValueError(f"infini_channel_weight_type '{config.infini_channel_weight_type}' not recognized. "
+                        f"Use 'uniform', 'static', or 'dynamic'.")
+        elif infini_memory_type == 'pool_mean':
+            self._compute_a_mem = self._compute_a_mem_pool_mean
         else:
-            raise ValueError(f"infini_channel_weight_type '{config.infini_channel_weight_type}' not recognized. "
-                    f"Use 'uniform', 'static', or 'dynamic'.")
+            raise ValueError(f"infini_memory_type '{infini_memory_type}' not recognized. "
+                    f"Use 'retrieval' or 'pool_mean'.")
 
         if config.infini_mixer_type.lower() == 'betas':
             self.mixing_gate = self.beta_mixing_gate
@@ -350,15 +360,18 @@ class T5InfiniAttention(T5Attention):
         sigma_k_T = sigma_k.transpose(-2, -1) # [batch_size, n_channels, n_heads, dim, n_patch]
 
         C = key_states.shape[1]
-        memory_matrix = torch.matmul(sigma_k_T, value_states)
-        memory_matrix = (w * memory_matrix).sum(dim=1, keepdim=True) # [batch_size, 1, n_heads, dim, dim] sum over channels
-        memory_matrix = memory_matrix.expand(-1, C, -1, -1, -1) # [batch_size, n_channels, n_heads, dim, dim]
-        memory_matrix -= w * torch.matmul(sigma_k_T, value_states) # [batch_size, n_channels, n_heads, dim, dim]
+        # NOTE: the leave-one-out subtraction below must be out-of-place. expand() gives the
+        # summed (dim=1, keepdim=True) tensor stride 0 along the channel dim, so all C "slots"
+        # alias the same memory; an in-place `-=` with a per-channel-different RHS would try to
+        # write C different values into one location (silently wrong on old PyTorch, a
+        # RuntimeError on newer PyTorch that detects the aliasing).
+        per_channel_memory = w * torch.matmul(sigma_k_T, value_states) # [batch_size, n_channels, n_heads, dim, dim]
+        memory_matrix = per_channel_memory.sum(dim=1, keepdim=True) # [batch_size, 1, n_heads, dim, dim] sum over channels
+        memory_matrix = memory_matrix.expand(-1, C, -1, -1, -1) - per_channel_memory # [batch_size, n_channels, n_heads, dim, dim] leave-one-out
 
-        z = sigma_k.sum(dim=-2).unsqueeze(-1)
-        z = (w * z).sum(dim=1, keepdim=True) # [batch_size, n_heads, dim, 1] sum over sequence length and channels
-        z = z.expand(-1, C, -1, -1, -1)  # [batch_size, n_channels, n_heads, dim, 1]
-        z -= w * sigma_k.sum(dim=-2).unsqueeze(-1)  # [batch_size, n_channels, n_heads, dim, 1]
+        per_channel_z = w * sigma_k.sum(dim=-2).unsqueeze(-1) # [batch_size, n_channels, n_heads, dim, 1]
+        z = per_channel_z.sum(dim=1, keepdim=True) # [batch_size, 1, n_heads, dim, 1] sum over sequence length and channels
+        z = z.expand(-1, C, -1, -1, -1) - per_channel_z # [batch_size, n_channels, n_heads, dim, 1] leave-one-out
 
         return memory_matrix, z
 
@@ -367,9 +380,27 @@ class T5InfiniAttention(T5Attention):
         numerator = sigma_q @ memory_matrix         # [B, C, H, P, D]
         denominator = (sigma_q @ z) + 1e-6 # [B, C, H, P, 1]
         A_mem = numerator / denominator             # [B, C, H, P, D]
-    
+
         return A_mem
-    
+
+    def _compute_a_mem_retrieval(self, key_states, value_states, query_states, n_channels):
+        """Query-conditioned associative retrieval from the compressive memory (Munkhdalai et al., 2024)."""
+        memory_matrix, z = self._update_memory_matrix(
+            key_states=key_states,
+            value_states=value_states,
+            query_states=query_states,
+            n_channels=n_channels,
+        )
+        return self.retrieve_from_memory(
+            query_states=query_states,
+            memory_matrix=memory_matrix,
+            z=z,
+        )
+
+    def _compute_a_mem_pool_mean(self, key_states, value_states, query_states, n_channels):
+        """Reviewer-requested baseline: A_global = (1/C) * sum_c V^(c), independent of the query."""
+        return value_states.mean(dim=1, keepdim=True).expand_as(value_states)
+
     def beta_mixing_gate(self, a_mem, attn_output, query_states):
         """Learned interpolation between memory and attention using per-head betas."""
         attn_output = torch.sigmoid(self.beta) * a_mem + (1 - torch.sigmoid(self.beta)) * attn_output 
@@ -507,17 +538,12 @@ class T5InfiniAttention(T5Attention):
 
         attn_output = torch.matmul(attn_weights, value_states) # [batch_size, n_channels, n_heads, n_patch, dim]
 
-        # Infini attention computation across channels
-        memory_matrix, z = self._update_memory_matrix(
-            key_states=key_states, 
-            value_states=value_states, 
-            query_states=query_states, 
-            n_channels=n_channels,
-        )
-        A_mem = self.retrieve_from_memory(
+        # Infini attention: compute global cross-channel context (A_global)
+        A_mem = self._compute_a_mem(
+            key_states=key_states,
+            value_states=value_states,
             query_states=query_states,
-            memory_matrix=memory_matrix,
-            z=z,
+            n_channels=n_channels,
         )
 
         # Channel mixing
