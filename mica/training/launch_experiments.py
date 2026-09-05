@@ -32,6 +32,7 @@ EXPERIMENT_NAMES = [
     'vanilla_t5tiny',
     'infini_mlpquerymixer_t5tiny',
     'infini_poolmean_mlpquerymixer_t5tiny',
+    'infini_poolmean_layerwise_t5tiny',
     'itransformer_baseline',
     'crossformer_baseline',
     'timerxl_baseline',

@@ -1,25 +1,30 @@
 #!/bin/bash
-# Mean-pool memory variants (A_global = (1/C) * sum_c V^(c), independent of
-# the query -- the reviewer-requested pool_mean baseline in
-# experiment_models.py) across every dataset in DATASET_NAMES, three gates:
-#   - infini_poolmean_mlpquerymixer_t5tiny  (MLP-query gate)
-#   - infini_poolmean_t5tiny                (shared-beta gate)
-#   - infini_poolmean_layerwise_t5tiny      (layerwise-beta gate)
-# All three are ciincl-only (infini_channel_exclusion defaults to False and
-# is never set in these configs -- intentional, matches the existing
-# pool-mean convention rather than the dual ciexcl/ciincl pattern used by
-# the non-pool-mean gate variants).
-# Each array task trains one (experiment, dataset, seed) combo on its own
-# GPU, so the scheduler packs/parallelizes across every GPU you have access
-# to instead of serializing everything in one long-running script.
+# All 6 gate variants (shared beta, channelwise beta, layerwise beta,
+# layerwise+channelwise beta, mlp, mlpquery), trained fresh -- both
+# infini_channel_exclusion=True (ciexcl) and =False (ciincl) arms -- on the
+# 8 dataset-variants in DATASET_NAMES that have never been run for the gate
+# sweep before: LOOP_SEATTLE/D, covid_deaths, solar/{D,H,W},
+# electricity/{D,H,W}. Uses the full (non-"_ciexcl") experiment names, each
+# of which trains both arms in one call, so ciexcl and ciincl are covered in
+# a single pass instead of double-training ciexcl once here and once via
+# run_ciexcl_rerun.sbatch.
+#
+# NOTE: infini_mlpquerymixer_t5tiny on electricity/{D,H,W} is trained
+# separately by run_ecl_mlpquery.sbatch (submitted as its own experiment),
+# so that one (gate, dataset) slice is skipped below as a no-op to avoid
+# training it twice.
+#
+# Each array task trains one (gate, dataset, seed) combo on its own GPU, so
+# the scheduler packs/parallelizes across every GPU you have access to
+# instead of serializing everything in one long-running script.
 #
 # Usage:
 #   cd mica/training && mkdir -p logs
-#   sbatch slurm/run_poolmean.sbatch
+#   sbatch slurm/run_new_datasets_full.sbatch
 # To cap concurrent tasks at your node's GPU count:
-#   sbatch --array=0-314%<N_GPUS> slurm/run_poolmean.sbatch
+#   sbatch --array=0-239%<N_GPUS> slurm/run_new_datasets_full.sbatch
 #
-#SBATCH --job-name=mica_poolmean
+#SBATCH --job-name=mica_new_datasets_full
 #SBATCH --output=logs/%x_%A_%a.out
 #SBATCH --error=logs/%x_%A_%a.err
 #SBATCH --partition=general
@@ -29,7 +34,7 @@
 #SBATCH --mem=64G
 #SBATCH --time=24:00:00
 #SBATCH --gres=gpu:1
-#SBATCH --array=0-314
+#SBATCH --array=0-239
 
 set -euo pipefail
 
@@ -47,24 +52,17 @@ REPO_DIR=${SLURM_SUBMIT_DIR:?submit from mica/training/}
 cd "${REPO_DIR}"
 test -f train_models.py
 
-# Mirrors DATASET_NAMES in launch_experiments.py -- keep in sync if that list changes.
-EXPERIMENTS=(infini_poolmean_mlpquerymixer_t5tiny infini_poolmean_t5tiny infini_poolmean_layerwise_t5tiny)
+EXPERIMENTS=(
+    infini_t5tiny
+    infini_channelwise_t5tiny
+    infini_layerwise_t5tiny
+    infini_layerwise_channelwise_t5tiny
+    infini_mlpmixer_t5tiny
+    infini_mlpquerymixer_t5tiny
+)
 DATASETS=(
-    simglucose
-    iowa_ihop_smex_windspeed
-    iowa_plows_windspeed
     LOOP_SEATTLE/D
-    M_DENSE/D
-    M_DENSE/H
     covid_deaths
-    ett1/D
-    ett1/H
-    ett1/W
-    ett2/D
-    ett2/H
-    ett2/W
-    jena_weather/D
-    jena_weather/H
     solar/D
     solar/H
     solar/W
@@ -86,6 +84,12 @@ seed_idx=$(( rem % n_seeds ))
 EXPERIMENT_NAME=${EXPERIMENTS[$exp_idx]}
 DATASET_NAME=${DATASETS[$dataset_idx]}
 SEED=${SEEDS[$seed_idx]}
+
+# Handled separately by run_ecl_mlpquery.sbatch -- skip to avoid double-training.
+if [[ "$EXPERIMENT_NAME" == "infini_mlpquerymixer_t5tiny" && "$DATASET_NAME" == electricity/* ]]; then
+    echo "Skipping ${EXPERIMENT_NAME} / ${DATASET_NAME} / seed ${SEED} -- covered by run_ecl_mlpquery.sbatch"
+    exit 0
+fi
 
 mkdir -p logs
 

@@ -243,6 +243,11 @@ class T5InfiniAttention(T5Attention):
         
         self.elu = nn.ELU()
 
+        # Used by both memory types (channel-exclusion has no effect on the
+        # retrieval-side memory-matrix selection below when memory_type is
+        # 'pool_mean' -- it's read directly in _compute_a_mem_pool_mean instead).
+        self.infini_channel_exclusion = config.infini_channel_exclusion
+
         # Select how the cross-channel global context (A_global) is computed
         infini_memory_type = getattr(config, 'infini_memory_type', 'retrieval')
         if infini_memory_type == 'retrieval':
@@ -398,7 +403,13 @@ class T5InfiniAttention(T5Attention):
         )
 
     def _compute_a_mem_pool_mean(self, key_states, value_states, query_states, n_channels):
-        """Reviewer-requested baseline: A_global = (1/C) * sum_c V^(c), independent of the query."""
+        """Reviewer-requested baseline: A_global = (1/C) * sum_c V^(c), independent of the query.
+        Under channel exclusion, each channel's context is the leave-one-out mean over the
+        other C-1 channels instead of the plain inclusive mean."""
+        if self.infini_channel_exclusion:
+            C = value_states.shape[1]
+            total = value_states.sum(dim=1, keepdim=True)
+            return (total - value_states) / (C - 1)
         return value_states.mean(dim=1, keepdim=True).expand_as(value_states)
 
     def beta_mixing_gate(self, a_mem, attn_output, query_states):

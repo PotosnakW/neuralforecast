@@ -1261,6 +1261,71 @@ def get_models(args):
             ),
         ]
 
+    elif args.experiment_name == 'infini_poolmean_layerwise_t5tiny':
+        # Pool-mean counterpart of 'infini_layerwise_t5tiny' (layerwise-beta gate).
+        # Same ciincl-only convention as the other pool-mean variants above.
+        poolmean_layerwise_config = {
+            'input_size': args.input_size,
+            'n_series': args.n_series,
+            'patch_len': patch_len,
+            'stride': stride,
+            'max_steps': max_steps,
+            'val_check_steps': val_check_steps,
+            'windows_batch_size': windows_batch_size,
+            'inference_windows_batch_size': inference_windows_batch_size,
+            #'transformer_backbone': transformer_backbone,
+            'hidden_size': hidden_size,
+            'linear_hidden_size': linear_hidden_size,
+            'n_heads': n_heads,
+            'd_k': d_k,
+            'd_v': d_v,
+            'n_layers': n_layers,
+            'pe_type': pe_type,
+            'learn_pe': learn_pe,
+            'dropout': dropout,
+            'head_dropout': head_dropout,
+            'revin': revin,
+            'revin_affine': revin_affine,
+            'revin_subtract_last': revin_subtract_last,
+            'padding_patch': padding_patch,
+            'infini_mixer_type': 'betas',
+            'infini_memory_type': 'pool_mean',
+            'layerwise_beta': True,
+            'channelwise_beta': False,
+            'multivariate_head': multivariate_head,
+            'learning_rate': learning_rate,
+            'early_stop_patience_steps': early_stop_patience_steps,
+            'batch_size': batch_size,
+            'valid_batch_size': batch_size,
+            'scaler_type': scaler_type,
+            'lr_scheduler': lr_scheduler,
+            'lr_scheduler_kwargs': lr_scheduler_kwargs,
+            'random_seed': args.random_seed,
+        }
+
+        models = [
+            AutoMOMENT(
+                h=args.h,
+                config=poolmean_layerwise_config,
+                loss=loss,
+                search_alg=None,
+                num_samples=args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoMOMENT_infini_poolmean_layerwise'
+            ),
+            AutoPatchTSTMultivariate(
+                h=args.h,
+                config=poolmean_layerwise_config,
+                loss=loss,
+                search_alg=None,
+                num_samples=args.num_samples,
+                cpus=20,
+                n_series=args.n_series,
+                alias='AutoPatchTSTMultivariate_infini_poolmean_layerwise'
+            ),
+        ]
+
     elif args.experiment_name == 'infini_poolmean_mlpmixer_t5tiny':
         # Pool-mean counterpart of 'infini_mlpmixer_t5tiny' (mlp gate).
         def poolmean_mlpmixer_config(trial):
