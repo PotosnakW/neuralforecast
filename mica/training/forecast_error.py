@@ -213,7 +213,18 @@ experiment_names = [
     'infini_channelwise_t5tiny',
     'infini_layerwise_t5tiny',
     'infini_layerwise_channelwise_t5tiny',
+    # ciexcl-only reruns (slurm/run_ciexcl_rerun.sbatch). These write to their own
+    # {name}_ciexcl/ result dirs rather than overwriting the pre-fix ciexcl columns
+    # still sitting in the base {name}/ dirs -- see load_gate_results() in
+    # mica/tables/format_tables.ipynb, which merges the two.
+    'infini_t5tiny_ciexcl',
+    'infini_channelwise_t5tiny_ciexcl',
+    'infini_layerwise_t5tiny_ciexcl',
+    'infini_layerwise_channelwise_t5tiny_ciexcl',
+    'infini_mlpmixer_t5tiny_ciexcl',
+    'infini_mlpquerymixer_t5tiny_ciexcl',
     'infini_poolmean_t5tiny',
+    'infini_poolmean_layerwise_t5tiny',
     'infini_poolmean_mlpmixer_t5tiny',
     'infini_poolmean_mlpquerymixer_t5tiny',
     'multivariateMLP_baseline',
