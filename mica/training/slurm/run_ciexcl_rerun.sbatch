@@ -28,7 +28,7 @@
 #SBATCH --partition=general
 #SBATCH --qos=qos_general
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=20
+#SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
 #SBATCH --time=24:00:00
 #SBATCH --gres=gpu:1
@@ -42,9 +42,25 @@ CONDA_ENV="neuralforecast"
 # an unqualified `python` via $PATH, which silently picks up another env's
 # interpreter if one is hardcoded ahead of it there.
 PYTHON="${CONDA_BASE}/envs/${CONDA_ENV}/bin/python"
-GIFT_EVAL_DIR=${GIFT_EVAL_DIR:-../GIFT_EVAL_DIR}
-SAVE_DIR=${SAVE_DIR:-../exp_results}
+GIFT_EVAL_DIR=${GIFT_EVAL_DIR:-/zfsauton/scratch/wpotosna/GiftEval}
+SAVE_DIR=${SAVE_DIR:-/zfsauton/scratch/wpotosna/neuralforecast_mica/exp_results}
+# Lightning TensorBoard logs (experiment_models.py reads LIGHTNING_DIR). Per array
+# task, because TensorBoardLogger picks its version_N by scanning the directory --
+# concurrent tasks sharing one root would race and interleave event files.
+LIGHTNING_ROOT=${LIGHTNING_ROOT:-/zfsauton/scratch/wpotosna/neuralforecast_mica/lightning_runs}
 export GIFT_EVAL="${GIFT_EVAL_DIR}"
+# Keep ray's session dir, HF/matplotlib caches and any scratch files off $HOME
+# (491G, 78% full) -- and off the node-local /tmp, which isn't shared and gets
+# reaped. Normally inherited from ~/.bashrc via sbatch --export=ALL; pinned here
+# so a submit shell that never sourced it still can't write into home or /tmp.
+export TMPDIR=${TMPDIR:-/zfsauton/scratch/wpotosna/tmp}
+export RAY_TMPDIR="${TMPDIR}"
+# Ray tune trial results. Without this Ray writes to a hardcoded ~/ray_results
+# on the home filesystem; honored via the storage_path patch in
+# neuralforecast/common/_base_auto.py.
+export NEURALFORECAST_RAY_STORAGE_PATH=${NEURALFORECAST_RAY_STORAGE_PATH:-/zfsauton/scratch/wpotosna/neuralforecast_mica/ray_results}
+export XDG_CACHE_HOME=${XDG_CACHE_HOME:-/zfsauton/scratch/wpotosna/neuralforecast_mica/cache}
+mkdir -p "${TMPDIR}" "${XDG_CACHE_HOME}"
 
 REPO_DIR=${SLURM_SUBMIT_DIR:?submit from mica/training/}
 cd "${REPO_DIR}"
@@ -88,7 +104,8 @@ EXPERIMENT_NAME=${EXPERIMENTS[$exp_idx]}
 DATASET_NAME=${DATASETS[$dataset_idx]}
 SEED=${SEEDS[$seed_idx]}
 
-mkdir -p logs
+export LIGHTNING_DIR="${LIGHTNING_ROOT}/${SLURM_JOB_NAME:-local}_${SLURM_ARRAY_JOB_ID:-0}_${SLURM_ARRAY_TASK_ID:-0}"
+mkdir -p logs "${LIGHTNING_DIR}"
 
 echo "=========================================="
 echo "Job ID      : ${SLURM_ARRAY_JOB_ID:-local}_${SLURM_ARRAY_TASK_ID:-0}"
@@ -99,6 +116,8 @@ echo "Seed        : $SEED"
 echo "Start       : $(date)"
 echo "=========================================="
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+
+export SRUN_CPUS_PER_TASK="${SLURM_CPUS_PER_TASK:-1}"
 
 srun "$PYTHON" -m train_models \
     --dataset_name "${DATASET_NAME}" \

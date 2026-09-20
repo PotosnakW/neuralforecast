@@ -61,6 +61,14 @@ if __name__ == '__main__':
     if args is None:
         exit()
 
-    if args.experiment_name not in ['chronos2.0_baseline']:
-        raise Exception("'Must use zeroshot_models.py for experiments 'chronos2.0_baseline'.")
+    ZEROSHOT_EXPERIMENTS = [
+        'chronos2.0_baseline',
+        'toto2_baseline',     # runs from envs/toto2
+        'timesfm3_baseline',  # runs from its own timesfm env
+    ]
+    if args.experiment_name not in ZEROSHOT_EXPERIMENTS:
+        raise Exception(
+            f"zeroshot_models.py only handles {ZEROSHOT_EXPERIMENTS}; "
+            f"got '{args.experiment_name}'."
+        )
     main(args)

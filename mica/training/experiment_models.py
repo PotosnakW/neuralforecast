@@ -1,4 +1,5 @@
 import copy
+import os
 
 from neuralforecast.auto import AutoiTransformerT5, AutoiTransformer, AutoTSMixer, AutoMLPMultivariate, AutoMOMENT, AutoPatchTSTMultivariate, AutoTimerXL, AutoCrossformer, AutoTimeMixer, AutoChronos2
 from neuralforecast.losses.pytorch import MAE
@@ -11,6 +12,11 @@ from torch.optim.lr_scheduler import StepLR
 def get_models(args):
 
     max_steps = 12000
+    # Lightning writes TensorBoard event files to <default_root_dir>/lightning_logs/.
+    # Its default is the CWD, which for the slurm arrays is the repo checkout in $HOME --
+    # ~1k array tasks would each drop a version_* dir there. The sbatch scripts point
+    # LIGHTNING_DIR at scratch; '.' keeps the old behavior for plain local runs.
+    default_root_dir = os.environ.get('LIGHTNING_DIR', '.')
     val_check_steps = 500
     transformer_backbone = "google/t5-efficient-tiny" 
     hidden_size = 256
@@ -57,6 +63,7 @@ def get_models(args):
             'patch_len': patch_len,
             'stride': stride,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             'windows_batch_size': windows_batch_size,
             'inference_windows_batch_size': inference_windows_batch_size,
@@ -140,6 +147,7 @@ def get_models(args):
             'patch_len': patch_len,
             'stride': stride,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             'windows_batch_size': windows_batch_size,
             'inference_windows_batch_size': inference_windows_batch_size,
@@ -201,6 +209,7 @@ def get_models(args):
                 'patch_len': patch_len,
                 'stride': stride,
                 'max_steps': max_steps,
+                'default_root_dir': default_root_dir,
                 'val_check_steps': val_check_steps,
                 'windows_batch_size': windows_batch_size,
                 'inference_windows_batch_size': inference_windows_batch_size,
@@ -243,6 +252,7 @@ def get_models(args):
                 'patch_len': patch_len,
                 'stride': stride,
                 'max_steps': max_steps,
+                'default_root_dir': default_root_dir,
                 'val_check_steps': val_check_steps,
                 'windows_batch_size': windows_batch_size,
                 'inference_windows_batch_size': inference_windows_batch_size,
@@ -333,6 +343,7 @@ def get_models(args):
                 'patch_len': patch_len,
                 'stride': stride,
                 'max_steps': max_steps,
+                'default_root_dir': default_root_dir,
                 'val_check_steps': val_check_steps,
                 'windows_batch_size': windows_batch_size,
                 'inference_windows_batch_size': inference_windows_batch_size,
@@ -375,6 +386,7 @@ def get_models(args):
                 'patch_len': patch_len,
                 'stride': stride,
                 'max_steps': max_steps,
+                'default_root_dir': default_root_dir,
                 'val_check_steps': val_check_steps,
                 'windows_batch_size': windows_batch_size,
                 'inference_windows_batch_size': inference_windows_batch_size,
@@ -464,6 +476,7 @@ def get_models(args):
             'patch_len': patch_len,
             'stride': stride,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             'windows_batch_size': windows_batch_size,
             'inference_windows_batch_size': inference_windows_batch_size,
@@ -551,6 +564,7 @@ def get_models(args):
             'patch_len': patch_len,
             'stride': stride,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             'windows_batch_size': windows_batch_size,
             'inference_windows_batch_size': inference_windows_batch_size,
@@ -638,6 +652,7 @@ def get_models(args):
             'patch_len': patch_len,
             'stride': stride,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             'windows_batch_size': windows_batch_size,
             'inference_windows_batch_size': inference_windows_batch_size,
@@ -725,6 +740,7 @@ def get_models(args):
             'patch_len': patch_len,
             'stride': stride,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             'windows_batch_size': windows_batch_size,
             'inference_windows_batch_size': inference_windows_batch_size,
@@ -816,6 +832,7 @@ def get_models(args):
             'patch_len': patch_len,
             'stride': stride,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             'windows_batch_size': windows_batch_size,
             'inference_windows_batch_size': inference_windows_batch_size,
@@ -879,6 +896,7 @@ def get_models(args):
             'patch_len': patch_len,
             'stride': stride,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             'windows_batch_size': windows_batch_size,
             'inference_windows_batch_size': inference_windows_batch_size,
@@ -942,6 +960,7 @@ def get_models(args):
             'patch_len': patch_len,
             'stride': stride,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             'windows_batch_size': windows_batch_size,
             'inference_windows_batch_size': inference_windows_batch_size,
@@ -1005,6 +1024,7 @@ def get_models(args):
             'patch_len': patch_len,
             'stride': stride,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             'windows_batch_size': windows_batch_size,
             'inference_windows_batch_size': inference_windows_batch_size,
@@ -1069,6 +1089,7 @@ def get_models(args):
                 'patch_len': patch_len,
                 'stride': stride,
                 'max_steps': max_steps,
+                'default_root_dir': default_root_dir,
                 'val_check_steps': val_check_steps,
                 'windows_batch_size': windows_batch_size,
                 'inference_windows_batch_size': inference_windows_batch_size,
@@ -1136,6 +1157,7 @@ def get_models(args):
                 'patch_len': patch_len,
                 'stride': stride,
                 'max_steps': max_steps,
+                'default_root_dir': default_root_dir,
                 'val_check_steps': val_check_steps,
                 'windows_batch_size': windows_batch_size,
                 'inference_windows_batch_size': inference_windows_batch_size,
@@ -1205,6 +1227,7 @@ def get_models(args):
             'patch_len': patch_len,
             'stride': stride,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             'windows_batch_size': windows_batch_size,
             'inference_windows_batch_size': inference_windows_batch_size,
@@ -1270,6 +1293,7 @@ def get_models(args):
             'patch_len': patch_len,
             'stride': stride,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             'windows_batch_size': windows_batch_size,
             'inference_windows_batch_size': inference_windows_batch_size,
@@ -1335,6 +1359,7 @@ def get_models(args):
                 'patch_len': patch_len,
                 'stride': stride,
                 'max_steps': max_steps,
+                'default_root_dir': default_root_dir,
                 'val_check_steps': val_check_steps,
                 'windows_batch_size': windows_batch_size,
                 'inference_windows_batch_size': inference_windows_batch_size,
@@ -1403,6 +1428,7 @@ def get_models(args):
                 'patch_len': patch_len,
                 'stride': stride,
                 'max_steps': max_steps,
+                'default_root_dir': default_root_dir,
                 'val_check_steps': val_check_steps,
                 'windows_batch_size': windows_batch_size,
                 'inference_windows_batch_size': inference_windows_batch_size,
@@ -1467,6 +1493,7 @@ def get_models(args):
             'input_size': args.input_size,
             'n_series': args.n_series,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             'windows_batch_size': windows_batch_size,
             'inference_windows_batch_size': inference_windows_batch_size,
@@ -1501,6 +1528,7 @@ def get_models(args):
             'input_size': args.input_size,
             'n_series': args.n_series,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             'windows_batch_size': windows_batch_size,
             'inference_windows_batch_size': inference_windows_batch_size,
@@ -1539,6 +1567,7 @@ def get_models(args):
             'input_size': args.input_size,
             'n_series': args.n_series,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             'windows_batch_size': windows_batch_size,
             'inference_windows_batch_size': inference_windows_batch_size,
@@ -1596,6 +1625,7 @@ def get_models(args):
             'patch_len': patch_len,
             'stride': stride,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             'windows_batch_size': windows_batch_size,
             'inference_windows_batch_size': inference_windows_batch_size,
@@ -1645,6 +1675,7 @@ def get_models(args):
             'patch_len': patch_len,
             'stride': stride,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             'windows_batch_size': windows_batch_size,
             'inference_windows_batch_size': inference_windows_batch_size,
@@ -1691,6 +1722,7 @@ def get_models(args):
             'input_size': args.input_size,
             'n_series': args.n_series,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             'windows_batch_size': windows_batch_size,
             'inference_windows_batch_size': inference_windows_batch_size,
@@ -1762,6 +1794,7 @@ def get_models(args):
             'input_size': args.input_size,
             'n_series': args.n_series,
             'max_steps': max_steps,
+            'default_root_dir': default_root_dir,
             'val_check_steps': val_check_steps,
             "top_k": 1,              # Always pick most likely value
             "top_p": 1.0,            # Doesn't matter when top_k=1
@@ -1786,6 +1819,7 @@ def get_models(args):
                 'patch_len': patch_len,
                 'stride': stride,
                 'max_steps': max_steps,
+                'default_root_dir': default_root_dir,
                 'val_check_steps': val_check_steps,
                 'windows_batch_size': windows_batch_size,
                 'inference_windows_batch_size': inference_windows_batch_size,
@@ -1843,6 +1877,7 @@ def get_models(args):
                 'patch_len': patch_len,
                 'stride': stride,
                 'max_steps': max_steps,
+                'default_root_dir': default_root_dir,
                 'val_check_steps': val_check_steps,
                 'windows_batch_size': windows_batch_size,
                 'inference_windows_batch_size': inference_windows_batch_size,
@@ -1889,6 +1924,44 @@ def get_models(args):
                 cpus=20,
                 n_series=args.n_series,
                 alias='AutoPatchTSTMultivariate_mlpquerymixer_dw_ciincl'
+            ),
+        ]
+
+    elif args.experiment_name == 'toto2_baseline':
+        # Zero-shot Datadog Toto-2. The toto2 package is NOT installed in
+        # envs/neuralforecast (it conflicts with this env, which serves the gate
+        # sweep), so it runs from envs/toto2 via slurm/run_zeroshot_toto2.sbatch.
+        # The import is inside the branch on purpose: a module-level import would
+        # make experiment_models.py unimportable in envs/neuralforecast and break
+        # every MICA training job.
+        from zeroshot_external_models import Toto2
+
+        models = [
+            Toto2(
+                h=args.h,
+                input_size=args.input_size,
+                n_series=args.n_series,
+                windows_batch_size=windows_batch_size,
+                inference_windows_batch_size=inference_windows_batch_size,
+                random_seed=args.random_seed,
+                alias='Toto2_zeroshot',
+            ),
+        ]
+
+    elif args.experiment_name == 'timesfm3_baseline':
+        # Zero-shot Google TimesFM-3; same out-of-env story as toto2_baseline,
+        # run from its own env via slurm/run_zeroshot_timesfm3.sbatch.
+        from zeroshot_external_models import TimesFM3
+
+        models = [
+            TimesFM3(
+                h=args.h,
+                input_size=args.input_size,
+                n_series=args.n_series,
+                windows_batch_size=windows_batch_size,
+                inference_windows_batch_size=inference_windows_batch_size,
+                random_seed=args.random_seed,
+                alias='TimesFM3_zeroshot',
             ),
         ]
 
