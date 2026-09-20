@@ -1948,6 +1948,26 @@ def get_models(args):
             ),
         ]
 
+    elif args.experiment_name == 'toto2_313m_baseline':
+        # Larger Toto-2 checkpoint (313M vs the 22M default), size-matched to
+        # TimesFM-3 (331M) so the two are comparable on architecture rather than
+        # scale. Separate experiment_name -> separate results directory, so the
+        # 22M numbers are never overwritten.
+        from zeroshot_external_models import Toto2
+
+        models = [
+            Toto2(
+                h=args.h,
+                input_size=args.input_size,
+                n_series=args.n_series,
+                checkpoint='Datadog/Toto-2.0-313m',
+                windows_batch_size=windows_batch_size,
+                inference_windows_batch_size=inference_windows_batch_size,
+                random_seed=args.random_seed,
+                alias='Toto2_313m_zeroshot',
+            ),
+        ]
+
     elif args.experiment_name == 'timesfm3_baseline':
         # Zero-shot Google TimesFM-3; same out-of-env story as toto2_baseline,
         # run from its own env via slurm/run_zeroshot_timesfm3.sbatch.

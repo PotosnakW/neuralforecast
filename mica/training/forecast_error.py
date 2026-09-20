@@ -234,6 +234,21 @@ experiment_names = [
     'tsmixer_baseline',
     'statsforecast',
     'chronos2.0_baseline',
+    # Zero-shot foundation baselines (slurm/run_zeroshot_*.sbatch). Each is
+    # inference-only and deterministic, so they are seed-1 only -- see the
+    # random_seeds branch below.
+    'toto2_baseline',
+    'toto2_313m_baseline',
+    'timesfm3_baseline',
+]
+
+# Experiments with no training randomness: one seed, not five.
+SINGLE_SEED_EXPERIMENTS = [
+    'statsforecast',
+    'chronos2.0_baseline',
+    'toto2_baseline',
+    'toto2_313m_baseline',
+    'timesfm3_baseline',
 ]
 
 
@@ -256,7 +271,7 @@ if __name__ == '__main__':
     
     os.environ['GIFT_EVAL'] = args.GIFT_EVAL_path
     
-    if args.experiment_name in ['statsforecast', 'chronos2.0_baseline']:
+    if args.experiment_name in SINGLE_SEED_EXPERIMENTS:
         random_seeds = [1]
     else:
         random_seeds = [1, 2, 3, 4, 5]

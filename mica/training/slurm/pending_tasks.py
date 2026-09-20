@@ -25,6 +25,7 @@ SAVE_DIR = os.environ.get(
 # training tasks would delay the baselines by days for no gain.
 SCRIPTS = [
     "run_zeroshot_toto2",
+    "run_zeroshot_toto2_313m",
     "run_zeroshot_timesfm3",
     "run_ciexcl_rerun",
     "run_new_datasets_full",

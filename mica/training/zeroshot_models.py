@@ -63,7 +63,8 @@ if __name__ == '__main__':
 
     ZEROSHOT_EXPERIMENTS = [
         'chronos2.0_baseline',
-        'toto2_baseline',     # runs from envs/toto2
+        'toto2_baseline',       # runs from envs/toto2
+        'toto2_313m_baseline',  # same env, larger checkpoint
         'timesfm3_baseline',  # runs from its own timesfm env
     ]
     if args.experiment_name not in ZEROSHOT_EXPERIMENTS:

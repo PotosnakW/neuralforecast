@@ -160,8 +160,17 @@ def get_table(models, inp):
 
     for model in models.items():
         print(model[0])
-        model[1].to(device)  # Move model to GPU
-        results = analyze_model(model[1], inp=inp, with_backward=False)
+        # One model failing must not cost the whole table. This bites in the
+        # context-length ablation: at input_size < h some architectures cannot
+        # form a window at all, and without this the entire run is lost.
+        try:
+            model[1].to(device)  # Move model to GPU
+            results = analyze_model(model[1], inp=inp, with_backward=False)
+        except Exception as e:
+            print(f"  [table] {model[0]}: SKIPPED ({type(e).__name__}: {e})")
+            if device.type == 'cuda':
+                torch.cuda.empty_cache()
+            continue
 
         if model[0] == 'Chronos-2':
             results['trainable_params'] = 120.0
@@ -407,79 +416,129 @@ def get_model_config(args, model_type='moment'):
             'univariate': False,  # Set to False for multivariate mode
         }
         
+    elif model_type in ['toto2', 'timesfm3']:
+        # Zero-shot foundation models. They take no architecture hyperparameters
+        # here -- the checkpoint fixes the architecture -- and they are frozen, so
+        # the training keys in common_config are inert. `checkpoint` is left at the
+        # wrapper default (Toto-2.0-22m / timesfm-3.0-pytorch); override it here to
+        # run the larger-checkpoint ablation.
+        config = {
+            'input_size': args.input_size,
+            'n_series': args.n_series,
+            'windows_batch_size': args.windows_batch_size,
+            'inference_windows_batch_size': args.windows_batch_size,
+            'random_seed': 1,
+            'loss': MAE(),
+        }
+
     else:
         raise ValueError(f"Unknown model_type: {model_type}. Choose from: "
                         f"['moment', 'patchtst', 'itransformer', 'itransformert5', "
-                        f"'crossformer', 'timerxl', 'tsmixer', 'timemixer', 'mlpmultivariate', 'chronos2']")
+                        f"'crossformer', 'timerxl', 'tsmixer', 'timemixer', 'mlpmultivariate', "
+                        f"'chronos2', 'toto2', 'timesfm3']")
     
     return config
 
 
-# class Args:
-#     n_series = 7       # Weather/ETT typical
-#     h = 48             # Standard horizon
-#     input_size = 96
-#     windows_batch_size = 1
-# args = Args()
+# Table configs are selected on the command line rather than by editing this
+# file, so the C=7 / C=600 / context-length-ablation tables can be produced by a
+# sweep instead of by hand-uncommenting a block.
+#   n_series counts used before: [7, 15, 50, 100, 150, 200, 300, 400, 500, 600]
+#   input_size (context) ablation: [64, 16, 32, 64, 96, 128, 256, 312, 512, 8192]
+import argparse
 
-# class Args:
-#     n_series = 323     # Loop-Seattle
-#     h = 30             # Standard horizon
-#     input_size = 60
-#     windows_batch_size = 1
-# args = Args()
+_p = argparse.ArgumentParser(description="FLOPs / params / inference-time baseline table")
+_p.add_argument('--n_series', type=int, default=600)
+_p.add_argument('--h', type=int, default=48)
+_p.add_argument('--input_size', type=int, default=96)
+_p.add_argument('--windows_batch_size', type=int, default=1)
+# Was hardcoded to cuda:2, which fails on any allocation with fewer than 3 GPUs
+# (e.g. a --gres=gpu:1 slurm job).
+_p.add_argument('--device', type=str, default='cuda:0')
+# Results go to scratch, not the repo in $HOME (491G, 78% full) -- same
+# convention as the sweep's exp_results/logs.
+_p.add_argument('--out_dir', type=str,
+                default='/zfsauton/scratch/wpotosna/neuralforecast_mica/table_results')
+_p.add_argument('--tag', type=str, default='',
+                help='suffix for the output CSV; use it to distinguish per-env runs')
+_p.add_argument('--only', type=str, default='',
+                help="comma-separated substrings; only matching models are built "
+                     "(e.g. --only 'Toto-2' in envs/toto2)")
+_p.add_argument('--no_save', action='store_true')
+args = _p.parse_args()
 
-class Args:
-    n_series = 600       # Weather/ETT typical  counts: [7, 15, 50, 100, 150, 200, 300, 400, 500, 600]
-    h = 48             # Standard horizon
-    input_size = 96
-    windows_batch_size = 1
-args = Args()
+# Each model is built lazily through a factory, for two reasons:
+#   - the zero-shot models only import in their own conda env;
+#   - envs/toto2 ships a newer `transformers` that cannot construct MICA's
+#     T5/MOMENT models at all, so eager instantiation there kills the whole run.
+# A model that cannot be built in the current env is reported and skipped, so
+# each env contributes the rows it can and the CSVs are merged afterwards.
 
-# class Args:
-#     n_series = 7       # Weather/ETT typical  counts: [7, 15, 50, 100, 150, 200, 300, 400, 500, 600]
-#     h = 48             # Standard horizon
-#     input_size = 1024*8 # [8*8, 16,32,64,96,128,256,312,512]
-#     windows_batch_size = 1
-# args = Args()
-
-config_mp = get_model_config(args, model_type='moment')
-
-config_mp_infini = deepcopy(config_mp)
-config_mp_infini['infini_mixer_type'] = 'mlp_query'
-config_mp_infini['layerwise_beta'] = False
-config_mp_infini['channelwise_beta'] = False
-
-patchtst_vanilla = PatchTSTMultivariate(h=args.h, **config_mp)
-patchtst_infini = PatchTSTMultivariate(h=args.h, **config_mp_infini)
-
-moment_vanilla = MOMENT(h=args.h, **config_mp)
-moment_infini = MOMENT(h=args.h, **config_mp_infini)
-
-config_itransformer = get_model_config(args, model_type='itransformer')
-itransformer = iTransformer(h=args.h, **config_itransformer)
-itransformert5 = iTransformerT5(h=args.h, **config_itransformer)
-
-config_crossformer = get_model_config(args, model_type='crossformer')
-crossformer = Crossformer(h=args.h, **config_crossformer)
-
-config_timerxl = get_model_config(args, model_type='timerxl')
-timerxl = TimerXL(h=args.h, **config_timerxl)
-
-config_tsmixer = get_model_config(args, model_type='tsmixer')
-tsmixer = TSMixer(h=args.h, **config_tsmixer)
-
-config_timemixer = get_model_config(args, model_type='timemixer')
-timemixer = TimeMixer(h=args.h, **config_timemixer)
-
-config_mlp = get_model_config(args, model_type='mlpmultivariate')
-mlp = MLPMultivariate(h=args.h, **config_mlp)
-
-config_chronos2 = get_model_config(args, model_type='chronos2')
-chronos2 = Chronos2(h=args.h, **config_chronos2)
+def _zeroshot_factory(cls_name, checkpoint=None):
+    # checkpoint=None leaves the wrapper default (Toto-2.0-22m /
+    # timesfm-3.0-pytorch); pass one to size-ablate the same architecture.
+    def make():
+        import sys, os
+        _training = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'training')
+        if _training not in sys.path:
+            sys.path.insert(0, _training)
+        import zeroshot_external_models as _zsm
+        model_type = 'toto2' if 'Toto' in cls_name else 'timesfm3'
+        cfg = get_model_config(args, model_type=model_type)
+        if checkpoint is not None:
+            cfg['checkpoint'] = checkpoint
+        return getattr(_zsm, cls_name)(h=args.h, **cfg)
+    return make
 
 
-device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
+def _mica_factories():
+    config_mp = get_model_config(args, model_type='moment')
+    config_mp_infini = deepcopy(config_mp)
+    config_mp_infini['infini_mixer_type'] = 'mlp_query'
+    config_mp_infini['layerwise_beta'] = False
+    config_mp_infini['channelwise_beta'] = False
+    return {
+        'PatchTST MICA (MLP w/ Query)': lambda: PatchTSTMultivariate(h=args.h, **config_mp_infini),
+        'Moment MICA (MLP w/ Query)':   lambda: MOMENT(h=args.h, **config_mp_infini),
+        'iTransformer':     lambda: iTransformer(h=args.h, **get_model_config(args, model_type='itransformer')),
+        'iTransformer-T5':  lambda: iTransformerT5(h=args.h, **get_model_config(args, model_type='itransformer')),
+        'Crossformer':      lambda: Crossformer(h=args.h, **get_model_config(args, model_type='crossformer')),
+        'Timer-XL':         lambda: TimerXL(h=args.h, **get_model_config(args, model_type='timerxl')),
+        'TSMixer':          lambda: TSMixer(h=args.h, **get_model_config(args, model_type='tsmixer')),
+        'TimeMixer':        lambda: TimeMixer(h=args.h, **get_model_config(args, model_type='timemixer')),
+        'MLP':              lambda: MLPMultivariate(h=args.h, **get_model_config(args, model_type='mlpmultivariate')),
+        'Chronos-2':        lambda: Chronos2(h=args.h, **get_model_config(args, model_type='chronos2')),
+    }
+
+
+FACTORIES = {}
+try:
+    FACTORIES.update(_mica_factories())
+except Exception as _e:
+    print(f"  [models] MICA baselines unavailable in this env ({type(_e).__name__}: {_e})")
+# Toto-2 at two sizes: 22M matches the accuracy sweep's default, 313M is
+# size-matched to TimesFM-3 (331M) so the two can be compared on architecture
+# rather than scale.
+FACTORIES['Toto-2 (22M)'] = _zeroshot_factory('Toto2')
+FACTORIES['Toto-2 (313M)'] = _zeroshot_factory('Toto2', 'Datadog/Toto-2.0-313m')
+FACTORIES['TimesFM-3 (331M)'] = _zeroshot_factory('TimesFM3')
+
+_wanted = [w.strip() for w in args.only.split(',') if w.strip()] if args.only else None
+
+models = {}
+for _label, _make in FACTORIES.items():
+    if _wanted and not any(w.lower() in _label.lower() for w in _wanted):
+        continue
+    try:
+        models[_label] = _make()
+        print(f"  [models] {_label}: built")
+    except Exception as _e:
+        print(f"  [models] {_label}: SKIPPED ({type(_e).__name__}: {_e})")
+
+if not models:
+    raise SystemExit("No models could be built in this env -- check --only / env deps.")
+
+device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
 torch.manual_seed(1)
@@ -488,18 +547,16 @@ inp = {
     'insample_mask': torch.ones(args.windows_batch_size, args.input_size, args.n_series).to(device),
 }
 
-models = {
-    'PatchTST MICA (MLP w/ Query)': patchtst_infini,
-    'Moment MICA (MLP w/ Query)': moment_infini,
-    'iTransformer': itransformer, 
-    'iTransformer-T5': itransformert5, 
-    'Crossformer': crossformer,
-    'Timer-XL': timerxl,
-    'TSMixer': tsmixer,
-    'TimeMixer': timemixer,
-    'MLP': mlp,
-    'Chronos-2': chronos2,
-}
 
 table = get_table(models, inp)
-#table.to_csv(f'./flops_baseline_table_n{args.n_series}_is{args.input_size}.csv', index=False)
+print(table.to_string(index=False))
+
+if not args.no_save:
+    import os
+    os.makedirs(args.out_dir, exist_ok=True)
+    _tag = f'_{args.tag}' if args.tag else ''
+    _path = os.path.join(
+        args.out_dir,
+        f'flops_baseline_table_n{args.n_series}_is{args.input_size}{_tag}.csv')
+    table.to_csv(_path, index=False)
+    print(f'wrote {_path}')
