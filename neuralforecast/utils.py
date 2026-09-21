@@ -7,11 +7,12 @@ __all__ = ['AirPassengers', 'AirPassengersDF', 'unique_id', 'ds', 'y', 'AirPasse
            'estimate_ar1_rho', 'interp_2d', 'gaussian_copula_sample',
            'schaake_shuffle_sample', 'sample_from_quantiles',
            'DEFAULT_QUANTILE_GRID', 'VALID_SIMULATION_METHODS',
-           'extract_y_hist']
+           'extract_y_hist', 'ensemble_forecast_windows']
 
 
 import math
 import random
+import warnings
 from itertools import chain
 from typing import List, Optional, Tuple, Union
 
@@ -19,6 +20,8 @@ import numpy as np
 import pandas as pd
 import torch
 from utilsforecast.compat import DFType
+
+from neuralforecast.losses.numpy import _reshape_windows_by_date
 
 
 def generate_series(
@@ -1023,3 +1026,295 @@ def sample_from_quantiles(
             return samples.float().numpy()
         return samples.numpy()
     return samples
+
+
+
+def _validate_ensembling_stride(stride: int, h: int) -> None:
+    """Reject strides for which ensembling is undefined or pointless.
+
+    Args:
+        stride (int): Step size between consecutive forecast windows.
+        h (int): Forecast horizon.
+
+    Raises:
+        ValueError: If `stride` is not positive, or if `stride >= h`.
+    """
+    if stride < 1:
+        raise ValueError(f"stride={stride} must be a positive integer.")
+    if stride == h:
+        raise ValueError(
+            f"stride={stride} equals h={h}: windows are non-overlapping so each "
+            "target date has exactly one forecast and ensembling has no effect. "
+            "Use method='identity' instead."
+        )
+    if stride > h:
+        raise ValueError(
+            f"stride={stride} > h={h}: some target dates have no forecast coverage. "
+            "Please review the step size used to generate the forecast windows."
+        )
+
+
+def _gather_windows_from_dates(
+    x: np.ndarray, stride: int, n_windows: int
+) -> np.ndarray:
+    """Invert `_reshape_windows_by_date`, going from target dates back to windows.
+
+    Args:
+        x (np.ndarray): Array of shape `[B, S, H, C]` indexed by target date.
+        stride (int): Step size between consecutive forecast windows.
+        n_windows (int): Number of forecast windows `T` to recover.
+
+    Returns:
+        np.ndarray: Array of shape `[B, T, H, C]`.
+    """
+    horizon = x.shape[2]
+    t_grid, h_grid = np.meshgrid(
+        np.arange(n_windows), np.arange(horizon), indexing="ij"
+    )
+    d_grid = t_grid * stride + h_grid  # the same index grid used to scatter
+    return x[:, d_grid, h_grid, :]
+
+
+def _causal_mean(x: np.ndarray, window_size: Optional[int]) -> np.ndarray:
+    """Mean over each position and the positions before it, ignoring NaNs.
+
+    Args:
+        x (np.ndarray): Array of shape `[N, H, C]`, pooled along axis 1.
+        window_size (int, optional): If given, pool at most this many positions,
+            ending at the current one. Defaults to every earlier position.
+
+    Returns:
+        np.ndarray: Array of shape `[N, H, C]`, `np.nan` where the pool is empty.
+    """
+    n_steps = x.shape[1]
+    if window_size is None:
+        total = np.nancumsum(x, axis=1)
+        counts = np.cumsum(~np.isnan(x), axis=1)
+    else:
+        total = np.stack(
+            [
+                np.nansum(x[:, max(0, i - window_size + 1) : i + 1, :], axis=1)
+                for i in range(n_steps)
+            ],
+            axis=1,
+        )
+        counts = np.stack(
+            [
+                np.sum(~np.isnan(x[:, max(0, i - window_size + 1) : i + 1, :]), axis=1)
+                for i in range(n_steps)
+            ],
+            axis=1,
+        )
+    with np.errstate(invalid="ignore"):
+        out = total / counts
+    out[counts == 0] = np.nan
+    return out
+
+
+def _causal_median(x: np.ndarray, window_size: Optional[int]) -> np.ndarray:
+    """Median over each position and the positions before it, ignoring NaNs.
+
+    Args:
+        x (np.ndarray): Array of shape `[N, H, C]`, pooled along axis 1.
+        window_size (int, optional): If given, pool at most this many positions,
+            ending at the current one. Defaults to every earlier position.
+
+    Returns:
+        np.ndarray: Array of shape `[N, H, C]`, `np.nan` where the pool is empty.
+    """
+    n_steps = x.shape[1]
+    with warnings.catch_warnings():
+        # a pool can be entirely NaN where no forecast reaches that date
+        warnings.simplefilter("ignore", RuntimeWarning)
+        return np.stack(
+            [
+                np.nanmedian(
+                    x[:, max(0, i - window_size + 1) if window_size else 0 : i + 1, :],
+                    axis=1,
+                )
+                for i in range(n_steps)
+            ],
+            axis=1,
+        )
+
+
+def _causal_ewm(
+    x: np.ndarray, window_size: Optional[int], decay: float
+) -> np.ndarray:
+    """Exponentially weighted mean, weighting the current position most heavily.
+
+    A position `k` steps before the current one gets weight `decay ** k`. The weights
+    are renormalised over the non-NaN positions.
+
+    Args:
+        x (np.ndarray): Array of shape `[N, H, C]`, pooled along axis 1.
+        window_size (int, optional): If given, pool at most this many positions,
+            ending at the current one. Defaults to every earlier position.
+        decay (float): Weight ratio between a position and the one after it, in
+            `[0, 1)`.
+
+    Returns:
+        np.ndarray: Array of shape `[N, H, C]`, `np.nan` where the pool is empty.
+    """
+    n_steps = x.shape[1]
+    span = window_size if window_size is not None else n_steps
+
+    positions = np.arange(n_steps)
+    lag = positions[:, None] - positions[None, :]  # [current, pooled]
+    weights = np.where((lag >= 0) & (lag < span), decay ** np.abs(lag), 0.0)
+
+    valid = ~np.isnan(x)
+    clean = np.nan_to_num(x)
+    weighted = np.einsum("hi,bic->bhc", weights, valid * clean)
+    normaliser = np.einsum("hi,bic->bhc", weights, valid.astype(float))
+    with np.errstate(invalid="ignore"):
+        return np.where(normaliser > 0, weighted / normaliser, np.nan)
+
+
+def ensemble_forecast_windows(
+    y_hat: np.ndarray,
+    stride: int = 1,
+    method: str = "mean",
+    window_size: Optional[int] = None,
+    alpha: float = 0.5,
+    mask: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    r"""Causal Forecast Ensembling
+
+    A multi-horizon system forecasts each target date several times, once from every
+    forecast creation date (FCD) whose horizon reaches it. Forecast ensembling
+    combines the overlapping forecasts that target the same date.
+
+    The combination is **causal**. Indexing by series $b$, FCD $t$ and horizon step
+    $h$, with windows `stride` steps apart, the forecasts of the same target date
+    issued $k$ FCDs earlier are $\hat{y}_{b,t-k,h+k \cdot \mathrm{stride}}$. The
+    ensembled forecast pools only these, never a forecast from a later FCD, so it can
+    be produced in real time:
+
+    ```math
+    \tilde{y}_{b,t,h} = \frac{\sum_{k=0}^{K} w_k \, \hat{y}_{b,t-k,h+k \cdot \mathrm{stride}}}{\sum_{k=0}^{K} w_k}
+    ```
+
+    where $K$ is the number of earlier forecasts available, capped by the start of the
+    sample, the horizon, and `window_size`. `'mean'` uses $w_k = 1$; `'ewm'` uses
+
+    ```math
+    w_k = (1-\alpha)^{k}
+    ```
+
+    the exponential smoothing weights, as in `pandas.DataFrame.ewm(alpha=alpha)`. As
+    $\alpha \to 0$ this approaches the plain mean, and $\alpha = 1$ keeps only the
+    latest forecast. `'median'` takes the median of the same pool.
+
+    An FCD near the start of the sample has few earlier forecasts to draw on and is
+    therefore barely changed; later FCDs pool more and are smoothed more.
+
+    Args:
+        y_hat (np.ndarray): Forecasts of shape `[B, T, H, C]` or `[B, T, H, C, Q]`, for
+            `B` series, `T` forecast windows, horizon `H`, `C` target channels and `Q`
+            quantiles. Quantiles are ensembled independently.
+        stride (int): Step size between consecutive forecast windows. Must be smaller
+            than `H`, otherwise windows do not overlap and there is nothing to
+            ensemble. Defaults to 1.
+        method (str): One of `'mean'`, `'median'`, `'ewm'` or `'identity'`. `'mean'` and
+            `'median'` weight every available FCD equally; `'ewm'` weights the most
+            recent FCD most heavily, which suits the fact that older forecasts of a
+            date carry more uncertainty. `'identity'` returns the input unchanged, which
+            is useful as a baseline. Defaults to `'mean'`.
+        window_size (int, optional): If given, pool only the `window_size` most recent
+            FCDs rather than every earlier one. Must be at least 1. Defaults to None.
+        alpha (float): Smoothing factor in `(0, 1]` for `method='ewm'`; larger values
+            concentrate weight on the most recent FCD. Defaults to 0.5.
+        mask (np.ndarray, optional): Array of shape `[B, T, H, C]`, 1 for a real
+            timestep and 0 for a padded or missing one. Masked positions are excluded
+            from the pool. Defaults to None.
+
+    Returns:
+        np.ndarray: Ensembled forecasts, the same shape as `y_hat`.
+
+    Raises:
+        ValueError: If `method` is unknown, if `y_hat` is not 4- or 5-dimensional, if
+            `stride >= H`, if `window_size < 1`, if `alpha` is not in `(0, 1]`, or if
+            `mask` does not match the first four dimensions of `y_hat`.
+
+    Example:
+        >>> from neuralforecast.losses.numpy import (
+        ...     cross_validation_to_windows,
+        ...     excess_volatility,
+        ... )
+        >>> from neuralforecast.utils import ensemble_forecast_windows
+        >>> w = cross_validation_to_windows(cv_df, model='NHITS')  # doctest: +SKIP
+        >>> ensembled = ensemble_forecast_windows(  # doctest: +SKIP
+        ...     w.y_hat, stride=w.stride, method='mean', mask=w.mask,
+        ... )
+        >>> excess_volatility(  # doctest: +SKIP
+        ...     y=w.y, y_hat=ensembled, quantiles=w.quantiles,
+        ...     stride=w.stride, mask=w.mask,
+        ... )
+
+    References:
+        - [Willa Potosnak, Malcolm Wolff, Mengfei Cao, Ruijun Ma, Tatiana
+          Konstantinova, Dmitry Efimov, Michael W. Mahoney, Boris Oreshkin, Kin G.
+          Olivares, "Forking-Sequences: Statistically and Computationally Efficient
+          Multi-Horizon Forecasting with Reduced Volatility". Transactions on
+          Machine Learning Research (2026).](https://openreview.net/forum?id=dXdycy7WCX)
+    """
+    methods = ("mean", "median", "ewm", "identity")
+    if method not in methods:
+        raise ValueError(f"method must be one of {list(methods)}; got {method!r}.")
+    if y_hat.ndim not in (4, 5):
+        raise ValueError(
+            f"y_hat must have shape [B, T, H, C] or [B, T, H, C, Q]; got "
+            f"{y_hat.ndim} dimensions."
+        )
+
+    # identity is a no-op, so it stays valid even where ensembling is not, which is
+    # what the stride error below tells callers to fall back to.
+    if method == "identity":
+        return y_hat
+
+    if window_size is not None and window_size < 1:
+        raise ValueError(f"window_size={window_size} must be a positive integer.")
+    if method == "ewm" and not 0 < alpha <= 1:
+        raise ValueError(f"alpha={alpha} must be in (0, 1].")
+
+    had_quantile_axis = y_hat.ndim == 5
+    if not had_quantile_axis:
+        y_hat = y_hat[..., np.newaxis]
+    if mask is not None and mask.shape != y_hat.shape[:4]:
+        raise ValueError(
+            f"mask.shape={mask.shape} must match y_hat's first four dimensions "
+            f"{y_hat.shape[:4]}."
+        )
+
+    n_series, n_windows, horizon, n_channels, n_quantiles = y_hat.shape
+    _validate_ensembling_stride(stride, horizon)
+
+    # Fold the quantile axis into the channel axis so one pass handles every quantile.
+    folded = y_hat.reshape(n_series, n_windows, horizon, n_channels * n_quantiles)
+    folded_mask = np.repeat(mask, n_quantiles, axis=-1) if mask is not None else None
+
+    by_date = _reshape_windows_by_date(folded, stride=stride, mask=folded_mask)
+    n_dates = by_date.shape[1]
+    flat = by_date.reshape(n_series * n_dates, horizon, n_channels * n_quantiles)
+
+    # Each row holds one target date's forecasts, oldest FCD in the last column. The
+    # _causal_* helpers pool each position with the positions to its left, so flip
+    # the row to put older FCDs on the left: each FCD is then pooled only with FCDs
+    # issued before it.
+    flat = flat[:, ::-1, :]
+    # Consecutive FCDs sit `stride` horizon steps apart, so a window of FCDs and a
+    # per-FCD decay are converted to horizon steps before pooling.
+    span = None if window_size is None else (window_size - 1) * stride + 1
+    if method == "mean":
+        pooled = _causal_mean(flat, span)
+    elif method == "median":
+        pooled = _causal_median(flat, span)
+    else:
+        pooled = _causal_ewm(flat, span, decay=(1 - alpha) ** (1 / stride))
+    pooled = pooled[:, ::-1, :]
+
+    pooled = pooled.reshape(n_series, n_dates, horizon, n_channels * n_quantiles)
+    out = _gather_windows_from_dates(pooled, stride=stride, n_windows=n_windows)
+    out = out.reshape(n_series, n_windows, horizon, n_channels, n_quantiles)
+    return out if had_quantile_axis else out[..., 0]
