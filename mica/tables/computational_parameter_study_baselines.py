@@ -498,8 +498,8 @@ def _mica_factories():
     config_mp_infini['layerwise_beta'] = False
     config_mp_infini['channelwise_beta'] = False
     return {
-        'PatchTST MICA (MLP w/ Query)': lambda: PatchTSTMultivariate(h=args.h, **config_mp_infini),
-        'Moment MICA (MLP w/ Query)':   lambda: MOMENT(h=args.h, **config_mp_infini),
+        'PatchTST LiMA (MLP w/ Query)': lambda: PatchTSTMultivariate(h=args.h, **config_mp_infini),
+        'Moment LiMA (MLP w/ Query)':   lambda: MOMENT(h=args.h, **config_mp_infini),
         'iTransformer':     lambda: iTransformer(h=args.h, **get_model_config(args, model_type='itransformer')),
         'iTransformer-T5':  lambda: iTransformerT5(h=args.h, **get_model_config(args, model_type='itransformer')),
         'Crossformer':      lambda: Crossformer(h=args.h, **get_model_config(args, model_type='crossformer')),

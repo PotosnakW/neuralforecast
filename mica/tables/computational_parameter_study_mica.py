@@ -371,23 +371,23 @@ inp = {
 patchtst_models = {
     'PatchTST Univariate': patchtst_vanilla,
     'PatchTST Multivariate Head': patchtst_headmixer,
-    'PatchTST MICA (Shared $\\beta$)': patchtst_infini,
-    'PatchTST MICA (Channelwise $\\beta$)': patchtst_infini_channelwise,
-    'PatchTST MICA (Layerwise $\\beta$)': patchtst_infini_layerwise,
-    'PatchTST MICA (Layerwise Channelwise $\\beta$)': patchtst_infini_layerwise_channelwise,
-    'PatchTST MICA (MLP)': patchtst_infini_mlp,
-    'PatchTST MICA (MLP w/ Query)': patchtst_infini_mlpquery,
+    'PatchTST LiMA (Shared $\\beta$)': patchtst_infini,
+    'PatchTST LiMA (Channelwise $\\beta$)': patchtst_infini_channelwise,
+    'PatchTST LiMA (Layerwise $\\beta$)': patchtst_infini_layerwise,
+    'PatchTST LiMA (Layerwise Channelwise $\\beta$)': patchtst_infini_layerwise_channelwise,
+    'PatchTST LiMA (MLP)': patchtst_infini_mlp,
+    'PatchTST LiMA (MLP w/ Query)': patchtst_infini_mlpquery,
 }
 
 moment_models = {
     'Moment Univariate': moment_vanilla,
     'Moment Multivariate Head': moment_headmixer,
-    'Moment MICA (Shared $\\beta$)': moment_infini,
-    'Moment MICA (Channelwise $\\beta$)': moment_infini_channelwise,
-    'Moment MICA (Layerwise $\\beta$)': moment_infini_layerwise,
-    'Moment MICA (Layerwise Channelwise $\\beta$)': moment_infini_layerwise_channelwise,
-    'Moment MICA (MLP)': moment_infini_mlp,
-    'Moment MICA (MLP w/ Query)': moment_infini_mlpquery,
+    'Moment LiMA (Shared $\\beta$)': moment_infini,
+    'Moment LiMA (Channelwise $\\beta$)': moment_infini_channelwise,
+    'Moment LiMA (Layerwise $\\beta$)': moment_infini_layerwise,
+    'Moment LiMA (Layerwise Channelwise $\\beta$)': moment_infini_layerwise_channelwise,
+    'Moment LiMA (MLP)': moment_infini_mlp,
+    'Moment LiMA (MLP w/ Query)': moment_infini_mlpquery,
 }
 
 patchtst_table = get_table(patchtst_models, inp)
