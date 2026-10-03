@@ -28,9 +28,11 @@ SCRIPTS = [
     "run_zeroshot_toto2_313m",
     "run_zeroshot_timesfm3",
     "run_ciexcl_rerun",
-    "run_new_datasets_full",
-    "run_poolmean",
+    # ecl_mlpquery and poolmean before new_datasets_full: expanding the gate
+    # variants to new datasets is the lowest-priority experiment.
     "run_ecl_mlpquery",
+    "run_poolmean",
+    "run_new_datasets_full",
 ]
 
 

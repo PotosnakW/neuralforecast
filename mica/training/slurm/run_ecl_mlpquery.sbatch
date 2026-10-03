@@ -21,8 +21,13 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
-#SBATCH --time=24:00:00
+# 48h = qos MaxWall. The 20-trial mixer runs on solar/H, covid_deaths and
+# electricity/H take ~27-57h on an A6000, so 24h killed them just short of done.
+#SBATCH --time=48:00:00
 #SBATCH --gres=gpu:1
+# gpu28 is the only 24GB card (RTX A5000) in general; task 5 (electricity/H)
+# OOMed there trying to allocate 13.45 GiB. Every other node is a 48GB A6000.
+#SBATCH --exclude=gpu28
 #SBATCH --array=0-14
 
 set -euo pipefail
