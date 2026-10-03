@@ -134,9 +134,14 @@ _cache = {}
 
 
 def load_results(experiment):
+    """An experiment's results.csv, or an empty frame (all cells '-') if it isn't built."""
     if experiment not in _cache:
         path = os.path.join(RESULTS_DIR, experiment, 'results.csv')
-        _cache[experiment] = pd.read_csv(path).set_index('dataset')
+        if os.path.exists(path):
+            _cache[experiment] = pd.read_csv(path).set_index('dataset')
+        else:
+            print(f'WARNING: {path} not built; its columns will show as -')
+            _cache[experiment] = pd.DataFrame(index=pd.Index([], name='dataset'))
     return _cache[experiment]
 
 
@@ -149,9 +154,8 @@ def collect(columns, metric='mae', datasets=DATASETS):
         for out, col in ((means, f'{alias}_{metric}_mean'),
                          (sds, f'{alias}_{metric}_sd'),
                          (ns, f'{alias}_n_seeds')):
-            if col not in df.columns:
-                raise KeyError(f'{label}: {col} not in {exp}/results.csv')
-            out[label] = df[col]
+            # a model with no runs at all shows as '-' (and in report_gaps)
+            out[label] = df[col] if col in df.columns else np.nan
     means, sds, ns = (pd.DataFrame(d, index=pd.Index(datasets, name='dataset'))
                       for d in (means, sds, ns))
     return means, sds, ns

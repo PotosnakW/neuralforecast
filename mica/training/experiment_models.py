@@ -1990,4 +1990,9 @@ def get_models(args):
             f"Unknown experiment name: {args.experiment_name}. "
         )
 
+    # Train only the channel-inclusion arm (the longer-context ablation reads
+    # *_ciincl only); halves the search for the long ishm3 runs.
+    if os.environ.get('MICA_CIINCL_ONLY'):
+        models = [m for m in models if not m.alias.endswith('_ciexcl')]
+
     return models

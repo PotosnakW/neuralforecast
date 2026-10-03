@@ -8,7 +8,6 @@ notebooks can read a single results.csv per experiment with no overlay logic:
   infini_{gate}_t5tiny  =  {gate}_ciexcl_fix/  all 21 datasets, both arms (post-fix)
                          + {gate}/             13 original datasets, *_ciincl only
                                                (its *_ciexcl columns are pre-fix, stale)
-  infini_poolmean_*     =  scratch sweep dirs (the shared copy is only partly synced)
   everything else       =  the shared folder as-is
 
 Writes OUT_DIR/{experiment}/results.csv with columns
@@ -49,11 +48,13 @@ ID_COLS = {'unique_id', 'ds', 'cutoff', 'y', 'available_mask'}
 SEEDS = [1, 2, 3, 4, 5]
 
 
-def src(root, folder, datasets=ALL_DATASETS, cols=None, seeds=SEEDS, fallback=None):
+def src(root, folder, datasets=ALL_DATASETS, cols=None, seeds=SEEDS, fallback=None,
+        rename=None):
     """One place runs live. `cols` is a regex a model column must match to be kept;
-    `fallback` is another folder under the same root tried when a seed is missing."""
+    `fallback` is another folder under the same root tried when a seed is missing;
+    `rename` maps a column name as written in forecasts.csv to its correct alias."""
     return dict(root=root, folder=folder, datasets=datasets, cols=cols, seeds=seeds,
-                fallback=fallback)
+                fallback=fallback, rename=rename or {})
 
 
 GATES = [
@@ -65,16 +66,26 @@ GATES = [
     'infini_mlpquerymixer_t5tiny',
 ]
 
+# The January infini_t5tiny runs (trained 2026-01-20, before the alias was fixed in
+# c5ec1d7) wrote PatchTST's shared-beta gate under the channelwise alias. The
+# checkpoints confirm it is the shared gate (channelwise_beta=False), and the
+# forecasts differ from infini_channelwise_t5tiny's, so it is only a mislabel.
+JAN_ALIAS_FIX = {
+    'infini_t5tiny': {'AutoPatchTSTMultivariate_infini_channelwise_ciincl':
+                      'AutoPatchTSTMultivariate_infini_ciincl'},
+}
+
 # Sources are listed in precedence order: a (dataset, column) is taken from the
 # first source that has it.
 EXPERIMENTS = {
     **{g: [src(SHARED, f'{g}_ciexcl_fix'),
-           src(SHARED, g, datasets=ORIGINAL_DATASETS, cols=r'_ciincl$')]
+           src(SHARED, g, datasets=ORIGINAL_DATASETS, cols=r'_ciincl$',
+               rename=JAN_ALIAS_FIX.get(g))]
        for g in GATES},
 
-    'infini_poolmean_t5tiny': [src(SCRATCH, 'infini_poolmean_t5tiny')],
-    'infini_poolmean_layerwise_t5tiny': [src(SCRATCH, 'infini_poolmean_layerwise_t5tiny')],
-    'infini_poolmean_mlpquerymixer_t5tiny': [src(SCRATCH, 'infini_poolmean_mlpquerymixer_t5tiny')],
+    'infini_poolmean_t5tiny': [src(SHARED, 'infini_poolmean_t5tiny')],
+    'infini_poolmean_layerwise_t5tiny': [src(SHARED, 'infini_poolmean_layerwise_t5tiny')],
+    'infini_poolmean_mlpquerymixer_t5tiny': [src(SHARED, 'infini_poolmean_mlpquerymixer_t5tiny')],
 
     'vanilla_t5tiny': [src(SHARED, 'vanilla_t5tiny')],
     'vanilla_pca_t5tiny': [src(SHARED, 'vanilla_pca_t5tiny')],
@@ -211,6 +222,7 @@ def build_experiment(name):
                     av_mask, mask_loaded = availability_mask(dataset), True
                 print(f'  {dataset} rs{seed}  {os.path.relpath(path, s["root"])}', flush=True)
                 for col, metrics in evaluate_forecasts(path, av_mask, s['cols']).items():
+                    col = s['rename'].get(col, col)
                     per_seed.setdefault(col, {}).setdefault(seed, metrics)  # first source wins
 
         if not per_seed:
