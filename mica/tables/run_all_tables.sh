@@ -63,7 +63,8 @@ run_one() {  # $1=n_series  $2=input_size
     "$CONDA/neuralforecast/bin/python" - "$OUT_DIR" "$n" "$L" <<'PY'
 import sys, glob, os, pandas as pd
 out_dir, n, L = sys.argv[1], sys.argv[2], sys.argv[3]
-parts = sorted(glob.glob(os.path.join(out_dir, f'flops_baseline_table_n{n}_is{L}_*.csv')))
+parts = sorted(p for p in glob.glob(os.path.join(out_dir, f'flops_baseline_table_n{n}_is{L}_*.csv'))
+               if not p.endswith('_MERGED.csv'))  # don't re-merge a previous merge
 if not parts:
     print("     (nothing to merge)"); raise SystemExit
 df = pd.concat([pd.read_csv(p) for p in parts], ignore_index=True)

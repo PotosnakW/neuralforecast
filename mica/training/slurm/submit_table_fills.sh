@@ -14,12 +14,12 @@
 #   tmux new -s mica_fills
 #   bash slurm/submit_table_fills.sh
 #
-# Tunables: TARGET=48  POLL_SECONDS=300  DRY_RUN=1
+# Tunables: TARGET=48  POLL_SECONDS=300  DRY_RUN=1  SBATCH_FILE=...  STATE=...
 
 set -uo pipefail
 test -f train_models.py || { echo "ERROR: run from mica/training/"; exit 1; }
 
-SBATCH_FILE=slurm/run_table_fills.sbatch
+SBATCH_FILE="${SBATCH_FILE:-slurm/run_table_fills.sbatch}"
 LAST=$(grep -oP '^#SBATCH --array=0-\K\d+' "$SBATCH_FILE")
 TARGET="${TARGET:-48}"
 POLL_SECONDS="${POLL_SECONDS:-300}"
